@@ -1,0 +1,23 @@
+{
+open FSharp.Text.Lexing
+open Parser
+
+let lexeme (lexbuf: LexBuffer<_>) = LexBuffer<_>.LexemeString lexbuf
+}
+
+let digit = ['0'-'9']
+let whitespace = [' ' '\t']
+let newline = ('\n' | '\r' '\n')
+
+rule tokenize = parse
+    | whitespace    { tokenize lexbuf }
+    | newline       { lexbuf.EndPos <- lexbuf.EndPos.NextLine; tokenize lexbuf }
+    | digit+        { NUMBER (int (lexeme lexbuf)) }
+    | '+'           { PLUS }
+    | '-'           { MINUS }
+    | '*'           { STAR }
+    | '/'           { SLASH }
+    | '('           { LPAREN }
+    | ')'           { RPAREN }
+    | eof           { EOF }
+    | _             { failwithf "Unexpected character: %s" (lexeme lexbuf) }

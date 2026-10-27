@@ -1,0 +1,28 @@
+%{
+open Ast
+%}
+
+%token <int> NUMBER
+%token PLUS MINUS STAR SLASH LPAREN RPAREN
+%token EOF
+
+%left PLUS MINUS
+%left STAR SLASH
+%nonassoc UMINUS
+
+%start start
+%type <Ast.Expr> start
+
+%%
+
+start:
+    | Expr EOF                  { $1 }
+
+Expr:
+    | NUMBER                    { Number $1 }
+    | Expr PLUS Expr            { Add($1, $3) }
+    | Expr MINUS Expr           { Subtract($1, $3) }
+    | Expr STAR Expr            { Multiply($1, $3) }
+    | Expr SLASH Expr           { Divide($1, $3) }
+    | MINUS Expr %prec UMINUS   { Negate $2 }
+    | LPAREN Expr RPAREN        { $2 }

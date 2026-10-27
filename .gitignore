@@ -1,0 +1,23 @@
+# .NET 빌드 결과물
+bin/
+obj/
+
+# fslex/fsyacc가 생성하는 파일
+src/**/Lexer.fs
+src/**/Lexer.fsi
+src/**/Parser.fs
+src/**/Parser.fsi
+
+# IDE / 에디터
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+.ionide/
+
+# OS
+.DS_Store
+
+# Claude Code 로컬 설정
+.claude/
