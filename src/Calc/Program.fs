@@ -15,14 +15,26 @@ type CliArgs =
             | Expr _ -> "evaluate the given expression (reads stdin if omitted)"
             | Version -> "print version and exit"
 
-let rec eval expr =
+type Env = Map<string, int>
+
+let rec evalIn (env: Env) expr =
     match expr with
     | Number n -> n
-    | Add (a, b) -> eval a + eval b
-    | Subtract (a, b) -> eval a - eval b
-    | Multiply (a, b) -> eval a * eval b
-    | Divide (a, b) -> eval a / eval b
-    | Negate e -> -(eval e)
+    | Var name ->
+        match Map.tryFind name env with
+        | Some v -> v
+        | None -> failwithf "Unbound variable: %s" name
+    | Let (name, value, body) ->
+        let v = evalIn env value
+        evalIn (Map.add name v env) body
+    | Add (a, b) -> evalIn env a + evalIn env b
+    | Subtract (a, b) -> evalIn env a - evalIn env b
+    | Multiply (a, b) -> evalIn env a * evalIn env b
+    | Divide (a, b) -> evalIn env a / evalIn env b
+    | Negate e -> -(evalIn env e)
+
+/// 빈 환경에서 평가
+let eval expr = evalIn Map.empty expr
 
 let parse (input: string) : Expr =
     let lexbuf = LexBuffer<char>.FromString input

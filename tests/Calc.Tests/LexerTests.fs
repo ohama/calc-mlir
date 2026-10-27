@@ -34,6 +34,21 @@ let tests =
         test "빈 입력" {
             Expect.equal (tokens "") [ EOF ] ""
         }
+        test "let 식" {
+            Expect.equal
+                (tokens "let x = 1 in x")
+                [ LET; IDENT "x"; EQUALS; NUMBER 1; IN; IDENT "x"; EOF ]
+                ""
+        }
+        test "식별자: 밑줄과 숫자" {
+            Expect.equal (tokens "_a foo_1 X2") [ IDENT "_a"; IDENT "foo_1"; IDENT "X2"; EOF ] ""
+        }
+        test "키워드로 시작하는 식별자는 IDENT" {
+            Expect.equal (tokens "letx inner") [ IDENT "letx"; IDENT "inner"; EOF ] ""
+        }
+        test "숫자 뒤 식별자는 분리" {
+            Expect.equal (tokens "2x") [ NUMBER 2; IDENT "x"; EOF ] ""
+        }
         test "알 수 없는 문자" {
             Expect.throwsC
                 (fun () -> tokens "2 $ 3" |> ignore)

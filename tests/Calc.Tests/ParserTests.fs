@@ -50,6 +50,48 @@ let tests =
         test "중첩 단항 마이너스" {
             Expect.equal (parse "--3") (Negate (Negate (Number 3))) ""
         }
+        test "변수" {
+            Expect.equal (parse "x") (Var "x") ""
+        }
+        test "let 식" {
+            Expect.equal (parse "let x = 5 in x") (Let ("x", Number 5, Var "x")) ""
+        }
+        test "let 본문은 오른쪽으로 최대한 확장" {
+            Expect.equal
+                (parse "let x = 1 in x + 2")
+                (Let ("x", Number 1, Add (Var "x", Number 2)))
+                ""
+        }
+        test "let 바인딩 값에 식" {
+            Expect.equal
+                (parse "let x = 1 + 2 in x")
+                (Let ("x", Add (Number 1, Number 2), Var "x"))
+                ""
+        }
+        test "중첩 let" {
+            Expect.equal
+                (parse "let x = 1 in let y = 2 in x + y")
+                (Let ("x", Number 1, Let ("y", Number 2, Add (Var "x", Var "y"))))
+                ""
+        }
+        test "괄호로 let 범위 제한" {
+            Expect.equal
+                (parse "(let x = 1 in x) + 10")
+                (Add (Let ("x", Number 1, Var "x"), Number 10))
+                ""
+        }
+        test "이항 연산 오른쪽의 let" {
+            Expect.equal
+                (parse "1 + let x = 2 in x")
+                (Add (Number 1, Let ("x", Number 2, Var "x")))
+                ""
+        }
+        test "in 없는 let 은 parse error" {
+            Expect.throws (fun () -> parse "let x = 1" |> ignore) ""
+        }
+        test "키워드는 변수 이름이 될 수 없음" {
+            Expect.throws (fun () -> parse "let in = 1 in 2" |> ignore) ""
+        }
         test "불완전한 식은 parse error" {
             Expect.throwsC
                 (fun () -> parse "1 +" |> ignore)

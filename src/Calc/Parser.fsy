@@ -3,9 +3,15 @@ open Ast
 %}
 
 %token <int> NUMBER
+%token <string> IDENT
+%token LET IN EQUALS
 %token PLUS MINUS STAR SLASH LPAREN RPAREN
 %token EOF
 
+// 아래로 갈수록 우선순위가 높음.
+// IN 이 가장 낮으므로 let 본문은 오른쪽으로 최대한 길게 이어짐:
+//   let x = 1 in x + 2  ==  let x = 1 in (x + 2)
+%nonassoc IN
 %left PLUS MINUS
 %left STAR SLASH
 %nonassoc UMINUS
@@ -16,13 +22,15 @@ open Ast
 %%
 
 start:
-    | Expr EOF                  { $1 }
+    | Expr EOF                      { $1 }
 
 Expr:
-    | NUMBER                    { Number $1 }
-    | Expr PLUS Expr            { Add($1, $3) }
-    | Expr MINUS Expr           { Subtract($1, $3) }
-    | Expr STAR Expr            { Multiply($1, $3) }
-    | Expr SLASH Expr           { Divide($1, $3) }
-    | MINUS Expr %prec UMINUS   { Negate $2 }
-    | LPAREN Expr RPAREN        { $2 }
+    | NUMBER                        { Number $1 }
+    | IDENT                         { Var $1 }
+    | LET IDENT EQUALS Expr IN Expr { Let($2, $4, $6) }
+    | Expr PLUS Expr                { Add($1, $3) }
+    | Expr MINUS Expr               { Subtract($1, $3) }
+    | Expr STAR Expr                { Multiply($1, $3) }
+    | Expr SLASH Expr               { Divide($1, $3) }
+    | MINUS Expr %prec UMINUS       { Negate $2 }
+    | LPAREN Expr RPAREN            { $2 }

@@ -6,6 +6,9 @@ let lexeme (lexbuf: LexBuffer<_>) = LexBuffer<_>.LexemeString lexbuf
 }
 
 let digit = ['0'-'9']
+let letter = ['a'-'z' 'A'-'Z']
+let ident_start = letter | '_'
+let ident_char = letter | digit | '_'
 let whitespace = [' ' '\t']
 let newline = ('\n' | '\r' '\n')
 
@@ -13,6 +16,12 @@ rule tokenize = parse
     | whitespace    { tokenize lexbuf }
     | newline       { lexbuf.EndPos <- lexbuf.EndPos.NextLine; tokenize lexbuf }
     | digit+        { NUMBER (int (lexeme lexbuf)) }
+    // 키워드는 IDENT 보다 먼저 와야 함 (같은 길이로 매치되면 앞의 규칙이 이김)
+    | "let"         { LET }
+    | "in"          { IN }
+    | ident_start ident_char*
+                    { IDENT (lexeme lexbuf) }
+    | '='           { EQUALS }
     | '+'           { PLUS }
     | '-'           { MINUS }
     | '*'           { STAR }

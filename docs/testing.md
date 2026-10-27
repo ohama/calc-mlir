@@ -29,9 +29,9 @@ dotnet run --project tests/Calc.Tests -- --debug            # 각 테스트 시�
 
 | 파일 | 테스트 목록 | 내용 |
 |---|---|---|
-| `LexerTests.fs` | `Lexer` | 토큰 순서, 공백과 줄바꿈 무시, 빈 입력, 알 수 없는 문자 오류 |
-| `ParserTests.fs` | `Parser` | 우선순위, 왼쪽 결합, 괄호, 단항 마이너스, 파서 오류 |
-| `EvalTests.fs` | `Eval` | 식 계산 표, 0으로 나누기, FsCheck 속성 테스트 |
+| `LexerTests.fs` | `Lexer` | 토큰 순서, 공백과 줄바꿈 무시, 키워드와 식별자, 빈 입력, 알 수 없는 문자 오류 |
+| `ParserTests.fs` | `Parser` | 우선순위, 왼쪽 결합, 괄호, 단항 마이너스, `let`의 범위와 중첩, 파서 오류 |
+| `EvalTests.fs` | `Eval` | 식 계산 표, `let`과 섀도잉, 정의되지 않은 변수, 0으로 나누기, FsCheck 속성 테스트 |
 | `Main.fs` | — | 진입점 (`runTestsInAssemblyWithCLIArgs`) |
 
 `[<Tests>]` 속성이 붙은 값은 Expecto가 자동으로 찾아서 실행합니다.
@@ -92,6 +92,10 @@ Result: 11
 | `10 - 3 - 2` | 왼쪽 결합 | `Subtract (Subtract (Number 10, Number 3), Number 2)` | `5` |
 | `-5 + 2` | 단항 마이너스 | `Add (Negate (Number 5), Number 2)` | `-3` |
 | `7 / 2` | 정수 나눗셈 | `Divide (Number 7, Number 2)` | `3` |
+| `let x = 5 in x * 2` | `let` 바인딩 | `Let ("x", Number 5, Multiply (Var "x", Number 2))` | `10` |
+| `let x = 1 in x + 2` | 본문은 오른쪽 끝까지 이어짐 | `Let ("x", Number 1, Add (Var "x", Number 2))` | `3` |
+| `(let x = 1 in x) + 10` | 괄호로 범위 제한 | `Add (Let ("x", Number 1, Var "x"), Number 10)` | `11` |
+| `let x = 1 in let x = 2 in x` | 섀도잉 (안쪽 바인딩 우선) | `Let ("x", Number 1, Let ("x", Number 2, Var "x"))` | `2` |
 
 ## 오류 처리 확인
 
@@ -100,15 +104,18 @@ Result: 11
 | `1 +` | 파서 | `Error: parse error` |
 | `2 $ 3` | 렉서 | `Error: Unexpected character: $` |
 | `1 / 0` | 평가 | AST 출력 후 `Error: Attempted to divide by zero.` |
+| `y + 1` | 평가 | AST 출력 후 `Error: Unbound variable: y` |
+| `let x = 1` | 파서 (`in` 없음) | `Error: parse error` |
+| `let in = 1 in 2` | 파서 (키워드는 변수 이름이 될 수 없음) | `Error: parse error` |
 
-세 경우 모두 종료 코드는 `1`입니다. 종료 코드는 `echo $?`로 확인할 수 있습니다.
+모든 경우 종료 코드는 `1`입니다. 종료 코드는 `echo $?`로 확인할 수 있습니다.
 
 ## 명령줄 옵션 확인
 
 | 명령 | 기대 출력 | 종료 코드 |
 |---|---|---|
 | `--help`, `-h` | `USAGE: calc [--help] [--expr=<expr>] [--version]`로 시작하는 사용법 | 0 |
-| `--version`, `-v` | `calc 0.3.0` (`Calc.fsproj`의 `<Version>`) | 0 |
+| `--version`, `-v` | `calc 0.4.0` (`Calc.fsproj`의 `<Version>`) | 0 |
 | `-e "(2+3)*4"` | `Result: 20` | 0 |
 | `--expr=7/2` | `Result: 3` | 0 |
 | `--expr "-5 + 2"` | `Result: -3` (`-`로 시작하는 식도 값으로 처리됨) | 0 |
