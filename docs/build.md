@@ -32,20 +32,34 @@ dotnet build src/Calc -c Release
 ## 실행
 
 ```sh
-# 인자로 식 전달
-dotnet run --project src/Calc -- "2 + 3 * (4 - 1)"
+# --expr 로 식 전달
+dotnet run --project src/Calc -- --expr "2 + 3 * (4 - 1)"
 
-# 표준 입력으로 식 전달
+# 표준 입력으로 식 전달 (--expr 생략)
 echo "1 + 2 * 3" | dotnet run --project src/Calc
 ```
 
-`--` 뒤에 오는 값은 `dotnet`이 아니라 프로그램에 전달됩니다. 인자가 여러 개면 공백으로 이어 붙여서 하나의 식으로 처리합니다.
+`--` 뒤에 오는 값은 `dotnet run`이 아니라 Calc 프로그램에 전달됩니다.
 
-이미 빌드했다면 `dotnet run` 없이 바로 실행할 수도 있습니다.
+이미 빌드했다면 `dotnet run` 없이 바로 실행할 수도 있습니다. 이때는 `--`가 필요 없습니다.
 
 ```sh
-dotnet src/Calc/bin/Debug/net10.0/Calc.dll "2 + 3"
+dotnet src/Calc/bin/Debug/net10.0/Calc.dll --expr "2 + 3"
 ```
+
+### 명령줄 옵션
+
+옵션 처리는 [Argu](https://fsprojects.github.io/Argu/)로 구현했습니다.
+
+| 옵션 | 짧은 형식 | 설명 |
+|---|---|---|
+| `--expr <expr>` | `-e <expr>` | 주어진 식을 계산합니다. `--expr=<expr>` 형식도 됩니다. 생략하면 표준 입력에서 읽습니다. |
+| `--version` | `-v` | 버전을 출력하고 종료합니다 (예: `calc 0.2.0`). |
+| `--help` | `-h` | 사용법을 출력하고 종료합니다. |
+
+`--version`이 출력하는 버전은 `Calc.fsproj`의 `<Version>` 값을 실행 중에 어셈블리에서 읽어 옵니다. 그래서 버전 번호는 fsproj 한 곳만 고치면 됩니다.
+
+알 수 없는 옵션을 주거나 `--expr` 뒤에 값이 없으면 오류 메시지와 사용법을 표준 에러로 출력하고 종료 코드 1을 반환합니다.
 
 ## 빌드 과정
 

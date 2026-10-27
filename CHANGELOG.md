@@ -4,6 +4,19 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.2.0] - 2026-10-27
+
+### 추가
+- [Argu](https://fsprojects.github.io/Argu/) 6.2.5로 명령줄 옵션 처리
+  - `--expr <expr>` / `-e <expr>` / `--expr=<expr>`: 식 계산
+  - `--version` / `-v`: 버전 출력 (`Calc.fsproj`의 `<Version>`을 어셈블리에서 읽음)
+  - `--help` / `-h`: 사용법 출력
+- 잘못된 옵션을 주면 오류 메시지와 사용법을 출력하고 종료 코드 1로 끝냄
+
+### 변경
+- **호환성 깨짐**: 식을 위치 인자로 받지 않습니다. `calc "1 + 2"` 대신 `calc --expr "1 + 2"`를 쓰세요.
+  `--expr`가 없으면 이전처럼 표준 입력에서 읽습니다.
+
 ## [0.1.0] - 2026-10-27
 
 fslex/fsyacc로 만든 최소 구성의 정수 사칙연산 계산기입니다.

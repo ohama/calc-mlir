@@ -5,7 +5,7 @@
 ## 출력 형식
 
 ```
-$ dotnet run --project src/Calc -- "2 + 3 * (4 - 1)"
+$ dotnet run --project src/Calc -- --expr "2 + 3 * (4 - 1)"
 AST:    Add (Number 2, Multiply (Number 3, Subtract (Number 4, Number 1)))
 Result: 11
 ```
@@ -35,6 +35,18 @@ Result: 11
 
 세 경우 모두 종료 코드는 `1`입니다. 종료 코드는 `echo $?`로 확인할 수 있습니다.
 
+## 명령줄 옵션 확인
+
+| 명령 | 기대 출력 | 종료 코드 |
+|---|---|---|
+| `--help`, `-h` | `USAGE: calc [--help] [--expr=<expr>] [--version]`로 시작하는 사용법 | 0 |
+| `--version`, `-v` | `calc 0.2.0` (`Calc.fsproj`의 `<Version>`) | 0 |
+| `-e "(2+3)*4"` | `Result: 20` | 0 |
+| `--expr=7/2` | `Result: 3` | 0 |
+| `--expr "-5 + 2"` | `Result: -3` (`-`로 시작하는 식도 값으로 처리됨) | 0 |
+| `--expr` (값 없음) | `ERROR: argument '--expr' must be followed by <expr>.` + 사용법 | 1 |
+| `--bogus` | `ERROR: unrecognized argument: '--bogus'.` + 사용법 | 1 |
+
 ## 여러 식을 한 번에 실행
 
 `dotnet run`은 매번 빌드 여부를 확인하기 때문에 느립니다. 한 번 빌드한 다음 DLL을 직접 실행하면 더 빠릅니다.
@@ -44,7 +56,7 @@ dotnet build src/Calc
 
 for e in "1 + 2" "2 + 3 * 4" "(2 + 3) * 4" "10 - 3 - 2" "-5 + 2" "7 / 2" "1 +" "2 \$ 3" "1 / 0"; do
   echo "== $e"
-  dotnet src/Calc/bin/Debug/net10.0/Calc.dll "$e"
+  dotnet src/Calc/bin/Debug/net10.0/Calc.dll --expr "$e"
   echo "exit=$?"
 done
 ```
