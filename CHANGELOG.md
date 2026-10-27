@@ -4,6 +4,15 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.3.0] - 2026-10-27
+
+### 추가
+- Expecto 테스트 프로젝트 `tests/Calc.Tests` (테스트 30개)
+  - Lexer: 토큰 순서, 공백 무시, 오류 처리
+  - Parser: 우선순위, 결합 방향, 괄호, 단항 마이너스, 파서 오류
+  - Eval: 식 계산 표, 0으로 나누기, FsCheck 속성 테스트
+- 솔루션 파일 `Calc.slnx`: 루트에서 `dotnet build` / `dotnet test` 실행 가능
+
 ## [0.2.0] - 2026-10-27
 
 ### 추가

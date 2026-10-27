@@ -1,6 +1,74 @@
 # 테스트 방법
 
-아직 자동화된 테스트 프로젝트는 없습니다. 지금은 프로그램을 직접 실행해서 **AST**와 **결과**를 확인하는 방식으로 테스트합니다.
+## 자동 테스트 (Expecto)
+
+`tests/Calc.Tests`는 [Expecto](https://github.com/haf/expecto)로 만든 테스트 프로젝트입니다.
+
+### 실행
+
+저장소 루트에서 실행합니다.
+
+```sh
+# 방법 1: dotnet test (솔루션 Calc.slnx 의 모든 테스트 프로젝트 실행, CI에 적합)
+dotnet test
+
+# 방법 2: 테스트 프로젝트를 콘솔 앱으로 실행 (Expecto 출력이 더 자세함)
+dotnet run --project tests/Calc.Tests
+```
+
+방법 2에서는 `--` 뒤에 Expecto 옵션을 줄 수 있습니다.
+
+```sh
+dotnet run --project tests/Calc.Tests -- --summary          # 테스트별 결과 요약
+dotnet run --project tests/Calc.Tests -- --filter Parser    # "Parser" 테스트 목록과 그 아래 테스트만
+dotnet run --project tests/Calc.Tests -- --list-tests       # 테스트 목록만 출력
+dotnet run --project tests/Calc.Tests -- --debug            # 각 테스트 시작과 끝을 출력
+```
+
+### 구성
+
+| 파일 | 테스트 목록 | 내용 |
+|---|---|---|
+| `LexerTests.fs` | `Lexer` | 토큰 순서, 공백과 줄바꿈 무시, 빈 입력, 알 수 없는 문자 오류 |
+| `ParserTests.fs` | `Parser` | 우선순위, 왼쪽 결합, 괄호, 단항 마이너스, 파서 오류 |
+| `EvalTests.fs` | `Eval` | 식 계산 표, 0으로 나누기, FsCheck 속성 테스트 |
+| `Main.fs` | — | 진입점 (`runTestsInAssemblyWithCLIArgs`) |
+
+`[<Tests>]` 속성이 붙은 값은 Expecto가 자동으로 찾아서 실행합니다.
+
+### 테스트 추가하기
+
+**예시 기반 테스트**: 결과가 정해진 경우입니다. `EvalTests.fs`라면 `cases` 리스트에 한 줄을 추가하면 됩니다.
+
+```fsharp
+let cases =
+    [ "1 + 2", 3
+      ...
+      "새 식", 기대값 ]
+```
+
+**속성 기반 테스트**: FsCheck가 무작위 입력을 만들어서 기본 100번 확인합니다.
+
+```fsharp
+testProperty "a - b" <| fun (NonNegativeInt a) (NonNegativeInt b) ->
+    calc (sprintf "%d - %d" a b) = a - b
+```
+
+`NonNegativeInt`를 쓴 이유가 있습니다. 렉서는 음이 아닌 정수만 읽기 때문에 `-2147483648`은 `-`와 `2147483648`로 나뉘고, `2147483648`은 `int` 범위를 넘습니다.
+
+**새 테스트 파일**: 만든 파일을 `Calc.Tests.fsproj`의 `Main.fs` **앞에** `<Compile Include=... />`로 추가합니다.
+
+### 테스트가 Calc 코드를 사용하는 방식
+
+테스트 프로젝트는 `ProjectReference`로 `src/Calc`를 참조합니다. 그래서 다음을 직접 호출할 수 있습니다.
+- `Program.parse`, `Program.eval`
+- 생성된 `Lexer.tokenize`, `Parser.token`
+
+`--version`과 `--help` 같은 명령줄 옵션은 아직 자동 테스트에 포함되지 않았습니다. 아래의 수동 테스트로 확인하세요.
+
+## 수동 테스트
+
+프로그램을 직접 실행해서 **AST**와 **결과**를 눈으로 확인하는 방법입니다.
 
 ## 출력 형식
 
@@ -40,7 +108,7 @@ Result: 11
 | 명령 | 기대 출력 | 종료 코드 |
 |---|---|---|
 | `--help`, `-h` | `USAGE: calc [--help] [--expr=<expr>] [--version]`로 시작하는 사용법 | 0 |
-| `--version`, `-v` | `calc 0.2.0` (`Calc.fsproj`의 `<Version>`) | 0 |
+| `--version`, `-v` | `calc 0.3.0` (`Calc.fsproj`의 `<Version>`) | 0 |
 | `-e "(2+3)*4"` | `Result: 20` | 0 |
 | `--expr=7/2` | `Result: 3` | 0 |
 | `--expr "-5 + 2"` | `Result: -3` (`-`로 시작하는 식도 값으로 처리됨) | 0 |
