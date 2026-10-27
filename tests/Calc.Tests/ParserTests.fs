@@ -86,6 +86,85 @@ let tests =
                 (Add (Number 1, Let ("x", Number 2, Var "x")))
                 ""
         }
+        test "불리언 리터럴" {
+            Expect.equal (parse "true") (Bool true) ""
+            Expect.equal (parse "false") (Bool false) ""
+        }
+        test "산술이 비교보다 우선" {
+            Expect.equal
+                (parse "1 + 2 < 4")
+                (Less (Add (Number 1, Number 2), Number 4))
+                ""
+        }
+        test "비교 연산자 6종" {
+            Expect.equal (parse "a = b") (Equal (Var "a", Var "b")) ""
+            Expect.equal (parse "a <> b") (NotEqual (Var "a", Var "b")) ""
+            Expect.equal (parse "a < b") (Less (Var "a", Var "b")) ""
+            Expect.equal (parse "a > b") (Greater (Var "a", Var "b")) ""
+            Expect.equal (parse "a <= b") (LessEqual (Var "a", Var "b")) ""
+            Expect.equal (parse "a >= b") (GreaterEqual (Var "a", Var "b")) ""
+        }
+        test "비교는 왼쪽 결합" {
+            Expect.equal
+                (parse "1 < 2 < 3")
+                (Less (Less (Number 1, Number 2), Number 3))
+                ""
+        }
+        test "비교가 && 보다 우선" {
+            Expect.equal
+                (parse "a < b && c")
+                (And (Less (Var "a", Var "b"), Var "c"))
+                ""
+        }
+        test "&& 가 || 보다 우선" {
+            Expect.equal
+                (parse "a || b && c")
+                (Or (Var "a", And (Var "b", Var "c")))
+                ""
+        }
+        test "&&, || 는 왼쪽 결합" {
+            Expect.equal (parse "a && b && c") (And (And (Var "a", Var "b"), Var "c")) ""
+            Expect.equal (parse "a || b || c") (Or (Or (Var "a", Var "b"), Var "c")) ""
+        }
+        test "not 은 비교보다 우선" {
+            Expect.equal
+                (parse "not a = b")
+                (Equal (Not (Var "a"), Var "b"))
+                ""
+        }
+        test "if-then-else" {
+            Expect.equal
+                (parse "if c then 1 else 2")
+                (If (Var "c", Number 1, Number 2))
+                ""
+        }
+        test "else 분기는 오른쪽으로 최대한 확장" {
+            Expect.equal
+                (parse "if c then 1 else 2 + 3")
+                (If (Var "c", Number 1, Add (Number 2, Number 3)))
+                ""
+        }
+        test "then 분기 안의 if" {
+            Expect.equal
+                (parse "if a then if b then 1 else 2 else 3")
+                (If (Var "a", If (Var "b", Number 1, Number 2), Number 3))
+                ""
+        }
+        test "괄호로 if 범위 제한" {
+            Expect.equal
+                (parse "(if c then 1 else 2) + 10")
+                (Add (If (Var "c", Number 1, Number 2), Number 10))
+                ""
+        }
+        test "let 값으로 비교식" {
+            Expect.equal
+                (parse "let x = 1 = 1 in x")
+                (Let ("x", Equal (Number 1, Number 1), Var "x"))
+                ""
+        }
+        test "else 없는 if 는 parse error" {
+            Expect.throws (fun () -> parse "if true then 1" |> ignore) ""
+        }
         test "in 없는 let 은 parse error" {
             Expect.throws (fun () -> parse "let x = 1" |> ignore) ""
         }

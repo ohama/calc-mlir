@@ -4,6 +4,31 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.5.0] - 2026-10-27
+
+### 추가
+- 불리언 리터럴 `true`, `false`
+- 비교 연산자 `=`, `<>`, `<`, `>`, `<=`, `>=`
+  - `=`와 `<>`는 int끼리 또는 bool끼리 비교합니다. 나머지는 int끼리만 비교합니다.
+- 논리 연산자 `&&`, `||`(단락 평가), `not`
+- `if <식> then <식> else <식>`. `else`는 생략할 수 없습니다.
+- 우선순위 (낮은 것부터): `let`/`if` < `||` < `&&` < 비교 < `+ -` < `* /` < 단항 `-`, `not`
+- 실행 중 타입 검사: `Type error: expected <int|bool> but got <int|bool>`
+- 렉서: 키워드 `if`, `then`, `else`, `true`, `false`, `not`, 연산자 `<>`, `<`, `>`, `<=`, `>=`, `&&`, `||`
+- AST: `Bool`, `If`, `Equal`, `NotEqual`, `Less`, `Greater`, `LessEqual`, `GreaterEqual`, `And`, `Or`, `Not`
+- 테스트 70개 추가 (총 125개)
+- `README.md`: 프로젝트 소개, 언어 기능, 시작하기, 구조, 문서 링크
+- `howto/`: 개발 중 해결한 문제를 기록한 문서 6개
+  - fsyacc `%nonassoc` 충돌, `let`/`if` 범위와 우선순위, fslex 키워드 순서
+  - Expecto와 `dotnet test`, fsproj 버전 관리, 파서용 FsCheck 속성 테스트
+
+### 변경
+- 평가기를 `Program.fs`에서 새 모듈 `Eval.fs`로 옮겼습니다.
+  - 평가 결과의 타입이 `int`에서 `Value`(`VInt of int | VBool of bool`)로 바뀌었습니다.
+  - 환경의 타입이 `Map<string, Value>`로 바뀌었습니다.
+  - `Program.eval`, `Program.evalIn` 대신 `Eval.eval`, `Eval.evalIn`을 씁니다.
+- `docs/grammar.md`, `docs/testing.md`, `docs/build.md`에 새 문법과 모듈 구성을 반영했습니다.
+
 ## [0.4.0] - 2026-10-27
 
 ### 추가

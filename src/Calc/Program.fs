@@ -15,27 +15,6 @@ type CliArgs =
             | Expr _ -> "evaluate the given expression (reads stdin if omitted)"
             | Version -> "print version and exit"
 
-type Env = Map<string, int>
-
-let rec evalIn (env: Env) expr =
-    match expr with
-    | Number n -> n
-    | Var name ->
-        match Map.tryFind name env with
-        | Some v -> v
-        | None -> failwithf "Unbound variable: %s" name
-    | Let (name, value, body) ->
-        let v = evalIn env value
-        evalIn (Map.add name v env) body
-    | Add (a, b) -> evalIn env a + evalIn env b
-    | Subtract (a, b) -> evalIn env a - evalIn env b
-    | Multiply (a, b) -> evalIn env a * evalIn env b
-    | Divide (a, b) -> evalIn env a / evalIn env b
-    | Negate e -> -(evalIn env e)
-
-/// 빈 환경에서 평가
-let eval expr = evalIn Map.empty expr
-
 let parse (input: string) : Expr =
     let lexbuf = LexBuffer<char>.FromString input
     Parser.start Lexer.tokenize lexbuf
@@ -50,7 +29,7 @@ let run (input: string) =
     try
         let ast = parse input
         printfn "AST:    %A" ast
-        printfn "Result: %d" (eval ast)
+        printfn "Result: %s" (Eval.formatValue (Eval.eval ast))
         0
     with ex ->
         eprintfn "Error: %s" ex.Message

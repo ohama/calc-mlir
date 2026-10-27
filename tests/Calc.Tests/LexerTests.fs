@@ -49,6 +49,36 @@ let tests =
         test "숫자 뒤 식별자는 분리" {
             Expect.equal (tokens "2x") [ NUMBER 2; IDENT "x"; EOF ] ""
         }
+        test "불리언과 if 키워드" {
+            Expect.equal
+                (tokens "if true then false else not x")
+                [ IF; TRUE; THEN; FALSE; ELSE; NOT; IDENT "x"; EOF ]
+                ""
+        }
+        test "비교 연산자" {
+            Expect.equal
+                (tokens "= <> < > <= >=")
+                [ EQUALS; NOTEQUAL; LESS; GREATER; LESSEQUAL; GREATEREQUAL; EOF ]
+                ""
+        }
+        test "비교 연산자: 공백 없이 (가장 긴 일치)" {
+            Expect.equal (tokens "1<=2") [ NUMBER 1; LESSEQUAL; NUMBER 2; EOF ] ""
+            Expect.equal (tokens "1<>2") [ NUMBER 1; NOTEQUAL; NUMBER 2; EOF ] ""
+        }
+        test "논리 연산자" {
+            Expect.equal (tokens "a && b || c") [ IDENT "a"; AND; IDENT "b"; OR; IDENT "c"; EOF ] ""
+        }
+        test "키워드로 시작하는 식별자: iffy, trueish, notx" {
+            Expect.equal
+                (tokens "iffy trueish notx")
+                [ IDENT "iffy"; IDENT "trueish"; IDENT "notx"; EOF ]
+                ""
+        }
+        test "& 하나는 알 수 없는 문자" {
+            Expect.throwsC
+                (fun () -> tokens "1 & 2" |> ignore)
+                (fun ex -> Expect.equal ex.Message "Unexpected character: &" "")
+        }
         test "알 수 없는 문자" {
             Expect.throwsC
                 (fun () -> tokens "2 $ 3" |> ignore)

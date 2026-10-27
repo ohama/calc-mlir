@@ -29,9 +29,9 @@ dotnet run --project tests/Calc.Tests -- --debug            # 각 테스트 시�
 
 | 파일 | 테스트 목록 | 내용 |
 |---|---|---|
-| `LexerTests.fs` | `Lexer` | 토큰 순서, 공백과 줄바꿈 무시, 키워드와 식별자, 빈 입력, 알 수 없는 문자 오류 |
-| `ParserTests.fs` | `Parser` | 우선순위, 왼쪽 결합, 괄호, 단항 마이너스, `let`의 범위와 중첩, 파서 오류 |
-| `EvalTests.fs` | `Eval` | 식 계산 표, `let`과 섀도잉, 정의되지 않은 변수, 0으로 나누기, FsCheck 속성 테스트 |
+| `LexerTests.fs` | `Lexer` | 토큰 순서, 공백과 줄바꿈 무시, 키워드와 식별자, 비교·논리 연산자, 빈 입력, 알 수 없는 문자 오류 |
+| `ParserTests.fs` | `Parser` | 우선순위, 결합 방향, 괄호, 단항 마이너스, `let`과 `if`의 범위와 중첩, 파서 오류 |
+| `EvalTests.fs` | `Eval` | 식 계산 표(정수와 불리언), `let`과 섀도잉, 단락 평가, 타입 오류, 정의되지 않은 변수, 0으로 나누기, FsCheck 속성 테스트 |
 | `Main.fs` | — | 진입점 (`runTestsInAssemblyWithCLIArgs`) |
 
 `[<Tests>]` 속성이 붙은 값은 Expecto가 자동으로 찾아서 실행합니다.
@@ -42,7 +42,8 @@ dotnet run --project tests/Calc.Tests -- --debug            # 각 테스트 시�
 
 ```fsharp
 let cases =
-    [ "1 + 2", 3
+    [ "1 + 2", VInt 3
+      "1 < 2", VBool true
       ...
       "새 식", 기대값 ]
 ```
@@ -51,7 +52,13 @@ let cases =
 
 ```fsharp
 testProperty "a - b" <| fun (NonNegativeInt a) (NonNegativeInt b) ->
-    calc (sprintf "%d - %d" a b) = a - b
+    calc (sprintf "%d - %d" a b) = VInt (a - b)
+```
+
+**오류 테스트**: `expectError 입력 메시지`는 오류 메시지가 정확히 일치하는지 확인합니다.
+
+```fsharp
+expectError "1 + true" "Type error: expected int but got bool"
 ```
 
 `NonNegativeInt`를 쓴 이유가 있습니다. 렉서는 음이 아닌 정수만 읽기 때문에 `-2147483648`은 `-`와 `2147483648`로 나뉘고, `2147483648`은 `int` 범위를 넘습니다.
@@ -61,7 +68,8 @@ testProperty "a - b" <| fun (NonNegativeInt a) (NonNegativeInt b) ->
 ### 테스트가 Calc 코드를 사용하는 방식
 
 테스트 프로젝트는 `ProjectReference`로 `src/Calc`를 참조합니다. 그래서 다음을 직접 호출할 수 있습니다.
-- `Program.parse`, `Program.eval`
+- `Program.parse`
+- `Eval.eval`, `Eval.evalIn`, `Eval.formatValue`, `Eval.Value`(`VInt`, `VBool`)
 - 생성된 `Lexer.tokenize`, `Parser.token`
 
 `--version`과 `--help` 같은 명령줄 옵션은 아직 자동 테스트에 포함되지 않았습니다. 아래의 수동 테스트로 확인하세요.
@@ -96,6 +104,12 @@ Result: 11
 | `let x = 1 in x + 2` | 본문은 오른쪽 끝까지 이어짐 | `Let ("x", Number 1, Add (Var "x", Number 2))` | `3` |
 | `(let x = 1 in x) + 10` | 괄호로 범위 제한 | `Add (Let ("x", Number 1, Var "x"), Number 10)` | `11` |
 | `let x = 1 in let x = 2 in x` | 섀도잉 (안쪽 바인딩 우선) | `Let ("x", Number 1, Let ("x", Number 2, Var "x"))` | `2` |
+| `1 + 2 < 4` | 산술이 비교보다 먼저 계산됨 | `Less (Add (Number 1, Number 2), Number 4)` | `true` |
+| `true \|\| false && false` | `&&`가 `\|\|`보다 먼저 계산됨 | `Or (Bool true, And (Bool false, Bool false))` | `true` |
+| `not true = false` | `not`이 비교보다 먼저 계산됨 | `Equal (Not (Bool true), Bool false)` | `true` |
+| `if 1 < 2 then 10 else 20` | `if-then-else` | `If (Less (Number 1, Number 2), Number 10, Number 20)` | `10` |
+| `if false then 1 else 2 + 3` | `else` 분기는 오른쪽 끝까지 이어짐 | `If (Bool false, Number 1, Add (Number 2, Number 3))` | `5` |
+| `false && 1 / 0 = 0` | 단락 평가 (오른쪽은 평가하지 않음) | `And (Bool false, Equal (Divide (Number 1, Number 0), Number 0))` | `false` |
 
 ## 오류 처리 확인
 
@@ -107,6 +121,10 @@ Result: 11
 | `y + 1` | 평가 | AST 출력 후 `Error: Unbound variable: y` |
 | `let x = 1` | 파서 (`in` 없음) | `Error: parse error` |
 | `let in = 1 in 2` | 파서 (키워드는 변수 이름이 될 수 없음) | `Error: parse error` |
+| `if true then 1` | 파서 (`else` 없음) | `Error: parse error` |
+| `1 + true` | 평가 (타입) | AST 출력 후 `Error: Type error: expected int but got bool` |
+| `if 1 then 2 else 3` | 평가 (타입) | AST 출력 후 `Error: Type error: expected bool but got int` |
+| `1 < 2 < 3` | 평가 (타입: `(1 < 2) < 3`) | AST 출력 후 `Error: Type error: expected int but got bool` |
 
 모든 경우 종료 코드는 `1`입니다. 종료 코드는 `echo $?`로 확인할 수 있습니다.
 
@@ -115,7 +133,7 @@ Result: 11
 | 명령 | 기대 출력 | 종료 코드 |
 |---|---|---|
 | `--help`, `-h` | `USAGE: calc [--help] [--expr=<expr>] [--version]`로 시작하는 사용법 | 0 |
-| `--version`, `-v` | `calc 0.4.0` (`Calc.fsproj`의 `<Version>`) | 0 |
+| `--version`, `-v` | `calc 0.5.0` (`Calc.fsproj`의 `<Version>`) | 0 |
 | `-e "(2+3)*4"` | `Result: 20` | 0 |
 | `--expr=7/2` | `Result: 3` | 0 |
 | `--expr "-5 + 2"` | `Result: -3` (`-`로 시작하는 식도 값으로 처리됨) | 0 |

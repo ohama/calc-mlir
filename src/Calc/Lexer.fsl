@@ -19,9 +19,22 @@ rule tokenize = parse
     // 키워드는 IDENT 보다 먼저 와야 함 (같은 길이로 매치되면 앞의 규칙이 이김)
     | "let"         { LET }
     | "in"          { IN }
+    | "if"          { IF }
+    | "then"        { THEN }
+    | "else"        { ELSE }
+    | "true"        { TRUE }
+    | "false"       { FALSE }
+    | "not"         { NOT }
     | ident_start ident_char*
                     { IDENT (lexeme lexbuf) }
+    | "<>"          { NOTEQUAL }
+    | "<="          { LESSEQUAL }
+    | ">="          { GREATEREQUAL }
+    | '<'           { LESS }
+    | '>'           { GREATER }
     | '='           { EQUALS }
+    | "&&"          { AND }
+    | "||"          { OR }
     | '+'           { PLUS }
     | '-'           { MINUS }
     | '*'           { STAR }

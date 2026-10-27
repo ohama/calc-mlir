@@ -55,7 +55,7 @@ dotnet src/Calc/bin/Debug/net10.0/Calc.dll --expr "2 + 3"
 | 옵션 | 짧은 형식 | 설명 |
 |---|---|---|
 | `--expr <expr>` | `-e <expr>` | 주어진 식을 계산합니다. `--expr=<expr>` 형식도 됩니다. 생략하면 표준 입력에서 읽습니다. |
-| `--version` | `-v` | 버전을 출력하고 종료합니다 (예: `calc 0.4.0`). |
+| `--version` | `-v` | 버전을 출력하고 종료합니다 (예: `calc 0.5.0`). |
 | `--help` | `-h` | 사용법을 출력하고 종료합니다. |
 
 `--version`이 출력하는 버전은 `Calc.fsproj`의 `<Version>` 값을 실행 중에 어셈블리에서 읽어 옵니다. 그래서 버전 번호는 fsproj 한 곳만 고치면 됩니다.
@@ -76,11 +76,12 @@ dotnet src/Calc/bin/Debug/net10.0/Calc.dll --expr "2 + 3"
 그다음 F# 컴파일러가 `Calc.fsproj`에 적힌 순서대로 컴파일합니다.
 
 ```
-Ast.fs → Parser.fsi → Parser.fs → Lexer.fs → Program.fs
+Ast.fs → Eval.fs → Parser.fsi → Parser.fs → Lexer.fs → Program.fs
 ```
 
 F#은 앞에 나온 파일만 참조할 수 있습니다. 그래서 순서가 중요합니다.
 
+- `Eval`은 `Ast`의 `Expr`를 평가합니다.
 - `Parser`는 `Ast`의 `Expr` 타입을 사용합니다.
 - `Lexer`는 `Parser`가 정의한 토큰(`NUMBER`, `PLUS` 등)을 사용합니다.
 - `Program`은 `Lexer`와 `Parser`를 모두 사용합니다.
