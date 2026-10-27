@@ -74,6 +74,18 @@ let tests =
                 [ IDENT "iffy"; IDENT "trueish"; IDENT "notx"; EOF ]
                 ""
         }
+        test "함수 키워드와 화살표" {
+            Expect.equal
+                (tokens "let rec f = fun x -> x")
+                [ LET; REC; IDENT "f"; EQUALS; FUN; IDENT "x"; ARROW; IDENT "x"; EOF ]
+                ""
+        }
+        test "-> 와 - 구분 (가장 긴 일치)" {
+            Expect.equal (tokens "x->-1") [ IDENT "x"; ARROW; MINUS; NUMBER 1; EOF ] ""
+        }
+        test "키워드로 시작하는 식별자: funny, record" {
+            Expect.equal (tokens "funny record") [ IDENT "funny"; IDENT "record"; EOF ] ""
+        }
         test "& 하나는 알 수 없는 문자" {
             Expect.throwsC
                 (fun () -> tokens "1 & 2" |> ignore)

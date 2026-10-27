@@ -5,6 +5,10 @@ open Ast
 type Value =
     | VInt of int
     | VBool of bool
+    /// fun param -> body, 정의된 시점의 환경을 함께 저장 (정적 범위)
+    | VClosure of param: string * body: Expr * env: Map<string, Value>
+    /// let rec name param = body. 호출할 때 name 을 자기 자신으로 환경에 추가
+    | VRecClosure of name: string * param: string * body: Expr * env: Map<string, Value>
 
 type Env = Map<string, Value>
 
@@ -13,11 +17,13 @@ let formatValue value =
     | VInt n -> string n
     | VBool true -> "true"
     | VBool false -> "false"
+    | VClosure _ | VRecClosure _ -> "<fun>"
 
 let typeName value =
     match value with
     | VInt _ -> "int"
     | VBool _ -> "bool"
+    | VClosure _ | VRecClosure _ -> "function"
 
 let typeError expected value =
     failwithf "Type error: expected %s but got %s" expected (typeName value)
@@ -33,6 +39,14 @@ let rec evalIn (env: Env) expr =
     | Let (name, value, body) ->
         let v = evalIn env value
         evalIn (Map.add name v env) body
+    | LetRec (name, param, body, inExpr) ->
+        evalIn (Map.add name (VRecClosure (name, param, body, env)) env) inExpr
+    | Lambda (param, body) -> VClosure (param, body, env)
+    | App (f, arg) ->
+        // 값에 의한 호출: 함수와 인자를 먼저 평가한 뒤 본문을 평가
+        let fv = evalIn env f
+        let av = evalIn env arg
+        apply fv av
     | If (cond, thenExpr, elseExpr) ->
         if evalBool env cond then evalIn env thenExpr else evalIn env elseExpr
     | Add (a, b) -> VInt (evalInt env a + evalInt env b)
@@ -68,6 +82,16 @@ and evalEquals env a b =
     | VBool x, VBool y -> x = y
     | VInt _, v -> typeError "int" v
     | VBool _, v -> typeError "bool" v
+    | v, _ -> typeError "int or bool" v
+
+and apply fv av =
+    match fv with
+    | VClosure (param, body, closureEnv) ->
+        evalIn (Map.add param av closureEnv) body
+    | VRecClosure (name, param, body, closureEnv) ->
+        let env = closureEnv |> Map.add name fv |> Map.add param av
+        evalIn env body
+    | v -> typeError "function" v
 
 /// 빈 환경에서 평가
 let eval expr = evalIn Map.empty expr

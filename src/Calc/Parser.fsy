@@ -1,10 +1,14 @@
 %{
 open Ast
+
+/// fun x y -> body  ==  fun x -> fun y -> body
+let makeLambda (parameters: string list) (body: Expr) =
+    List.foldBack (fun p acc -> Lambda(p, acc)) parameters body
 %}
 
 %token <int> NUMBER
 %token <string> IDENT
-%token LET IN EQUALS
+%token LET REC IN EQUALS FUN ARROW
 %token IF THEN ELSE TRUE FALSE
 %token NOTEQUAL LESS GREATER LESSEQUAL GREATEREQUAL
 %token AND OR NOT
@@ -12,12 +16,14 @@ open Ast
 %token EOF
 
 // 아래로 갈수록 우선순위가 높음.
-// IN, ELSE 가 가장 낮으므로 let 본문과 else 분기는 오른쪽으로 최대한 길게 이어짐:
+// IN, ELSE, ARROW 가 가장 낮으므로 let 본문, else 분기, fun 본문은 오른쪽으로 최대한 길게 이어짐:
 //   let x = 1 in x + 2           ==  let x = 1 in (x + 2)
 //   if c then 1 else 2 + 3       ==  if c then 1 else (2 + 3)
+//   fun x -> x + 1               ==  fun x -> (x + 1)
 // 비교 연산자는 왼쪽 결합: 1 < 2 < 3 == (1 < 2) < 3 → 평가 시 타입 오류.
 // (fsyacc 는 %nonassoc 연산자가 연달아 나와도 오류로 만들지 않고 shift/reduce 충돌을 보고하므로 %left 사용)
-%nonassoc IN ELSE
+// 함수 호출(f x)은 우선순위 선언이 아니라 AppExpr/Atom 계층으로 가장 강하게 묶임.
+%nonassoc IN ELSE ARROW
 %left OR
 %left AND
 %left EQUALS NOTEQUAL LESS GREATER LESSEQUAL GREATEREQUAL
@@ -34,11 +40,13 @@ start:
     | Expr EOF                      { $1 }
 
 Expr:
-    | NUMBER                        { Number $1 }
-    | TRUE                          { Bool true }
-    | FALSE                         { Bool false }
-    | IDENT                         { Var $1 }
+    | AppExpr                       { $1 }
     | LET IDENT EQUALS Expr IN Expr { Let($2, $4, $6) }
+    | LET IDENT Params EQUALS Expr IN Expr
+                                    { Let($2, makeLambda $3 $5, $7) }
+    | LET REC IDENT Params EQUALS Expr IN Expr
+                                    { LetRec($3, List.head $4, makeLambda (List.tail $4) $6, $8) }
+    | FUN Params ARROW Expr         { makeLambda $2 $4 }
     | IF Expr THEN Expr ELSE Expr   { If($2, $4, $6) }
     | Expr PLUS Expr                { Add($1, $3) }
     | Expr MINUS Expr               { Subtract($1, $3) }
@@ -54,4 +62,19 @@ Expr:
     | Expr AND Expr                 { And($1, $3) }
     | Expr OR Expr                  { Or($1, $3) }
     | NOT Expr                      { Not $2 }
+
+// 함수 호출: 왼쪽 결합 (f x y == (f x) y)
+AppExpr:
+    | AppExpr Atom                  { App($1, $2) }
+    | Atom                          { $1 }
+
+Atom:
+    | NUMBER                        { Number $1 }
+    | TRUE                          { Bool true }
+    | FALSE                         { Bool false }
+    | IDENT                         { Var $1 }
     | LPAREN Expr RPAREN            { $2 }
+
+Params:
+    | IDENT                         { [ $1 ] }
+    | IDENT Params                  { $1 :: $2 }

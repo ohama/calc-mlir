@@ -5,6 +5,9 @@ type Expr =
     | Bool of bool
     | Var of string
     | Let of string * Expr * Expr
+    | LetRec of name: string * param: string * body: Expr * inExpr: Expr
+    | Lambda of string * Expr
+    | App of Expr * Expr
     | If of Expr * Expr * Expr
     | Add of Expr * Expr
     | Subtract of Expr * Expr

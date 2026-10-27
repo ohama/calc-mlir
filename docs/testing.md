@@ -29,9 +29,9 @@ dotnet run --project tests/Calc.Tests -- --debug            # 각 테스트 시�
 
 | 파일 | 테스트 목록 | 내용 |
 |---|---|---|
-| `LexerTests.fs` | `Lexer` | 토큰 순서, 공백과 줄바꿈 무시, 키워드와 식별자, 비교·논리 연산자, 빈 입력, 알 수 없는 문자 오류 |
-| `ParserTests.fs` | `Parser` | 우선순위, 결합 방향, 괄호, 단항 마이너스, `let`과 `if`의 범위와 중첩, 파서 오류 |
-| `EvalTests.fs` | `Eval` | 식 계산 표(정수와 불리언), `let`과 섀도잉, 단락 평가, 타입 오류, 정의되지 않은 변수, 0으로 나누기, FsCheck 속성 테스트 |
+| `LexerTests.fs` | `Lexer` | 토큰 순서, 공백과 줄바꿈 무시, 키워드와 식별자, 비교·논리 연산자, `->`, 빈 입력, 알 수 없는 문자 오류 |
+| `ParserTests.fs` | `Parser` | 우선순위, 결합 방향, 괄호, 단항 마이너스, `let`/`if`/`fun`의 범위와 중첩, 함수 호출, 함수 정의 문법 설탕, 파서 오류 |
+| `EvalTests.fs` | `Eval` | 식 계산 표(정수, 불리언, 함수, 재귀), `let`과 섀도잉, 클로저, 단락 평가, 타입 오류, 정의되지 않은 변수, 0으로 나누기, FsCheck 속성 테스트 |
 | `Main.fs` | — | 진입점 (`runTestsInAssemblyWithCLIArgs`) |
 
 `[<Tests>]` 속성이 붙은 값은 Expecto가 자동으로 찾아서 실행합니다.
@@ -110,6 +110,12 @@ Result: 11
 | `if 1 < 2 then 10 else 20` | `if-then-else` | `If (Less (Number 1, Number 2), Number 10, Number 20)` | `10` |
 | `if false then 1 else 2 + 3` | `else` 분기는 오른쪽 끝까지 이어짐 | `If (Bool false, Number 1, Add (Number 2, Number 3))` | `5` |
 | `false && 1 / 0 = 0` | 단락 평가 (오른쪽은 평가하지 않음) | `And (Bool false, Equal (Divide (Number 1, Number 0), Number 0))` | `false` |
+| `let f x = x + 1 in f 41` | 함수 정의와 호출 | `Let ("f", Lambda ("x", Add (Var "x", Number 1)), App (Var "f", Number 41))` | `42` |
+| `(fun x -> x * 2) 21` | 람다 즉시 호출 | `App (Lambda ("x", Multiply (Var "x", Number 2)), Number 21)` | `42` |
+| `let add x y = x + y in let inc = add 1 in inc 41` | 커링과 부분 적용 | | `42` |
+| `let rec fact n = if n <= 1 then 1 else n * fact (n - 1) in fact 10` | 재귀 | | `3628800` |
+| `let x = 1 in let f y = x + y in let x = 100 in f 1` | 클로저 (정적 범위) | | `2` |
+| `fun x -> x` | 함수 값 출력 | `Lambda ("x", Var "x")` | `<fun>` |
 
 ## 오류 처리 확인
 
@@ -125,6 +131,10 @@ Result: 11
 | `1 + true` | 평가 (타입) | AST 출력 후 `Error: Type error: expected int but got bool` |
 | `if 1 then 2 else 3` | 평가 (타입) | AST 출력 후 `Error: Type error: expected bool but got int` |
 | `1 < 2 < 3` | 평가 (타입: `(1 < 2) < 3`) | AST 출력 후 `Error: Type error: expected int but got bool` |
+| `1 2` | 평가 (함수가 아닌 값 호출) | AST 출력 후 `Error: Type error: expected function but got int` |
+| `let f x = f x in f 1` | 평가 (`rec` 없이 재귀) | AST 출력 후 `Error: Unbound variable: f` |
+| `let rec f = 1 in f` | 파서 (`let rec`에 인자 없음) | `Error: parse error` |
+| `let rec loop n = if n = 0 then 0 else loop (n - 1) in loop 1000000` | 평가 (재귀가 너무 깊음) | `Stack overflow.` 후 프로세스 종료 (종료 코드 134) |
 
 모든 경우 종료 코드는 `1`입니다. 종료 코드는 `echo $?`로 확인할 수 있습니다.
 
@@ -133,7 +143,7 @@ Result: 11
 | 명령 | 기대 출력 | 종료 코드 |
 |---|---|---|
 | `--help`, `-h` | `USAGE: calc [--help] [--expr=<expr>] [--version]`로 시작하는 사용법 | 0 |
-| `--version`, `-v` | `calc 0.5.0` (`Calc.fsproj`의 `<Version>`) | 0 |
+| `--version`, `-v` | `calc 0.6.0` (`Calc.fsproj`의 `<Version>`) | 0 |
 | `-e "(2+3)*4"` | `Result: 20` | 0 |
 | `--expr=7/2` | `Result: 3` | 0 |
 | `--expr "-5 + 2"` | `Result: -3` (`-`로 시작하는 식도 값으로 처리됨) | 0 |

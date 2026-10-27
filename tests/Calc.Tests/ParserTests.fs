@@ -162,6 +162,78 @@ let tests =
                 (Let ("x", Equal (Number 1, Number 1), Var "x"))
                 ""
         }
+        test "함수 호출" {
+            Expect.equal (parse "f x") (App (Var "f", Var "x")) ""
+        }
+        test "함수 호출은 왼쪽 결합 (커링)" {
+            Expect.equal (parse "f x y") (App (App (Var "f", Var "x"), Var "y")) ""
+        }
+        test "함수 호출이 이항 연산보다 우선" {
+            Expect.equal
+                (parse "f x + g y")
+                (Add (App (Var "f", Var "x"), App (Var "g", Var "y")))
+                ""
+        }
+        test "함수 호출이 단항 마이너스보다 우선" {
+            Expect.equal (parse "-f x") (Negate (App (Var "f", Var "x"))) ""
+        }
+        test "f -1 은 뺄셈" {
+            Expect.equal (parse "f -1") (Subtract (Var "f", Number 1)) ""
+        }
+        test "괄호로 인자 묶기" {
+            Expect.equal
+                (parse "f (g x)")
+                (App (Var "f", App (Var "g", Var "x")))
+                ""
+            Expect.equal (parse "f (-1)") (App (Var "f", Negate (Number 1))) ""
+        }
+        test "람다" {
+            Expect.equal (parse "fun x -> x") (Lambda ("x", Var "x")) ""
+        }
+        test "람다 본문은 오른쪽으로 최대한 확장" {
+            Expect.equal
+                (parse "fun x -> x + 1")
+                (Lambda ("x", Add (Var "x", Number 1)))
+                ""
+        }
+        test "여러 인자 람다는 중첩 람다" {
+            Expect.equal
+                (parse "fun x y -> x")
+                (Lambda ("x", Lambda ("y", Var "x")))
+                ""
+        }
+        test "람다 즉시 호출" {
+            Expect.equal
+                (parse "(fun x -> x) 1")
+                (App (Lambda ("x", Var "x"), Number 1))
+                ""
+        }
+        test "let 함수 정의는 람다의 문법 설탕" {
+            Expect.equal
+                (parse "let f x y = x + y in f 1 2")
+                (Let ("f",
+                      Lambda ("x", Lambda ("y", Add (Var "x", Var "y"))),
+                      App (App (Var "f", Number 1), Number 2)))
+                ""
+        }
+        test "let rec" {
+            Expect.equal
+                (parse "let rec f n = f n in f 1")
+                (LetRec ("f", "n", App (Var "f", Var "n"), App (Var "f", Number 1)))
+                ""
+        }
+        test "let rec 여러 인자" {
+            Expect.equal
+                (parse "let rec f a b = a in f")
+                (LetRec ("f", "a", Lambda ("b", Var "a"), Var "f"))
+                ""
+        }
+        test "인자 없는 let rec 은 parse error" {
+            Expect.throws (fun () -> parse "let rec f = 1 in f" |> ignore) ""
+        }
+        test "인자 없는 fun 은 parse error" {
+            Expect.throws (fun () -> parse "fun -> 1" |> ignore) ""
+        }
         test "else 없는 if 는 parse error" {
             Expect.throws (fun () -> parse "if true then 1" |> ignore) ""
         }

@@ -4,6 +4,23 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.6.0] - 2026-10-27
+
+### 추가
+- 람다 `fun x y -> body`. 여러 인자는 중첩 람다(커링)로 바뀝니다.
+- 함수 호출 `f x y`. 붙여 쓰는 방식이고, 왼쪽 결합이며, 가장 높은 우선순위입니다.
+- 함수 정의 문법 설탕 `let f x y = body in e`
+- 재귀 함수 `let rec f x = body in e`
+- 클로저(정적 범위), 부분 적용, 값에 의한 호출(call-by-value)
+- 렉서: 키워드 `fun`, `rec`, 토큰 `->`
+- AST: `Lambda`, `App`, `LetRec`
+- 값: `VClosure`, `VRecClosure`. `<fun>`으로 출력되고 타입 이름은 `function`입니다.
+- 테스트 46개 추가 (총 171개)
+
+### 변경
+- `calc`는 평가를 512MB 스택의 스레드에서 실행합니다. 기본 스택에서는 재귀 깊이 약 7,000에서 프로세스가 죽었지만, 이제 약 100,000까지 동작합니다.
+- `docs/grammar.md`, `docs/testing.md`, `README.md`에 함수 문법과 의미를 반영했습니다.
+
 ## [0.5.0] - 2026-10-27
 
 ### 추가
