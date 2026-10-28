@@ -104,6 +104,36 @@ let tests =
         test "키워드로 시작하는 식별자: matches, without" {
             Expect.equal (tokens "matches without") [ IDENT "matches"; IDENT "without"; EOF ] ""
         }
+        test "문자열" {
+            Expect.equal (tokens "\"hello\" \"\"") [ STRING "hello"; STRING ""; EOF ] ""
+        }
+        test "문자열 안의 키워드와 기호는 그대로" {
+            Expect.equal (tokens "\"let x = [1] // \"") [ STRING "let x = [1] // "; EOF ] ""
+        }
+        test "문자열 이스케이프" {
+            Expect.equal (tokens "\"a\\\"b\\\\c\\nd\\te\"") [ STRING "a\"b\\c\nd\te"; EOF ] ""
+        }
+        test "문자열: 유니코드" {
+            Expect.equal (tokens "\"안녕 😀\"") [ STRING "안녕 😀"; EOF ] ""
+        }
+        test "문자열 안의 줄바꿈은 그대로 포함" {
+            Expect.equal (tokens "\"a\nb\"") [ STRING "a\nb"; EOF ] ""
+        }
+        test "닫히지 않은 문자열" {
+            Expect.throwsC
+                (fun () -> tokens "\"abc" |> ignore)
+                (fun ex -> Expect.equal ex.Message "Unterminated string" "")
+        }
+        test "알 수 없는 이스케이프" {
+            Expect.throwsC
+                (fun () -> tokens "\"a\\qb\"" |> ignore)
+                (fun ex -> Expect.equal ex.Message "Invalid escape sequence: \\q" "")
+        }
+        test "문자열 끝의 \\ 는 닫는 \" 를 이스케이프" {
+            Expect.throwsC
+                (fun () -> tokens "\"abc\\\"" |> ignore)
+                (fun ex -> Expect.equal ex.Message "Unterminated string" "")
+        }
         test ": 하나는 알 수 없는 문자" {
             Expect.throwsC
                 (fun () -> tokens "1 : 2" |> ignore)

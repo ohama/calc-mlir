@@ -4,6 +4,21 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.8.0] - 2026-10-28
+
+### 추가
+- 문자열 리터럴 `"..."`. 이스케이프 `\"`, `\\`, `\n`, `\t`, `\r`을 지원하고, 한글 같은 유니코드 문자를 쓸 수 있습니다.
+- 문자열 연결 `+`. 왼쪽 값이 int면 덧셈, string이면 연결입니다.
+- 문자열 비교 `=`, `<>`, `<`, `>`, `<=`, `>=`. 순서 비교는 문자 코드 순서(ordinal)입니다.
+- 렉서 오류 `Unterminated string`, `Invalid escape sequence: \<문자>`
+- AST: `Str`, 값: `VString`. 리터럴 형태(`"a\nb"`)로 출력되고 타입 이름은 `string`입니다.
+- 테스트 42개 추가 (총 266개)
+
+### 변경
+- `+`와 `<` `>` `<=` `>=`의 왼쪽 값이 int도 string도 아니면 오류 메시지가 `expected int or string but got <타입>`입니다. 예전에는 `expected int`였습니다.
+- 함수를 비교할 때의 오류 메시지가 `expected int, bool, string or list but got function`으로 바뀌었습니다.
+- `docs/grammar.md`, `docs/testing.md`, `README.md`에 문자열 문법과 의미를 반영했습니다.
+
 ## [0.7.0] - 2026-10-28
 
 ### 추가

@@ -5,6 +5,7 @@ open Ast
 type Value =
     | VInt of int
     | VBool of bool
+    | VString of string
     /// fun param -> body, 정의된 시점의 환경을 함께 저장 (정적 범위)
     | VClosure of param: string * body: Expr * env: Map<string, Value>
     /// let rec name param = body. 호출할 때 name 을 자기 자신으로 환경에 추가
@@ -13,11 +14,18 @@ type Value =
 
 type Env = Map<string, Value>
 
+/// 문자열을 리터럴 형태로 출력 (렉서가 받는 이스케이프로 되돌림)
+let quote (s: string) =
+    let escaped =
+        s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\t", "\\t").Replace("\r", "\\r")
+    "\"" + escaped + "\""
+
 let rec formatValue value =
     match value with
     | VInt n -> string n
     | VBool true -> "true"
     | VBool false -> "false"
+    | VString s -> quote s
     | VClosure _ | VRecClosure _ -> "<fun>"
     | VList items -> "[" + (items |> List.map formatValue |> String.concat "; ") + "]"
 
@@ -25,6 +33,7 @@ let typeName value =
     match value with
     | VInt _ -> "int"
     | VBool _ -> "bool"
+    | VString _ -> "string"
     | VClosure _ | VRecClosure _ -> "function"
     | VList _ -> "list"
 
@@ -36,17 +45,20 @@ let rec valueEquals a b =
     match a, b with
     | VInt x, VInt y -> x = y
     | VBool x, VBool y -> x = y
+    | VString x, VString y -> x = y
     | VList xs, VList ys ->
         List.length xs = List.length ys && List.forall2 valueEquals xs ys
     | VInt _, v -> typeError "int" v
     | VBool _, v -> typeError "bool" v
+    | VString _, v -> typeError "string" v
     | VList _, v -> typeError "list" v
-    | v, _ -> typeError "int, bool or list" v
+    | v, _ -> typeError "int, bool, string or list" v
 
 let rec evalIn (env: Env) expr =
     match expr with
     | Number n -> VInt n
     | Bool b -> VBool b
+    | Str s -> VString s
     | Var name ->
         match Map.tryFind name env with
         | Some v -> v
@@ -64,17 +76,22 @@ let rec evalIn (env: Env) expr =
         apply fv av
     | If (cond, thenExpr, elseExpr) ->
         if evalBool env cond then evalIn env thenExpr else evalIn env elseExpr
-    | Add (a, b) -> VInt (evalInt env a + evalInt env b)
+    // + 는 int 덧셈 또는 string 연결. 왼쪽 값의 타입으로 정함
+    | Add (a, b) ->
+        match evalIn env a with
+        | VInt x -> VInt (x + evalInt env b)
+        | VString x -> VString (x + evalString env b)
+        | v -> typeError "int or string" v
     | Subtract (a, b) -> VInt (evalInt env a - evalInt env b)
     | Multiply (a, b) -> VInt (evalInt env a * evalInt env b)
     | Divide (a, b) -> VInt (evalInt env a / evalInt env b)
     | Negate e -> VInt -(evalInt env e)
     | Equal (a, b) -> VBool (evalEquals env a b)
     | NotEqual (a, b) -> VBool (not (evalEquals env a b))
-    | Less (a, b) -> VBool (evalInt env a < evalInt env b)
-    | Greater (a, b) -> VBool (evalInt env a > evalInt env b)
-    | LessEqual (a, b) -> VBool (evalInt env a <= evalInt env b)
-    | GreaterEqual (a, b) -> VBool (evalInt env a >= evalInt env b)
+    | Less (a, b) -> VBool (evalCompare env a b < 0)
+    | Greater (a, b) -> VBool (evalCompare env a b > 0)
+    | LessEqual (a, b) -> VBool (evalCompare env a b <= 0)
+    | GreaterEqual (a, b) -> VBool (evalCompare env a b >= 0)
     // && 와 || 는 단락 평가: 왼쪽으로 결과가 정해지면 오른쪽은 평가하지 않음
     | And (a, b) -> VBool (evalBool env a && evalBool env b)
     | Or (a, b) -> VBool (evalBool env a || evalBool env b)
@@ -97,6 +114,18 @@ and evalBool env expr =
     match evalIn env expr with
     | VBool b -> b
     | v -> typeError "bool" v
+
+and evalString env expr =
+    match evalIn env expr with
+    | VString s -> s
+    | v -> typeError "string" v
+
+/// < > <= >= 는 int 끼리 또는 string 끼리 (문자 코드 순서) 비교
+and evalCompare env a b =
+    match evalIn env a with
+    | VInt x -> compare x (evalInt env b)
+    | VString x -> System.String.CompareOrdinal(x, evalString env b)
+    | v -> typeError "int or string" v
 
 and evalList env expr =
     match evalIn env expr with

@@ -228,6 +228,15 @@ let tests =
                 (LetRec ("f", "a", Lambda ("b", Var "a"), Var "f"))
                 ""
         }
+        test "문자열 리터럴" {
+            Expect.equal (parse "\"a\"") (Str "a") ""
+        }
+        test "문자열 연결은 Add" {
+            Expect.equal (parse "\"a\" + s") (Add (Str "a", Var "s")) ""
+        }
+        test "문자열은 함수 인자가 될 수 있음 (Atom)" {
+            Expect.equal (parse "f \"a\" \"b\"") (App (App (Var "f", Str "a"), Str "b")) ""
+        }
         test "빈 리스트" {
             Expect.equal (parse "[]") Nil ""
         }

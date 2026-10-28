@@ -107,7 +107,27 @@ let cases =
       "let rec range n = if n = 0 then [] else n :: range (n - 1) in range 3",
           VList [ VInt 3; VInt 2; VInt 1 ]
       // match 분기에서 바인딩한 이름은 바깥 이름을 가림
-      "let h = 100 in match [1] with [] -> h | h :: t -> h", VInt 1 ]
+      "let h = 100 in match [1] with [] -> h | h :: t -> h", VInt 1
+      // 문자열
+      "\"hello\"", VString "hello"
+      "\"\"", VString ""
+      "\"a\" + \"b\"", VString "ab"
+      "\"a\" + \"b\" + \"c\"", VString "abc"
+      "\"안녕\" + \", 세계\"", VString "안녕, 세계"
+      "\"say \\\"hi\\\"\"", VString "say \"hi\""
+      "\"a\\nb\\tc\\\\\"", VString "a\nb\tc\\"
+      "\"a\" = \"a\"", VBool true
+      "\"a\" = \"b\"", VBool false
+      "\"a\" <> \"b\"", VBool true
+      "\"apple\" < \"banana\"", VBool true
+      "\"abc\" >= \"abc\"", VBool true
+      "\"ab\" < \"abc\"", VBool true
+      // 문자 코드 순서: 대문자가 소문자보다 앞
+      "\"B\" < \"a\"", VBool true
+      "[\"a\"; \"b\"] = [\"a\"; \"b\"]", VBool true
+      "let greet name = \"Hello, \" + name in greet \"F#\"", VString "Hello, F#"
+      "let rec join xs = match xs with [] -> \"\" | h :: t -> h + join t in join [\"a\"; \"b\"]", VString "ab"
+      "if \"a\" = \"a\" then \"yes\" else \"no\"", VString "yes" ]
 
 /// 오류 메시지가 정확히 일치하는지 확인
 let expectError input message =
@@ -153,20 +173,20 @@ let tests =
         testList "타입 오류" [
             expectError "1 + true" "Type error: expected int but got bool"
             expectError "-true" "Type error: expected int but got bool"
-            expectError "true < false" "Type error: expected int but got bool"
+            expectError "true < false" "Type error: expected int or string but got bool"
             expectError "1 = true" "Type error: expected int but got bool"
             expectError "true = 1" "Type error: expected bool but got int"
             expectError "not 1" "Type error: expected bool but got int"
             expectError "1 && true" "Type error: expected bool but got int"
             expectError "if 1 then 2 else 3" "Type error: expected bool but got int"
-            expectError "1 < 2 < 3" "Type error: expected int but got bool"
+            expectError "1 < 2 < 3" "Type error: expected int or string but got bool"
         ]
 
         testList "함수 오류" [
             expectError "1 2" "Type error: expected function but got int"
             expectError "let f x = x in f -1" "Type error: expected int but got function"
-            expectError "(fun x -> x) = (fun x -> x)" "Type error: expected int, bool or list but got function"
-            expectError "(fun x -> x) + 1" "Type error: expected int but got function"
+            expectError "(fun x -> x) = (fun x -> x)" "Type error: expected int, bool, string or list but got function"
+            expectError "(fun x -> x) + 1" "Type error: expected int or string but got function"
             // let (rec 아님) 으로 정의한 함수는 자기 자신을 볼 수 없음
             expectError "let f x = f x in f 1" "Unbound variable: f"
         ]
@@ -176,11 +196,33 @@ let tests =
             expectError "match 1 with [] -> 0 | h :: t -> h" "Type error: expected list but got int"
             expectError "[1] = 1" "Type error: expected list but got int"
             expectError "1 = [1]" "Type error: expected int but got list"
-            expectError "[1] < [2]" "Type error: expected int but got list"
-            expectError "[1] + 1" "Type error: expected int but got list"
+            expectError "[1] < [2]" "Type error: expected int or string but got list"
+            expectError "[1] + 1" "Type error: expected int or string but got list"
             expectError "[1] = [true]" "Type error: expected int but got bool"
             expectError "[1] 2" "Type error: expected function but got list"
         ]
+
+        testList "문자열 오류" [
+            expectError "\"a\" + 1" "Type error: expected string but got int"
+            expectError "1 + \"a\"" "Type error: expected int but got string"
+            expectError "true + 1" "Type error: expected int or string but got bool"
+            expectError "\"a\" < 1" "Type error: expected string but got int"
+            expectError "\"a\" = 1" "Type error: expected string but got int"
+            expectError "1 = \"a\"" "Type error: expected int but got string"
+            expectError "\"a\" - \"b\"" "Type error: expected int but got string"
+            expectError "-\"a\"" "Type error: expected int but got string"
+            expectError "if \"a\" then 1 else 2" "Type error: expected bool but got string"
+            expectError "\"f\" 1" "Type error: expected function but got string"
+        ]
+
+        test "문자열 값 출력 (리터럴 형태로 이스케이프)" {
+            Expect.equal (formatValue (VString "hi")) "\"hi\"" ""
+            Expect.equal (formatValue (VString "")) "\"\"" ""
+            Expect.equal (formatValue (VString "a\r\nb")) "\"a\\r\\nb\"" ""
+            Expect.equal (formatValue (VString "a\"b\\c\nd\te")) "\"a\\\"b\\\\c\\nd\\te\"" ""
+            Expect.equal (formatValue (calc "[\"a\"; \"b\"]")) "[\"a\"; \"b\"]" ""
+            Expect.equal (typeName (calc "\"a\"")) "string" ""
+        }
 
         test "리스트 값 출력" {
             Expect.equal (formatValue (calc "[]")) "[]" ""
@@ -267,6 +309,12 @@ let tests =
                 let src = "[" + (xs |> List.map (fun (NonNegativeInt n) -> string n) |> String.concat "; ") + "]"
                 calc (sprintf "let rec len xs = match xs with [] -> 0 | h :: t -> 1 + len t in len %s" src)
                     = VInt (List.length xs)
+
+            testProperty "formatValue 출력을 다시 읽으면 같은 문자열" <| fun (NonNull (s: string)) ->
+                calc (formatValue (VString s)) = VString s
+
+            testProperty "문자열 + 는 F# 의 + 와 같음" <| fun (NonNull (a: string)) (NonNull (b: string)) ->
+                calc (formatValue (VString a) + " + " + formatValue (VString b)) = VString (a + b)
 
             testProperty "if 는 조건에 따라 분기" <| fun (c: bool) (NonNegativeInt a) (NonNegativeInt b) ->
                 let cond = if c then "true" else "false"

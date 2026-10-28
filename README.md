@@ -24,6 +24,7 @@ Result: 10
 | 조건식 | `if x > 0 then x else -x` |
 | 함수 정의와 호출 (커링, 클로저) | `let add x y = x + y in add 1 2`, `(fun x -> x * 2) 21` |
 | 재귀 함수 | `let rec fact n = if n <= 1 then 1 else n * fact (n - 1) in fact 10` |
+| 문자열 (`+`로 연결, 비교) | `"Hello, " + name`, `"a" < "b"` |
 | 리스트와 `match` | `[1; 2; 3]`, `0 :: xs`, `match xs with [] -> 0 \| h :: t -> h` |
 
 - 우선순위 (낮은 것부터): `let`/`if`/`fun`/`match` < `||` < `&&` < 비교 < `::` < `+ -` < `* /` < 단항 `-`, `not` < 함수 호출

@@ -12,6 +12,7 @@ let makeList (items: Expr list) =
 
 %token <int> NUMBER
 %token <string> IDENT
+%token <string> STRING
 %token LET REC IN EQUALS FUN ARROW
 %token IF THEN ELSE TRUE FALSE
 %token NOTEQUAL LESS GREATER LESSEQUAL GREATEREQUAL
@@ -84,6 +85,7 @@ Atom:
     | NUMBER                        { Number $1 }
     | TRUE                          { Bool true }
     | FALSE                         { Bool false }
+    | STRING                        { Str $1 }
     | IDENT                         { Var $1 }
     | LPAREN Expr RPAREN            { $2 }
     | LBRACKET RBRACKET             { Nil }

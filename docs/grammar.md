@@ -16,6 +16,7 @@ Calc 언어의 어휘 구조, 구문, 의미를 정리한 문서입니다. 구�
 | 토큰 | 패턴 | 예 |
 |---|---|---|
 | `NUMBER` | `[0-9]+` | `0`, `42` |
+| `STRING` | `"`로 시작해서 `"`로 끝남 (아래 "문자열 리터럴" 참고) | `"hello"`, `""`, `"a\"b"` |
 | `IDENT` | `[A-Za-z_][A-Za-z0-9_]*` (키워드 제외) | `x`, `foo_1`, `_tmp` |
 | 키워드 | `let` `rec` `in` `fun` `if` `then` `else` `true` `false` `not` `match` `with` | |
 | `EQUALS` | `=` | |
@@ -44,6 +45,22 @@ Calc 언어의 어휘 구조, 구문, 의미를 정리한 문서입니다. 구�
 - **그 밖의 문자**: 위 패턴에 맞지 않는 문자는 `Unexpected character: <문자>` 오류를 냅니다. `&`나 `:` 하나만 쓴 경우도 여기에 해당합니다.
 - **주석**: 아직 지원하지 않습니다.
 
+### 문자열 리터럴
+
+`"`와 `"` 사이의 문자를 그대로 값으로 씁니다. 문자열 안에서는 키워드, 연산자, 공백이 모두 그냥 문자입니다. `--unicode`로 렉서를 만들었으므로 한글과 이모지도 쓸 수 있습니다.
+
+| 이스케이프 | 뜻 |
+|---|---|
+| `\"` | `"` |
+| `\\` | `\` |
+| `\n` | 줄바꿈 (LF) |
+| `\t` | 탭 |
+| `\r` | 캐리지 리턴 (CR) |
+
+- 그 밖의 이스케이프(`\q` 등)는 `Invalid escape sequence: \q` 오류입니다.
+- 닫는 `"`가 없으면 `Unterminated string` 오류입니다. `"abc\"`도 마지막 `"`가 이스케이프되므로 닫히지 않은 문자열입니다.
+- 문자열 안에 실제 줄바꿈을 넣어도 됩니다. 그대로 값에 포함됩니다.
+
 ## 2. 구문
 
 ### EBNF
@@ -66,6 +83,7 @@ app     = app atom                                       (* 함수 호출 *)
         | atom ;
 
 atom    = NUMBER
+        | STRING
         | "true" | "false"
         | IDENT
         | "(" expr ")"
@@ -195,6 +213,7 @@ F#과 같은 순서입니다. 함수 호출은 어떤 연산자보다 먼저 묶
 | 구문 | AST (`Ast.Expr`) |
 |---|---|
 | `n` | `Number n` |
+| `"s"` | `Str "s"` (이스케이프는 렉서에서 처리된 값) |
 | `true` / `false` | `Bool true` / `Bool false` |
 | `x` | `Var "x"` |
 | `let x = e1 in e2` | `Let ("x", e1, e2)` |
@@ -223,6 +242,7 @@ F#과 같은 순서입니다. 함수 호출은 어떤 연산자보다 먼저 묶
 type Value =
     | VInt of int                                         // 32비트 정수
     | VBool of bool                                       // true / false
+    | VString of string                                   // "..."
     | VClosure of param * body * env                      // fun param -> body + 정의 시점의 환경
     | VRecClosure of name * param * body * env            // let rec name param = body
     | VList of Value list                                 // [v1; v2; ...]
@@ -231,10 +251,11 @@ type Value =
 평가는 환경 `env : Map<string, Value>`에서 이루어집니다. 처음 환경은 비어 있습니다. 결과는 `formatValue`로 출력합니다.
 - 정수는 `3`, `-3`처럼 출력됩니다.
 - 불리언은 `true`, `false`로 출력됩니다.
+- 문자열은 따옴표와 이스케이프를 붙인 리터럴 형태로 출력됩니다. 예: `"say \"hi\"\n"`. 출력을 그대로 다시 입력하면 같은 값이 됩니다.
 - 함수는 `<fun>`으로 출력됩니다.
 - 리스트는 `[1; 2; 3]`, `[]`, `[[true]; []]`처럼 출력됩니다.
 
-타입 오류 메시지에서 함수의 타입 이름은 `function`, 리스트는 `list`입니다.
+타입 오류 메시지에서 문자열의 타입 이름은 `string`, 함수는 `function`, 리스트는 `list`입니다.
 
 ### 규칙
 
@@ -242,16 +263,18 @@ type Value =
 |---|---|---|
 | `Number n` | | `VInt n` |
 | `Bool b` | | `VBool b` |
+| `Str s` | | `VString s` |
 | `Var x` | | `env`에서 `x`의 값. 없으면 `Unbound variable: x` 오류 |
 | `Let (x, e1, e2)` | 아무 타입 | `e1`을 평가해 `v`를 얻고, `env`에 `x = v`를 추가한 환경에서 `e2`를 평가 |
 | `LetRec (f, x, e1, e2)` | | `env`에 `f = VRecClosure (f, x, e1, env)`를 추가한 환경에서 `e2`를 평가 |
 | `Lambda (x, e)` | | `VClosure (x, e, env)`. 현재 환경을 함께 저장 |
 | `App (f, a)` | `f`: function | `f`, `a` 순서로 평가한 뒤 아래 "함수 호출" 규칙으로 본문을 평가 |
 | `If (c, e1, e2)` | `c`: bool | `c`가 `true`면 `e1`, `false`면 `e2`를 평가. **선택된 분기만** 평가함 |
-| `Add` `Subtract` `Multiply` `Divide` | int, int | int |
+| `Add` | int, int 또는 string, string | int 덧셈 또는 문자열 연결. 왼쪽 값의 타입으로 정함 |
+| `Subtract` `Multiply` `Divide` | int, int | int |
 | `Negate` | int | int |
-| `Less` `Greater` `LessEqual` `GreaterEqual` | int, int | bool |
-| `Equal` `NotEqual` | 같은 타입끼리 (int, bool, list). 리스트는 원소를 차례로 비교. 함수는 비교할 수 없음 | bool |
+| `Less` `Greater` `LessEqual` `GreaterEqual` | int, int 또는 string, string | bool. 문자열은 문자 코드 순서(ordinal)로 비교 |
+| `Equal` `NotEqual` | 같은 타입끼리 (int, bool, string, list). 리스트는 원소를 차례로 비교. 함수는 비교할 수 없음 | bool |
 | `And` `Or` | bool, bool | bool. **단락 평가** |
 | `Not` | bool | bool |
 | `Nil` | | `VList []` |
@@ -276,7 +299,9 @@ type Value =
 - **동적 타입 검사**: 타입은 실행 중에 연산을 할 때 검사합니다. 피연산자 타입이 맞지 않으면 `Type error: expected <기대 타입> but got <실제 타입>` 오류가 납니다.
   - `1 + true`는 `Type error: expected int but got bool`입니다.
   - `if 1 then 2 else 3`은 `Type error: expected bool but got int`입니다.
-  - `=`, `<>`는 왼쪽 값의 타입을 기준으로 오른쪽을 검사합니다. `1 = true`는 `expected int`, `true = 1`은 `expected bool` 오류입니다.
+  - `=`, `<>`, `+`, `<` 등은 왼쪽 값의 타입을 기준으로 오른쪽을 검사합니다. `1 = true`는 `expected int`, `true = 1`은 `expected bool` 오류입니다.
+  - `"a" + 1`은 `expected string but got int`, `1 + "a"`는 `expected int but got string`입니다.
+  - 왼쪽 값이 쓸 수 없는 타입이면 가능한 타입을 모두 적습니다. `true + 1`과 `true < false`는 `expected int or string but got bool`입니다.
 - **if 분기 타입**: 두 분기의 타입이 같은지는 검사하지 않습니다. 선택된 분기만 평가하기 때문에 `if true then 1 else false`는 `1`입니다.
 - **단락 평가**:
   - `false && e`는 `e`를 평가하지 않고 `false`입니다. `true || e`는 `e`를 평가하지 않고 `true`입니다.
@@ -296,7 +321,10 @@ type Value =
   - `let add x y = x + y in let inc = add 1 in inc 41`은 `42`입니다.
 - **값에 의한 호출(call-by-value)**: 인자는 함수 본문을 실행하기 전에 평가합니다. 쓰이지 않는 인자도 평가합니다.
   - `let k x = 1 in k (1 / 0)`은 0으로 나누기 오류입니다.
-- **함수는 비교할 수 없음**: `(fun x -> x) = (fun x -> x)`는 `Type error: expected int, bool or list but got function`입니다.
+- **함수는 비교할 수 없음**: `(fun x -> x) = (fun x -> x)`는 `Type error: expected int, bool, string or list but got function`입니다.
+- **문자열 비교는 문자 코드 순서**: 사전 순서나 현재 문화권의 정렬 규칙을 쓰지 않습니다. 그래서 대문자가 소문자보다 앞입니다.
+  - `"B" < "a"`는 `true`, `"ab" < "abc"`는 `true`입니다.
+- **문자열에는 아직 내장 함수가 없음**: 길이, 부분 문자열, 숫자와의 변환은 지원하지 않습니다. `+`로 연결하고 `=`, `<` 등으로 비교만 할 수 있습니다.
 - **리스트 원소 타입은 검사하지 않음**: `[1; true]`도 만들 수 있습니다. 비교할 때 원소끼리 타입이 다르면 오류입니다.
   - `[1] = [true]`는 `Type error: expected int but got bool`입니다.
   - 길이가 다르면 원소를 비교하지 않고 `false`입니다. 그래서 `[fun x -> x] = []`는 오류 없이 `false`입니다.
@@ -316,10 +344,12 @@ type Value =
 | 단계 | 원인 | 메시지 |
 |---|---|---|
 | 렉서 | 알 수 없는 문자 | `Unexpected character: <문자>` |
+| 렉서 | 닫히지 않은 문자열 | `Unterminated string` |
+| 렉서 | 지원하지 않는 이스케이프 | `Invalid escape sequence: \<문자>` |
 | 렉서 | `int` 범위를 넘는 숫자 | `Value was either too large or too small for an Int32.` |
 | 파서 | 문법에 맞지 않는 토큰 나열 (예: `1 +`, `let x = 1`, `if c then 1`, `let in = 1 in 2`, `let rec f = 1 in f`, `fun -> 1`, `[1;]`, `match xs with [] -> 0`) | `parse error` |
 | 평가 | 정의되지 않은 변수 | `Unbound variable: <이름>` |
-| 평가 | 피연산자 타입 불일치 | `Type error: expected <기대 타입> but got <int\|bool\|function\|list>` |
+| 평가 | 피연산자 타입 불일치 | `Type error: expected <기대 타입> but got <int\|bool\|string\|function\|list>` |
 | 평가 | 리스트가 아닌 값에 `::`나 `match` 사용 (예: `1 :: 2`) | `Type error: expected list but got int` |
 | 평가 | 함수가 아닌 값을 호출 (예: `1 2`) | `Type error: expected function but got int` |
 | 평가 | 0으로 나누기 | `Attempted to divide by zero.` |

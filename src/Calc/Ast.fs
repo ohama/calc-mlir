@@ -3,6 +3,8 @@ module Ast
 type Expr =
     | Number of int
     | Bool of bool
+    /// 문자열 리터럴 "..." (이스케이프는 렉서에서 처리된 값)
+    | Str of string
     | Var of string
     | Let of string * Expr * Expr
     | LetRec of name: string * param: string * body: Expr * inExpr: Expr
