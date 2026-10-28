@@ -29,9 +29,11 @@
 | 23 | [emit-mlir-as-llvm-func-and-lower](emit-mlir-as-llvm-func-and-lower.md) | 함수 포인터가 필요한 언어는 MLIR 함수를 처음부터 llvm.func로 만든다. 본문의 scf/cf/arith는 정해진 순서의 패스로 llvm까지 내린다 | 2026-10-28 |
 | 24 | [represent-values-as-tagged-words](represent-values-as-tagged-words.md) | 모든 값을 i64 하나로 두고 하위 3비트로 종류를 표시한다. GC 포인터는 8바이트 정렬이고, 복원은 산술 시프트다 | 2026-10-28 |
 | 25 | [run-external-toolchain-from-dotnet](run-external-toolchain-from-dotnet.md) | 외부 컴파일러는 ArgumentList로 실행하고 stderr를 비동기로 읽는다(동기로 차례로 읽으면 멈춤). 도구가 없으면 테스트를 건너뛴다 | 2026-10-28 |
-| 26 | [write-differential-tests-for-compiler](write-differential-tests-for-compiler.md) | 컴파일러의 정답은 인터프리터다. 컴파일할 수 있는 평가기 예제를 자동으로 골라 비교하면 기능과 함께 테스트가 늘어난다 | 2026-10-28 |
+| 26 | [write-differential-tests-for-compiler](write-differential-tests-for-compiler.md) | 컴파일러의 정답은 인터프리터다. 컴파일할 수 있는 평가기 예제와 오류 예제를 자동으로 골라 병렬로 비교하면 기능과 함께 테스트가 늘어난다 | 2026-10-28 |
+| 27 | [match-interpreter-integer-semantics-in-native-code](match-interpreter-integer-semantics-in-native-code.md) | .NET 정수 연산의 넘침과 나눗셈 오류는 LLVM/C에서 정의되지 않은 동작이다. arm64는 1/0을 조용히 0으로 낸다. 정의된 연산을 쓰거나 앞에서 검사한다 | 2026-10-28 |
+| 28 | [emit-short-circuit-with-scf-if-regions](emit-short-circuit-with-scf-if-regions.md) | if, &&, ||는 값을 내는 scf.if로 만든다. 분기 코드를 영역 안에서 생성해야 단락 평가가 된다 | 2026-10-28 |
 
-추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 → 16 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match → 오류 위치), 17 → 18 → 19 (패턴 매칭, 생성자, ADT), 20 → 21 → 22 (타입 추론), 8 → 9 → 13 → 14 → 15 (함수 평가, 재귀 한계, 내장 함수), 23 → 24 → 25 → 26 (네이티브 컴파일러), 4 → 6 (테스트), 5 (릴리스)
+추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 → 16 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match → 오류 위치), 17 → 18 → 19 (패턴 매칭, 생성자, ADT), 20 → 21 → 22 (타입 추론), 8 → 9 → 13 → 14 → 15 (함수 평가, 재귀 한계, 내장 함수), 23 → 24 → 25 → 26 → 27 → 28 (네이티브 컴파일러), 4 → 6 (테스트), 5 (릴리스)
 
 ---
-총 26개 | 업데이트: 2026-10-28
+총 28개 | 업데이트: 2026-10-28
