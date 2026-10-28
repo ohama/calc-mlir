@@ -57,8 +57,10 @@
 | 49 | [49-detect-unused-match-cases-with-usefulness](49-detect-unused-match-cases-with-usefulness.md) | 쓰이지 않는 분기는 usefulness U(P, q)로 찾는다. 앞의 가드 없는 분기들이 놓친 값과 맞을 수 없으면 쓰이지 않음. 위치는 분기 튜플에 기록 | [92e9d88](https://github.com/ohama/calc-mlir/commit/92e9d88) v0.28.0 | 2026-10-28 |
 | 50 | [50-avoid-silently-dropped-tests-after-for-arrow](50-avoid-silently-dropped-tests-after-for-arrow.md) | 리스트 식에서 for ... -> 뒤의 항목은 FS3221만 남기고 버려진다. testList 안이면 테스트가 실행되지 않으니 yield를 명시한다 | [92e9d88](https://github.com/ohama/calc-mlir/commit/92e9d88) v0.28.0 | 2026-10-28 |
 | 51 | [51-scope-annotation-type-variables-by-let-level](51-scope-annotation-type-variables-by-let-level.md) | 타입 표기의 'a 표를 전체에 하나 두면 generalize된 변수가 다시 unify된다. let 정의마다 범위를 열고 그 level에서 변수를 만든다. 인자 표기의 let은 범위를 열지 않음 | [61914f3](https://github.com/ohama/calc-mlir/commit/61914f3) v0.29.0 | 2026-10-28 |
+| 52 | [52-write-standard-library-as-prelude-in-the-language](52-write-standard-library-as-prelude-in-the-language.md) | 내장 함수를 F#과 C에 따로 두지 않고 언어로 쓴 prelude를 let 사슬로 붙인다. 쓰는 정의만 이름을 따라 고르고, tail recursion으로 쓰고, 예외가 필요한 함수는 남긴다. 느려진 만큼 잰다 | [83c6071](https://github.com/ohama/calc-mlir/commit/83c6071) v0.30.0 | 2026-10-28 |
+| 53 | [53-enable-fsharp-tailcalls-in-debug-for-interpreters](53-enable-fsharp-tailcalls-in-debug-for-interpreters.md) | F#은 Release에서만 .tail 호출을 내서, 인터프리터의 tail recursion이 Debug에서만 깊이 100만에 죽는다. <Tailcalls>true</Tailcalls>로 두 구성을 맞춘다 | [83c6071](https://github.com/ohama/calc-mlir/commit/83c6071) v0.30.0 | 2026-10-28 |
 
-추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 → 16 → 43 → 46 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match → 오류 위치 → 최상위 선언과 ; → 두 번째 시작 기호), 45 (REPL), 17 → 18 → 19 (패턴 매칭, 생성자, ADT), 20 → 21 → 22 → 41 → 42 → 49 → 51 (타입 추론, 오류 위치, 빠진 분기, 쓰이지 않는 분기, 타입 표기), 8 → 9 → 13 → 14 → 15 (함수 평가, 재귀 한계, 내장 함수), 23 → 24 → 25 → 26 → 27 → 28 → 29 → 30 → 31 → 32 → 33 → 34 → 35 → 36 → 37 → 38 → 39 → 40 → 47 → 48 (네이티브 컴파일러), 4 → 6 → 44 → 50 (테스트), 5 (릴리스)
+추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 → 16 → 43 → 46 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match → 오류 위치 → 최상위 선언과 ; → 두 번째 시작 기호), 45 (REPL), 17 → 18 → 19 (패턴 매칭, 생성자, ADT), 20 → 21 → 22 → 41 → 42 → 49 → 51 (타입 추론, 오류 위치, 빠진 분기, 쓰이지 않는 분기, 타입 표기), 8 → 9 → 53 → 13 → 14 → 15 → 52 (함수 평가, 재귀 한계, Debug의 tail call, 내장 함수, prelude), 23 → 24 → 25 → 26 → 27 → 28 → 29 → 30 → 31 → 32 → 33 → 34 → 35 → 36 → 37 → 38 → 39 → 40 → 47 → 48 (네이티브 컴파일러), 4 → 6 → 44 → 50 (테스트), 5 (릴리스)
 
 ---
-총 51개 | 업데이트: 2026-10-28
+총 53개 | 업데이트: 2026-10-28
