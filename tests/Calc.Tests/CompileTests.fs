@@ -69,7 +69,10 @@ let private runtimeErrorCases =
       "let d = 5 - 5 in if d = 0 then 10 / d else 1"
       "let f x = 10 / x in f 0"
       "let rec down n = if n = 0 then 1 / n else down (n - 1) in down 100"
-      "(fun x -> x) = (fun x -> x)" ]
+      "(fun x -> x) = (fun x -> x)"
+      "match [1; 2] with | [] -> 0"
+      "match [] with | x :: _ -> x"
+      "match (1, \"a\") with | (2, _) -> 0 | (_, \"b\") -> 1" ]
 
 [<Tests>]
 let tests =
@@ -90,8 +93,13 @@ let tests =
             }
             test "지원하지 않는 기능은 NotSupported" {
                 Expect.throwsC
-                    (fun () -> Codegen.emitProgram (Program.parse "[1]") |> ignore)
-                    (fun ex -> Expect.equal ex.Message "Not supported by the compiler yet: Cons" "")
+                    (fun () -> Codegen.emitProgram (Program.parse "None") |> ignore)
+                    (fun ex -> Expect.equal ex.Message "Not supported by the compiler yet: Ctor" "")
+            }
+            test "생성자 패턴은 아직 NotSupported" {
+                Expect.throwsC
+                    (fun () -> Codegen.emitProgram (Program.parse "match 1 with | Some x -> x | _ -> 0") |> ignore)
+                    (fun ex -> Expect.equal ex.Message "Not supported by the compiler yet: constructor pattern" "")
             }
             test "클로저는 calc_alloc 으로 할당하고 간접 호출" {
                 let mlir = Codegen.emitProgram (Program.parse "let k = 10 in let add = fun x -> x + k in add 32")
@@ -114,6 +122,16 @@ let tests =
                 Expect.equal (Codegen.stringHeader 0) 0x102L ""
                 Expect.equal (Codegen.stringHeader 4) 0x202L "8바이트 = 1단어"
                 Expect.equal (Codegen.stringHeader 5) 0x302L "10바이트 = 2단어"
+            }
+            test "cons 와 튜플 헤더" {
+                Expect.equal Codegen.consHeader 0x203L "종류 3, head 와 tail"
+                Expect.equal (Codegen.tupleHeader 3) 0x304L "종류 4, 원소 3개"
+                Expect.equal Codegen.nilValue 5L "[] 는 즉시값"
+            }
+            test "어떤 값과도 일치하는 분기 뒤는 생성하지 않음" {
+                let mlir = Codegen.emitProgram (Program.parse "let (a, b) = (1, 2) in a + b")
+                Expect.isFalse (mlir.Contains "calc_match_failure(%") "튜플 분해는 실패할 수 없음"
+                Expect.isFalse (mlir.Contains "scf.if") "검사 코드 없음"
             }
             test "클로저 헤더: 종류 1, 뒤따르는 단어 수" {
                 Expect.equal (Codegen.closureHeader 0) 0x101L "코드 포인터만"
@@ -167,6 +185,19 @@ let tests =
             test "&& 와 || 는 if 로" {
                 Expect.equal (lowered "true && false").Main (Core.CIf (Core.CBool true, Core.CBool false, Core.CBool false)) ""
                 Expect.equal (lowered "true || false").Main (Core.CIf (Core.CBool true, Core.CBool true, Core.CBool false)) ""
+            }
+        ]
+
+        testList "패턴 변환" [
+            test "match 의 자유 변수에서 패턴이 묶는 이름을 뺌" {
+                let f = (Lower.lowerProgram (Program.parse "let k = 1 in fun xs -> match xs with | x :: rest when x > k -> x | _ -> k")).Functions.Head
+                Expect.equal f.Captured [ "k" ] "x, rest 는 캡처하지 않음"
+            }
+            test "let 패턴은 분기 하나짜리 match" {
+                Expect.equal
+                    (Lower.lowerProgram (Program.parse "let (a, b) = (1, 2) in a")).Main
+                    (Core.CMatch (Core.CTuple [ Core.CInt 1; Core.CInt 2 ], [ Ast.PTuple [ Ast.PVar "a"; Ast.PVar "b" ], None, Core.CVar "a" ]))
+                    ""
             }
         ]
 
@@ -285,6 +316,48 @@ let tests =
                     ("\"done\"\n", "", 0)
                     ""
             }
+            test "리스트와 튜플 출력" {
+                Expect.equal (compileAndRun "[]") ("[]\n", "", 0) ""
+                Expect.equal (compileAndRun "[1; 2; 3]") ("[1; 2; 3]\n", "", 0) ""
+                Expect.equal (compileAndRun "(1, \"a\", true)") ("(1, \"a\", true)\n", "", 0) ""
+                Expect.equal (compileAndRun "[(1, [2]); (3, [])]") ("[(1, [2]); (3, [])]\n", "", 0) "중첩"
+                Expect.equal (compileAndRun "[fun x -> x]") ("[<fun>]\n", "", 0) ""
+            }
+            test "리스트 재귀 함수" {
+                Expect.equal
+                    (compileAndRun "let rec map f xs = match xs with | [] -> [] | x :: rest -> f x :: map f rest in map (fun x -> x * x) [1; 2; 3]")
+                    ("[1; 4; 9]\n", "", 0)
+                    ""
+                Expect.equal
+                    (compileAndRun "let rec rev acc xs = match xs with | [] -> acc | x :: r -> rev (x :: acc) r in rev [] [1; 2; 3]")
+                    ("[3; 2; 1]\n", "", 0)
+                    ""
+            }
+            test "긴 리스트 (10만 개)" {
+                Expect.equal
+                    (compileAndRun "let rec upto n acc = if n = 0 then acc else upto (n - 1) (n :: acc) in let rec sum xs = match xs with | [] -> 0 | x :: r -> x + sum r in sum (upto 100000 [])")
+                    ("705082704\n", "", 0)
+                    "합은 32비트에서 한 바퀴 돎"
+            }
+            test "match: 상수, 중첩, 가드" {
+                Expect.equal (compileAndRun "match (1, 2) with | (0, y) -> y | (x, y) -> x * 10 + y") ("12\n", "", 0) ""
+                Expect.equal (compileAndRun "match [1; 2] with | [x; y] -> x + y | _ -> 0") ("3\n", "", 0) ""
+                Expect.equal (compileAndRun "match \"hi\" with | \"hello\" -> 1 | \"hi\" -> 2 | _ -> 3") ("2\n", "", 0) ""
+                Expect.equal (compileAndRun "match [1; 2; 3] with | x :: y :: _ when x < y -> (x, y) | _ -> (0, 0)") ("(1, 2)\n", "", 0) ""
+                Expect.equal (compileAndRun "match 2 with | n when n > 3 -> \"big\" | _ -> \"small\"") ("\"small\"\n", "", 0) "가드가 거짓이면 다음 분기"
+            }
+            test "Match failure" {
+                Expect.equal (compileAndRun "match [1] with | [] -> 0") ("", "Error: Match failure: [1]\n", 1) ""
+                Expect.equal (compileAndRun "let (a, 1) = (5, 2) in a") ("", "Error: Match failure: (5, 2)\n", 1) "let 패턴"
+            }
+            test "구조적 = (인터프리터처럼 길이를 먼저)" {
+                Expect.equal (compileAndRun "[1; 2] = [1; 2] && [1; 2] <> [1] && (1, \"x\") = (1, \"x\") && [[1]; []] = [[1]; []]") ("true\n", "", 0) ""
+                Expect.equal (compileAndRun "[fun x -> x] = []") ("false\n", "", 0) "길이가 다르면 원소를 보지 않음"
+                Expect.equal
+                    (compileAndRun "[fun x -> x] = [fun x -> x]")
+                    ("", "Error: Type error: expected int, bool, string, list, tuple or data but got function\n", 1)
+                    ""
+            }
             test "단락 평가: 오른쪽은 계산하지 않음" {
                 Expect.equal (compileAndRun "false && 1 / 0 = 0") ("false\n", "", 0) ""
                 Expect.equal (compileAndRun "true || 1 / 0 = 0") ("true\n", "", 0) ""
@@ -300,7 +373,7 @@ let tests =
             let actual = inputs |> Array.ofList |> Array.Parallel.map compileAndRun
             for input, result in Array.zip (Array.ofList inputs) actual do
                 Expect.equal result (interpret input) input
-            // 단계가 올라갈수록 늘어남 (단계 4: 정수, 불리언, if, let, 함수와 클로저, 문자열)
-            Expect.isGreaterThanOrEqual inputs.Length 96 "컴파일한 예제 수"
+            // 단계가 올라갈수록 늘어남 (단계 5: + 리스트, 튜플, 패턴 매칭)
+            Expect.isGreaterThanOrEqual inputs.Length 155 "컴파일한 예제 수"
         }
     ]

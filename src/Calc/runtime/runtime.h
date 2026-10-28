@@ -21,6 +21,8 @@ typedef int64_t value;
 /* 힙 블록: 첫 단어가 헤더 = 종류 | (뒤따르는 단어 수 << 8). Codegen.closureHeader 와 같음 */
 #define CALC_KIND_CLOSURE 1 /* [헤더, 코드 포인터, 캡처한 값...] */
 #define CALC_KIND_STRING 2  /* [헤더, 길이, UTF-16 코드 단위...] (.NET string 과 같은 단위) */
+#define CALC_KIND_CONS 3    /* [헤더, head, tail]. tail 은 cons 또는 CALC_NIL */
+#define CALC_KIND_TUPLE 4   /* [헤더, 원소...]. 원소 수 = 헤더의 단어 수 */
 #define CALC_HEADER(v) (((int64_t *)(v))[0])
 #define CALC_KIND(v) (CALC_HEADER(v) & 0xff)
 #define CALC_IS_KIND(v, kind) (CALC_IS_PTR(v) && CALC_KIND(v) == (kind))
@@ -32,6 +34,8 @@ typedef struct {
 } calc_string;
 
 #define CALC_STRING(v) ((calc_string *)(v))
+#define CALC_FIELD(v, i) (((value *)(v))[(i)])
+#define CALC_SIZE(v) (CALC_HEADER(v) >> 8)
 
 #define CALC_TRUE ((value)11)
 #define CALC_FALSE ((value)3)
@@ -51,5 +55,8 @@ void calc_error_overflow(void);
 value calc_add(value a, value b);       /* int 덧셈 (32비트에서 한 바퀴 돎) */
 value calc_eq(value a, value b);        /* 구조적 비교, 결과는 bool 값 */
 int32_t calc_compare(value a, value b); /* -1, 0, 1 */
+
+/* "Error: Match failure: <값>" (Eval.formatValue 형식) 을 출력하고 종료 */
+void calc_match_failure(value v);
 
 #endif

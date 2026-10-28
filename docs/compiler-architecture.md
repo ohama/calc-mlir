@@ -2,7 +2,7 @@
 
 `calc --compile`이 소스 코드에서 실행 파일을 만드는 과정을 예제 하나로 따라갑니다. 설계의 이유와 단계별 계획은 [compiler-design.md](compiler-design.md)에 있습니다. 이 문서는 **지금 코드가 실제로 하는 일**을 설명합니다.
 
-이 문서의 출력은 모두 직접 실행해서 얻었습니다. 2장의 예제는 단계 2(0.17.0), 6장의 클로저는 단계 3, 7장의 문자열은 단계 4 기준입니다. 환경은 macOS arm64, Homebrew LLVM 22.1.7, bdw-gc 8.2.12입니다.
+이 문서의 출력은 모두 직접 실행해서 얻었습니다. 2장의 예제는 단계 2(0.17.0), 6장의 클로저는 단계 3, 7장의 문자열은 단계 4, 8장의 패턴 매칭은 단계 5 기준입니다. 환경은 macOS arm64, Homebrew LLVM 22.1.7, bdw-gc 8.2.12입니다.
 
 ## 1. 큰 그림
 
@@ -343,6 +343,44 @@ llvm.func @calc_main() -> i64 {
 - **상수:** 전역이라 GC가 관리하지 않습니다.
 - **`+`의 결과:** `GC_MALLOC_ATOMIC`으로 할당합니다. 블록 안에 포인터가 없으므로 GC가 내용을 훑지 않습니다.
 - **출력 형식:** `Eval.formatValue`와 같습니다. 따옴표로 감싸고 `\\ \" \n \t \r`만 이스케이프합니다.
+
+## 8. 리스트와 패턴 매칭 (단계 5)
+
+```
+match [7] with | x :: _ when x > 5 -> x | _ -> 0
+```
+
+```mlir
+// [7] = 7 :: [] → cons 블록 [헤더 515 = 3 | (2 << 8), head 57, tail 5]
+%v4 = llvm.call @calc_alloc(%v3) : (i64) -> !llvm.ptr
+...
+%v8 = llvm.ptrtoint %v4 : !llvm.ptr to i64
+
+// 첫 분기의 조건 (i1): cons 인가? 그렇다면 head 를 읽어 가드 x > 5
+%v9 = arith.cmpi ne, %v8, %v10 : i64                  // %v10 = 5 ([])
+%v11 = scf.if %v9 -> (i1) {
+  %v13 = llvm.load %v14 : !llvm.ptr -> i64            // x = head
+  ...                                                  // x > 5
+  scf.yield %v22 : i1
+} else {
+  %v24 = arith.constant 0 : i1
+  scf.yield %v24 : i1
+}
+
+// 조건이 참이면 이름을 묶고 본문, 아니면 나머지 분기 (_ -> 0: 검사 없음, 그 뒤는 생성하지 않음)
+%v25 = scf.if %v11 -> (i64) {
+  %v27 = llvm.load %v28 : !llvm.ptr -> i64            // x = head (다시 읽음)
+  scf.yield %v27 : i64
+} else {
+  %v29 = arith.constant 1 : i64                       // 0
+  scf.yield %v29 : i64
+}
+```
+
+- **분기 하나:** "조건(`i1`)을 만드는 `scf.if`"와 "본문 또는 나머지를 고르는 `scf.if`" 두 개가 됩니다. 나머지 분기는 한 번만 생성됩니다.
+- **실패:** 마지막 분기까지 실패하면 `calc_match_failure(v)`가 `Error: Match failure: <값>`을 출력하고 종료 코드 1로 끝냅니다.
+- **`let (a, b) = e in body`:** 분기 하나짜리 `match`로 바뀝니다. 튜플 분해는 실패할 수 없으므로 검사 코드 없이 필드만 읽습니다.
+- **런타임:** `format_value`(출력과 Match failure 메시지)와 `equals`(구조적 `=`)가 cons와 튜플 블록을 따라갑니다. 리스트는 재귀가 아니라 반복문으로 돌아서 긴 리스트도 C 스택을 쓰지 않습니다. `equals`는 인터프리터처럼 길이를 먼저 비교합니다. 그래서 `[fun x -> x] = []`는 오류 없이 `false`입니다.
 
 ## 관련 문서
 

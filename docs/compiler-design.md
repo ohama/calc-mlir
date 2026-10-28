@@ -2,7 +2,7 @@
 
 Calc 언어를 인터프리터(`Eval`) 대신 **네이티브 실행 파일로 컴파일**하기 위한 설계 문서입니다. 구현은 간단한 것부터 단계별로 진행합니다(8장). 각 단계는 그 자체로 동작하고 테스트되는 상태로 끝납니다.
 
-**진행 상황**: 단계 4 완료 (정수·불리언 연산, 비교, 단락 평가, `if`, `let`, 함수와 클로저, `let rec`, 문자열 리터럴과 `+ = <`). 다음은 단계 5(리스트, 튜플, 패턴 매칭).
+**진행 상황**: 단계 5 완료 (정수·불리언 연산, 비교, 단락 평가, `if`, `let`, 함수와 클로저, `let rec`, 문자열, 리스트, 튜플, `match`와 가드, `let` 패턴). 다음은 단계 6(ADT와 option).
 
 지금 코드가 실제로 하는 일(예제 하나로 따라가는 흐름, 진입점, 런타임 링크)은 [compiler-architecture.md](compiler-architecture.md)에 있습니다.
 
@@ -127,8 +127,8 @@ clang -O2 -Wno-override-module prog.ll runtime.c \
 | 종류 | 필드 |
 |---|---|
 | `STRING` | 길이, UTF-16 코드 단위 배열. 헤더는 `2 \| (뒤따르는 단어 수 << 8)`. 상수는 8바이트 정렬 전역(`llvm.mlir.global`, GC 대상 아님), 연결 결과는 `GC_MALLOC_ATOMIC`(안에 포인터가 없어 GC가 내용을 훑지 않음) |
-| `CONS` | head, tail |
-| `TUPLE` | 원소 n개 |
+| `CONS` | head, tail. 헤더 `3 \| (2 << 8)`. `[]`는 블록이 아니라 즉시값 `5` |
+| `TUPLE` | 원소 n개. 헤더 `4 \| (n << 8)` |
 | `DATA` | 생성자 설명자 포인터(이름, 타입 이름, 번호), 인자(있으면) |
 | `CLOSURE` | 코드 포인터, 캡처한 값들 |
 
@@ -168,7 +168,13 @@ clang -O2 -Wno-override-module prog.ll runtime.c \
 
 ### D7. 패턴 매칭: 인터프리터와 같은 순서로 검사
 
-- 분기마다 "패턴 검사 → 가드 → 본문" 블록을 만들고, 실패하면 다음 분기 블록으로 갑니다. `Eval.matchPattern`을 코드로 펼친 것입니다.
+- 분기마다 "패턴 검사 → 가드 → 본문" 순서로 검사하고, 실패하면 다음 분기로 갑니다. `Eval.matchPattern`을 코드로 펼친 것입니다.
+- **구현(단계 5)은 `cf` 블록 대신 `scf.if`만 씁니다.**
+  - 분기마다 조건(패턴 검사와 가드)을 먼저 `i1`로 계산합니다. 가드는 패턴이 일치할 때만 `scf.if` 영역 안에서 계산합니다.
+  - 그다음 `scf.if 조건 { 이름 묶기; 본문 } else { 나머지 분기 }`를 만듭니다. 나머지 분기는 한 번만 생성되므로 코드 크기가 분기 수에 비례합니다.
+  - 이름 묶기(필드 읽기)는 가드용과 본문용으로 두 번 생성되지만, 읽기뿐이라 LLVM이 합칩니다.
+  - 하위 패턴은 앞이 일치할 때만 검사하고, 필드도 그때 읽습니다(`x :: rest`는 cons인지 먼저 봄).
+  - 어떤 값과도 일치하는 분기(변수, `_`, 그것들로 된 튜플)에서는 검사 코드를 만들지 않고, 그 뒤 분기도 생성하지 않습니다.
 - 마지막 분기까지 실패하면 `calc_match_failure(value)`를 호출합니다. 런타임은 `Error: Match failure: <값>`을 출력하고 종료 코드 1로 끝납니다.
 - 결정 트리 컴파일(Maranget)은 최적화 단계로 미룹니다.
 
@@ -198,7 +204,7 @@ clang -O2 -Wno-override-module prog.ll runtime.c \
 
 ## 5. Core IR
 
-`Lower`가 만드는 중간 표현입니다(`src/Calc/Core.fs`). 클로저 변환이 끝나서 **모든 함수가 최상위**에 있습니다. 아래는 단계 4까지 구현한 모양이고, 리스트·패턴·생성자는 해당 단계에서 경우를 더합니다.
+`Lower`가 만드는 중간 표현입니다(`src/Calc/Core.fs`). 클로저 변환이 끝나서 **모든 함수가 최상위**에 있습니다. 아래는 단계 5까지 구현한 모양이고, 생성자는 단계 6에서 경우를 더합니다. 패턴은 `Ast.Pattern`을 그대로 씁니다.
 
 ```fsharp
 type CExpr =
@@ -211,6 +217,10 @@ type CExpr =
     | CPrim of Prim * CExpr list      // 인라인 연산 또는 런타임 호출
     | CMakeClosure of funcName: string * captured: string list
     | CApply of CExpr * CExpr         // 클로저 간접 호출
+    | CNil                            // 즉시값 5
+    | CCons of CExpr * CExpr
+    | CTuple of CExpr list
+    | CMatch of CExpr * (Ast.Pattern * CExpr option * CExpr) list   // let 패턴도 분기 하나짜리 match
 
 type CFunction =
     { Name: string                    // lambda_0, lambda_1, ...

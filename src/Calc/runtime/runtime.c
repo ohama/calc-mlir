@@ -76,19 +76,48 @@ static void put_quoted(FILE *out, calc_string *s) {
     fputc('"', out);
 }
 
-void calc_print_result(value v) {
+/* Eval.formatValue 와 같은 형식 */
+static void format_value(FILE *out, value v) {
     if (CALC_IS_INT(v)) {
-        printf("%d\n", CALC_INT_VAL(v));
+        fprintf(out, "%d", CALC_INT_VAL(v));
     } else if (CALC_IS_BOOL(v)) {
-        printf("%s\n", CALC_BOOL_VAL(v) ? "true" : "false");
+        fputs(CALC_BOOL_VAL(v) ? "true" : "false", out);
+    } else if (v == CALC_NIL) {
+        fputs("[]", out);
     } else if (CALC_IS_KIND(v, CALC_KIND_CLOSURE)) {
-        printf("<fun>\n");
+        fputs("<fun>", out);
     } else if (CALC_IS_KIND(v, CALC_KIND_STRING)) {
-        put_quoted(stdout, CALC_STRING(v));
-        putchar('\n');
+        put_quoted(out, CALC_STRING(v));
+    } else if (CALC_IS_KIND(v, CALC_KIND_CONS)) {
+        fputc('[', out);
+        for (value p = v; p != CALC_NIL; p = CALC_FIELD(p, 2)) {
+            if (p != v) fputs("; ", out);
+            format_value(out, CALC_FIELD(p, 1));
+        }
+        fputc(']', out);
+    } else if (CALC_IS_KIND(v, CALC_KIND_TUPLE)) {
+        fputc('(', out);
+        for (int64_t i = 0; i < CALC_SIZE(v); i++) {
+            if (i > 0) fputs(", ", out);
+            format_value(out, CALC_FIELD(v, 1 + i));
+        }
+        fputc(')', out);
     } else {
-        calc_error("calc_print_result: unsupported value");
+        calc_error("format_value: unsupported value");
     }
+}
+
+void calc_print_result(value v) {
+    format_value(stdout, v);
+    putchar('\n');
+}
+
+void calc_match_failure(value v) {
+    fflush(stdout);
+    fputs("Error: Match failure: ", stderr);
+    format_value(stderr, v);
+    fputc('\n', stderr);
+    exit(1);
 }
 
 void calc_error_divide_by_zero(void) { calc_error("Attempted to divide by zero."); }
@@ -121,23 +150,43 @@ value calc_add(value a, value b) {
     return 0;
 }
 
-value calc_eq(value a, value b) {
+static int64_t list_length(value v) {
+    int64_t n = 0;
+    for (; v != CALC_NIL; v = CALC_FIELD(v, 2)) n++;
+    return n;
+}
+
+/* Eval.valueEquals 와 같음: 리스트와 튜플은 길이를 먼저 보고, 원소를 앞에서부터 (처음 다른 곳에서 멈춤) */
+static int equals(value a, value b) {
     /* 함수끼리는 비교할 수 없음 (타입 검사는 통과하므로 실행 중 오류, 인터프리터와 같은 문장) */
-    if (CALC_IS_PTR(a) && CALC_KIND(a) == CALC_KIND_CLOSURE) {
+    if (CALC_IS_KIND(a, CALC_KIND_CLOSURE)) {
         calc_error("Type error: expected int, bool, string, list, tuple or data but got function");
     }
-    /* int 와 bool 은 즉시값이라 단어가 같으면 같은 값 */
-    if ((CALC_IS_INT(a) || CALC_IS_BOOL(a)) && (CALC_IS_INT(b) || CALC_IS_BOOL(b))) {
-        return a == b ? CALC_TRUE : CALC_FALSE;
+    if (CALC_IS_INT(a) || CALC_IS_BOOL(a)) {
+        return a == b;
     }
-    if (CALC_IS_KIND(a, CALC_KIND_STRING) && CALC_IS_KIND(b, CALC_KIND_STRING)) {
+    if (CALC_IS_KIND(a, CALC_KIND_STRING)) {
         calc_string *x = CALC_STRING(a), *y = CALC_STRING(b);
-        int same = x->length == y->length && memcmp(x->units, y->units, (size_t)x->length * sizeof(uint16_t)) == 0;
-        return same ? CALC_TRUE : CALC_FALSE;
+        return x->length == y->length && memcmp(x->units, y->units, (size_t)x->length * sizeof(uint16_t)) == 0;
+    }
+    if (a == CALC_NIL || CALC_IS_KIND(a, CALC_KIND_CONS)) {
+        if (list_length(a) != list_length(b)) return 0;
+        for (; a != CALC_NIL; a = CALC_FIELD(a, 2), b = CALC_FIELD(b, 2)) {
+            if (!equals(CALC_FIELD(a, 1), CALC_FIELD(b, 1))) return 0;
+        }
+        return 1;
+    }
+    if (CALC_IS_KIND(a, CALC_KIND_TUPLE)) {
+        for (int64_t i = 0; i < CALC_SIZE(a); i++) {
+            if (!equals(CALC_FIELD(a, 1 + i), CALC_FIELD(b, 1 + i))) return 0;
+        }
+        return 1;
     }
     calc_error("calc_eq: unsupported value");
     return 0;
 }
+
+value calc_eq(value a, value b) { return equals(a, b) ? CALC_TRUE : CALC_FALSE; }
 
 int32_t calc_compare(value a, value b) {
     if (CALC_IS_INT(a) && CALC_IS_INT(b)) {

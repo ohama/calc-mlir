@@ -24,6 +24,16 @@ type private State() =
 
     member _.Functions = List.ofSeq functions
 
+/// 생성자 패턴은 단계 6
+let rec private checkPattern (pattern: Pattern) =
+    match pattern with
+    | PCtor _ -> raise (NotSupported "constructor pattern")
+    | PCons (h, t) ->
+        checkPattern h
+        checkPattern t
+    | PTuple items -> List.iter checkPattern items
+    | _ -> ()
+
 let rec private lower (state: State) (expr: Expr) : CExpr =
     let prim p args = CPrim (p, List.map (lower state) args)
     match expr with
@@ -54,6 +64,18 @@ let rec private lower (state: State) (expr: Expr) : CExpr =
         let closure = state.AddFunction(param, Some name, lower state body)
         CLet (name, closure, lower state inExpr)
     | App (f, a) -> CApply (lower state f, lower state a)
+    | Nil -> CNil
+    | Cons (h, t) -> CCons (lower state h, lower state t)
+    | Tuple items -> CTuple (List.map (lower state) items)
+    | Match (scrutinee, cases) ->
+        let lowerCase (pattern, guard, body) =
+            checkPattern pattern
+            pattern, Option.map (lower state) guard, lower state body
+        CMatch (lower state scrutinee, List.map lowerCase cases)
+    // let (a, b) = e in body 는 분기 하나짜리 match (일치하지 않으면 같은 Match failure)
+    | LetPattern (pattern, value, body) ->
+        checkPattern pattern
+        CMatch (lower state value, [ pattern, None, lower state body ])
     | other -> raise (NotSupported (caseName other))
 
 let lowerProgram (expr: Expr) : CProgram =

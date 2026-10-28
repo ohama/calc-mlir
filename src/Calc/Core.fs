@@ -1,6 +1,8 @@
 /// 컴파일러의 중간 표현 (docs/compiler-design.md 5장). 클로저 변환이 끝나서 모든 함수가 최상위에 있음
 module Core
 
+open Ast
+
 /// 아직 컴파일러가 지원하지 않는 기능 (단계별로 줄어듦)
 exception NotSupported of feature: string with
     override this.Message = "Not supported by the compiler yet: " + this.feature
@@ -34,6 +36,14 @@ type CExpr =
     | CMakeClosure of funcName: string * captured: string list
     /// 클로저 간접 호출
     | CApply of CExpr * CExpr
+    /// [] (즉시값)
+    | CNil
+    /// head :: tail (블록 [헤더, head, tail])
+    | CCons of CExpr * CExpr
+    /// (a, b, ...) (블록 [헤더, 원소...])
+    | CTuple of CExpr list
+    /// 위에서부터 패턴과 가드가 모두 맞는 첫 분기. 없으면 Match failure. 패턴은 Ast 그대로 (생성자 패턴은 단계 6)
+    | CMatch of scrutinee: CExpr * cases: (Pattern * CExpr option * CExpr) list
 
 /// fun param -> body 를 최상위로 옮긴 것. 호출 규약은 (클로저, 인자) -> 결과 (D4)
 type CFunction =
@@ -47,6 +57,15 @@ type CFunction =
 
 type CProgram = { Functions: CFunction list; Main: CExpr }
 
+/// 패턴이 묶는 이름
+let rec patternVars (pattern: Pattern) : Set<string> =
+    match pattern with
+    | PVar name -> Set.singleton name
+    | PCons (h, t) -> Set.union (patternVars h) (patternVars t)
+    | PTuple items -> items |> List.map patternVars |> Set.unionMany
+    | PCtor (_, Some p) -> patternVars p
+    | PWildcard | PInt _ | PBool _ | PString _ | PNil | PCtor (_, None) -> Set.empty
+
 /// 식의 자유 변수 (CMakeClosure 는 캡처하는 변수가 곧 자유 변수)
 let rec freeVars (expr: CExpr) : Set<string> =
     match expr with
@@ -59,3 +78,11 @@ let rec freeVars (expr: CExpr) : Set<string> =
     | CPrim (_, args) -> args |> List.map freeVars |> Set.unionMany
     | CMakeClosure (_, captured) -> Set.ofList captured
     | CApply (f, a) -> Set.union (freeVars f) (freeVars a)
+    | CNil -> Set.empty
+    | CCons (h, t) -> Set.union (freeVars h) (freeVars t)
+    | CTuple items -> items |> List.map freeVars |> Set.unionMany
+    | CMatch (scrutinee, cases) ->
+        let caseVars (pattern, guard, body) =
+            let used = Set.union (guard |> Option.map freeVars |> Option.defaultValue Set.empty) (freeVars body)
+            Set.difference used (patternVars pattern)
+        Set.unionMany (freeVars scrutinee :: List.map caseVars cases)

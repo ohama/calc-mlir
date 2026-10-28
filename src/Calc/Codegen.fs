@@ -16,7 +16,19 @@ let tagBool (b: bool) = if b then (1L <<< 3) ||| 3L else 3L
 let kindClosure = 1L
 let kindString = 2L
 
+let kindCons = 3L
+let kindTuple = 4L
+
+/// [] 는 즉시값 5
+let nilValue = 5L
+
 let closureHeader (capturedCount: int) = kindClosure ||| (int64 (1 + capturedCount) <<< 8)
+
+/// cons 블록 = [헤더, head, tail]
+let consHeader = kindCons ||| (2L <<< 8)
+
+/// 튜플 블록 = [헤더, 원소...]
+let tupleHeader (count: int) = kindTuple ||| (int64 count <<< 8)
 
 /// 문자열 블록 = [헤더, 길이, UTF-16 코드 단위...]. 뒤따르는 단어 수는 길이 칸 + 코드 단위를 담는 단어
 let stringHeader (length: int) = kindString ||| (int64 (1 + (2 * length + 7) / 8) <<< 8)
@@ -116,18 +128,20 @@ let private retagBool (fb: FunctionBuilder) (c: string) =
     r
 
 /// 값을 내는 scf.if. 각 분기는 영역 안에서 만들고 결과를 scf.yield
-let private emitIf (fb: FunctionBuilder) (cond: string) (thenBranch: unit -> string) (elseBranch: unit -> string) =
+let private emitIfOf (fb: FunctionBuilder) (ty: string) (cond: string) (thenBranch: unit -> string) (elseBranch: unit -> string) =
     let r = fb.Fresh()
-    fb.Emit(sprintf "%s = scf.if %s -> (i64) {" r cond)
+    fb.Emit(sprintf "%s = scf.if %s -> (%s) {" r cond ty)
     fb.Indent()
-    fb.Emit(sprintf "scf.yield %s : i64" (thenBranch ()))
+    fb.Emit(sprintf "scf.yield %s : %s" (thenBranch ()) ty)
     fb.Dedent()
     fb.Emit("} else {")
     fb.Indent()
-    fb.Emit(sprintf "scf.yield %s : i64" (elseBranch ()))
+    fb.Emit(sprintf "scf.yield %s : %s" (elseBranch ()) ty)
     fb.Dedent()
     fb.Emit("}")
     r
+
+let private emitIf fb cond thenBranch elseBranch = emitIfOf fb "i64" cond thenBranch elseBranch
 
 /// cond 가 참이면 런타임 오류 함수를 부름 (돌아오지 않음)
 let private emitErrorIf (fb: FunctionBuilder) (cond: string) (runtimeFunction: string) =
@@ -148,6 +162,32 @@ let private emitSlot (fb: FunctionBuilder) (block: string) (index: int) =
     let r = fb.Fresh()
     fb.Emit(sprintf "%s = llvm.getelementptr %s[%d] : (!llvm.ptr) -> !llvm.ptr, i64" r block index)
     r
+
+/// 블록 값 v 의 index 번째 단어 (0: 헤더)
+let private emitField (fb: FunctionBuilder) (v: string) (index: int) =
+    let block = fb.Fresh()
+    fb.Emit(sprintf "%s = llvm.inttoptr %s : i64 to !llvm.ptr" block v)
+    let r = fb.Fresh()
+    fb.Emit(sprintf "%s = llvm.load %s : !llvm.ptr -> i64" r (emitSlot fb block index))
+    r
+
+/// [헤더, 값...] 블록을 GC 로 할당하고 채움. 값은 이미 계산한 SSA 이름 (평가 순서는 부르는 쪽이 정함)
+let private emitBlock (fb: FunctionBuilder) (header: int64) (values: string list) =
+    let size = emitConst fb "i64" (int64 (8 * (1 + values.Length)))
+    let block = fb.Fresh()
+    fb.Emit(sprintf "%s = llvm.call @calc_alloc(%s) : (i64) -> !llvm.ptr" block size)
+    fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" (emitConst fb "i64" header) block)
+    values |> List.iteri (fun i v -> fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" v (emitSlot fb block (1 + i))))
+    let r = fb.Fresh()
+    fb.Emit(sprintf "%s = llvm.ptrtoint %s : !llvm.ptr to i64" r block)
+    r
+
+/// 어떤 값과도 일치하는 패턴 (검사 코드가 필요 없음)
+let rec private irrefutable (pattern: Ast.Pattern) =
+    match pattern with
+    | Ast.PVar _ | Ast.PWildcard -> true
+    | Ast.PTuple items -> List.forall irrefutable items
+    | _ -> false
 
 /// 식의 값을 담은 SSA 이름을 반환. env 는 변수 이름 → 그 값을 담은 SSA 이름
 let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr : string =
@@ -245,6 +285,77 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
         let r = fb.Fresh()
         fb.Emit(sprintf "%s = llvm.call %s(%s, %s) : !llvm.ptr, (!llvm.ptr, i64) -> i64" r code block av)
         r
+    | CNil -> emitConst fb "i64" nilValue
+    // 인터프리터처럼 head 를 먼저 계산
+    | CCons (h, t) ->
+        let hv = emitExpr fb env h
+        let tv = emitExpr fb env t
+        emitBlock fb consHeader [ hv; tv ]
+    | CTuple items ->
+        let values = items |> List.map (emitExpr fb env)
+        emitBlock fb (tupleHeader values.Length) values
+    | CMatch (scrutinee, cases) ->
+        let v = emitExpr fb env scrutinee
+        // 분기마다 "조건(패턴 검사, 가드) → 본문, 아니면 나머지 분기". 조건을 i1 로 먼저 만들어서 나머지 분기는 한 번만 생성
+        let rec emitCases cases =
+            match cases with
+            | [] ->
+                fb.Emit(sprintf "llvm.call @calc_match_failure(%s) : (i64) -> ()" v)
+                emitConst fb "i64" 0L // 돌아오지 않음. scf.yield 할 값
+            | (pattern, None, body) :: _ when irrefutable pattern ->
+                // 뒤 분기에는 닿지 않음
+                emitExpr fb (emitBind fb pattern v env) body
+            | (pattern, guard, body) :: rest ->
+                let test = emitTest fb pattern v
+                let cond =
+                    match guard with
+                    | None -> test
+                    | Some g ->
+                        let guardTrue () = untagBool fb (emitExpr fb (emitBind fb pattern v env) g)
+                        emitIfOf fb "i1" test guardTrue (fun () -> emitConst fb "i1" 0L)
+                emitIf fb cond (fun () -> emitExpr fb (emitBind fb pattern v env) body) (fun () -> emitCases rest)
+        emitCases cases
+
+/// 패턴이 값 v 와 일치하는지 (i1). 하위 패턴은 앞이 일치할 때만 검사하고, 필드도 그때 읽음
+and private emitTest (fb: FunctionBuilder) (pattern: Ast.Pattern) (v: string) : string =
+    let equalsConst (c: int64) =
+        let r = fb.Fresh()
+        fb.Emit(sprintf "%s = arith.cmpi eq, %s, %s : i64" r v (emitConst fb "i64" c))
+        r
+    // 필드 index 의 하위 패턴들을 차례로: 앞이 실패하면 뒤는 검사하지 않음
+    let rec fields (subpatterns: (Ast.Pattern * int) list) =
+        match subpatterns |> List.filter (fun (p, _) -> not (irrefutable p)) with
+        | [] -> emitConst fb "i1" 1L
+        | [ p, index ] -> emitTest fb p (emitField fb v index)
+        | (p, index) :: rest ->
+            let c = emitTest fb p (emitField fb v index)
+            emitIfOf fb "i1" c (fun () -> fields rest) (fun () -> emitConst fb "i1" 0L)
+    match pattern with
+    | Ast.PVar _ | Ast.PWildcard -> emitConst fb "i1" 1L
+    | Ast.PInt n -> equalsConst (tagInt n)
+    | Ast.PBool b -> equalsConst (tagBool b)
+    | Ast.PNil -> equalsConst nilValue
+    | Ast.PString s ->
+        let eq = emitCall fb "calc_eq" [ v; emitExpr fb Map.empty (CString s) ] "i64"
+        untagBool fb eq
+    | Ast.PCons (h, t) ->
+        let isCons = fb.Fresh()
+        fb.Emit(sprintf "%s = arith.cmpi ne, %s, %s : i64" isCons v (emitConst fb "i64" nilValue))
+        if irrefutable h && irrefutable t then isCons
+        else emitIfOf fb "i1" isCons (fun () -> fields [ h, 1; t, 2 ]) (fun () -> emitConst fb "i1" 0L)
+    // 타입 검사를 통과했으므로 원소 수는 항상 같음
+    | Ast.PTuple items -> fields (items |> List.mapi (fun i p -> p, 1 + i))
+    | Ast.PCtor _ -> raise (NotSupported "constructor pattern")
+
+/// 일치한 패턴이 묶는 이름을 환경에 넣음. 이름을 묶는 하위 패턴의 필드만 읽음 (인터프리터처럼 앞에서부터, 같은 이름은 뒤가 이김)
+and private emitBind (fb: FunctionBuilder) (pattern: Ast.Pattern) (v: string) (env: Map<string, string>) =
+    let field (env: Map<string, string>) (p: Ast.Pattern, index: int) =
+        if Set.isEmpty (patternVars p) then env else emitBind fb p (emitField fb v index) env
+    match pattern with
+    | Ast.PVar name -> Map.add name v env
+    | Ast.PCons (h, t) -> List.fold field env [ h, 1; t, 2 ]
+    | Ast.PTuple items -> List.fold field env (items |> List.mapi (fun i p -> p, 1 + i))
+    | _ -> env
 
 /// 최상위 함수 하나: 입구에서 캡처한 값을 꺼내 환경을 만들고 본문을 생성
 let private emitFunction (strings: StringTable) (sb: StringBuilder) (f: CFunction) =
@@ -289,6 +400,7 @@ let emitProgram (expr: Ast.Expr) : string =
     line "llvm.func @calc_add(i64, i64) -> i64"
     line "llvm.func @calc_eq(i64, i64) -> i64"
     line "llvm.func @calc_compare(i64, i64) -> i32"
+    line "llvm.func @calc_match_failure(i64)"
     line ""
     strings.Entries |> List.iter (emitStringGlobal sb)
     if not strings.Entries.IsEmpty then line ""
