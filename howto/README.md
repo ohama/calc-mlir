@@ -33,8 +33,11 @@
 | 27 | [match-interpreter-integer-semantics-in-native-code](match-interpreter-integer-semantics-in-native-code.md) | .NET 정수 연산의 넘침과 나눗셈 오류는 LLVM/C에서 정의되지 않은 동작이다. arm64는 1/0을 조용히 0으로 낸다. 정의된 연산을 쓰거나 앞에서 검사한다 | 2026-10-28 |
 | 28 | [emit-short-circuit-with-scf-if-regions](emit-short-circuit-with-scf-if-regions.md) | if, &&, ||는 값을 내는 scf.if로 만든다. 분기 코드를 영역 안에서 생성해야 단락 평가가 된다 | 2026-10-28 |
 | 29 | [compile-immutable-let-to-ssa-environment](compile-immutable-let-to-ssa-environment.md) | 바꿀 수 없는 let은 코드를 만들지 않는다. 이름 → SSA 이름 Map으로 섀도잉과 범위가 해결되고, 쓰이지 않는 값은 LLVM이 순수한 것만 지운다 | 2026-10-28 |
+| 30 | [implement-closure-conversion-to-top-level-functions](implement-closure-conversion-to-top-level-functions.md) | 캡처 목록은 이미 낮춘 본문의 자유 변수에서 얻는다. 함수 입구에서 캡처한 값을 환경에 넣으면 본문은 let처럼 생성되고, let rec은 클로저 자신이 된다 | 2026-10-28 |
+| 31 | [link-large-native-stack-for-deep-recursion](link-large-native-stack-for-deep-recursion.md) | 기본 8MB 스택에서는 깊이 100만 재귀가 죽는다. -Wl,-stack_size로 LC_MAIN의 스택 크기를 키우고, 한계는 프레임 크기로 계산한다 | 2026-10-28 |
+| 32 | [measure-fresh-binaries-on-macos](measure-fresh-binaries-on-macos.md) | macOS에서 새로 만든 실행 파일은 첫 실행에만 약 0.3초가 더 걸린다. 성능은 두 번째 실행부터 user 시간으로 잰다 | 2026-10-28 |
 
-추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 → 16 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match → 오류 위치), 17 → 18 → 19 (패턴 매칭, 생성자, ADT), 20 → 21 → 22 (타입 추론), 8 → 9 → 13 → 14 → 15 (함수 평가, 재귀 한계, 내장 함수), 23 → 24 → 25 → 26 → 27 → 28 → 29 (네이티브 컴파일러), 4 → 6 (테스트), 5 (릴리스)
+추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 → 16 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match → 오류 위치), 17 → 18 → 19 (패턴 매칭, 생성자, ADT), 20 → 21 → 22 (타입 추론), 8 → 9 → 13 → 14 → 15 (함수 평가, 재귀 한계, 내장 함수), 23 → 24 → 25 → 26 → 27 → 28 → 29 → 30 → 31 → 32 (네이티브 컴파일러), 4 → 6 (테스트), 5 (릴리스)
 
 ---
-총 29개 | 업데이트: 2026-10-28
+총 32개 | 업데이트: 2026-10-28
