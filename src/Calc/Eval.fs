@@ -11,6 +11,8 @@ type Value =
     /// let rec name param = body. 호출할 때 name 을 자기 자신으로 환경에 추가
     | VRecClosure of name: string * param: string * body: Expr * env: Map<string, Value>
     | VList of Value list
+    /// 내장 함수. args 는 지금까지 받은 인자 (커링: 인자가 다 모이면 실행)
+    | VBuiltin of name: string * args: Value list
 
 type Env = Map<string, Value>
 
@@ -26,7 +28,7 @@ let rec formatValue value =
     | VBool true -> "true"
     | VBool false -> "false"
     | VString s -> quote s
-    | VClosure _ | VRecClosure _ -> "<fun>"
+    | VClosure _ | VRecClosure _ | VBuiltin _ -> "<fun>"
     | VList items -> "[" + (items |> List.map formatValue |> String.concat "; ") + "]"
 
 let typeName value =
@@ -34,7 +36,7 @@ let typeName value =
     | VInt _ -> "int"
     | VBool _ -> "bool"
     | VString _ -> "string"
-    | VClosure _ | VRecClosure _ -> "function"
+    | VClosure _ | VRecClosure _ | VBuiltin _ -> "function"
     | VList _ -> "list"
 
 let typeError expected value =
@@ -53,6 +55,85 @@ let rec valueEquals a b =
     | VString _, v -> typeError "string" v
     | VList _, v -> typeError "list" v
     | v, _ -> typeError "int, bool, string or list" v
+
+// ---- 내장 함수 ----
+
+let private str value =
+    match value with
+    | VString s -> s
+    | v -> typeError "string" v
+
+let private int' value =
+    match value with
+    | VInt n -> n
+    | v -> typeError "int" v
+
+/// 이름과 인자 수
+let builtinArity =
+    Map.ofList [
+        "length", 1
+        "substr", 3
+        "upper", 1
+        "lower", 1
+        "trim", 1
+        "contains", 2
+        "startsWith", 2
+        "endsWith", 2
+        "indexOf", 2
+        "replace", 3
+        "split", 2
+        "join", 2
+        "toString", 1
+        "toInt", 1
+    ]
+
+/// 인자가 다 모인 내장 함수를 실행. 문자열 위치와 길이는 UTF-16 코드 단위 (.NET string 과 같음)
+let callBuiltin name args =
+    let ordinal = System.StringComparison.Ordinal
+    match name, args with
+    | "length", [ VString s ] -> VInt s.Length
+    | "length", [ VList items ] -> VInt (List.length items)
+    | "length", [ v ] -> typeError "string or list" v
+    | "substr", [ s; start; len ] ->
+        let s, start, len = str s, int' start, int' len
+        if start < 0 || len < 0 || start > s.Length || len > s.Length - start then
+            failwithf "substr: index out of range (length %d, start %d, count %d)" s.Length start len
+        VString (s.Substring(start, len))
+    | "upper", [ s ] -> VString ((str s).ToUpperInvariant())
+    | "lower", [ s ] -> VString ((str s).ToLowerInvariant())
+    | "trim", [ s ] -> VString ((str s).Trim())
+    | "contains", [ s; sub ] -> VBool ((str s).Contains(str sub, ordinal))
+    | "startsWith", [ s; prefix ] -> VBool ((str s).StartsWith(str prefix, ordinal))
+    | "endsWith", [ s; suffix ] -> VBool ((str s).EndsWith(str suffix, ordinal))
+    | "indexOf", [ s; sub ] -> VInt ((str s).IndexOf(str sub, ordinal))
+    | "replace", [ s; oldValue; newValue ] ->
+        let s, oldValue, newValue = str s, str oldValue, str newValue
+        if oldValue = "" then failwith "replace: empty search string"
+        VString (s.Replace(oldValue, newValue, ordinal))
+    | "split", [ s; sep ] ->
+        let s, sep = str s, str sep
+        let parts =
+            // 빈 구분자는 한 글자씩 나눔
+            if sep = "" then s |> Seq.map string |> List.ofSeq
+            else s.Split(sep) |> List.ofArray
+        VList (parts |> List.map VString)
+    | "join", [ sep; items ] ->
+        match items with
+        | VList xs -> VString (System.String.Join(str sep, xs |> List.map str))
+        | v -> typeError "list" v
+    | "toString", [ VString s ] -> VString s
+    | "toString", [ v ] -> VString (formatValue v)
+    | "toInt", [ s ] ->
+        let s = str s
+        match System.Int32.TryParse(s, System.Globalization.NumberStyles.AllowLeadingSign,
+                                    System.Globalization.CultureInfo.InvariantCulture) with
+        | true, n -> VInt n
+        | false, _ -> failwithf "toInt: invalid integer: %s" (quote s)
+    | _ -> failwithf "Unknown builtin: %s" name
+
+/// 처음 환경. 내장 함수는 보통 변수처럼 let 으로 가릴 수 있음
+let builtins: Env =
+    builtinArity |> Map.map (fun name _ -> VBuiltin (name, []))
 
 let rec evalIn (env: Env) expr =
     match expr with
@@ -143,7 +224,11 @@ and apply fv av =
     | VRecClosure (name, param, body, closureEnv) ->
         let env = closureEnv |> Map.add name fv |> Map.add param av
         evalIn env body
+    | VBuiltin (name, args) ->
+        let args = args @ [ av ]
+        if List.length args = builtinArity.[name] then callBuiltin name args
+        else VBuiltin (name, args)
     | v -> typeError "function" v
 
-/// 빈 환경에서 평가
-let eval expr = evalIn Map.empty expr
+/// 내장 함수만 있는 환경에서 평가
+let eval expr = evalIn builtins expr

@@ -4,6 +4,22 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.9.0] - 2026-10-28
+
+### 추가
+- 내장 함수 14개. 처음 환경에 들어 있고, 커링되며, `let`으로 가릴 수 있습니다.
+  - 문자열: `length`, `substr`, `upper`, `lower`, `trim`, `contains`, `startsWith`, `endsWith`, `indexOf`, `replace`, `split`, `join`
+  - 변환: `toString`, `toInt`
+  - `length`는 리스트에도 쓸 수 있습니다.
+- 평가 오류 `substr: index out of range (...)`, `replace: empty search string`, `toInt: invalid integer: "..."`
+- 값: `VBuiltin`. `<fun>`으로 출력되고 타입 이름은 `function`입니다.
+- `Eval.builtins`(내장 함수 환경), `Eval.builtinArity`
+- 테스트 66개 추가 (총 332개)
+
+### 변경
+- `Eval.eval`이 빈 환경 대신 `builtins` 환경에서 평가합니다. `evalIn Map.empty`에는 여전히 내장 함수가 없습니다.
+- `docs/grammar.md`, `docs/testing.md`, `README.md`에 내장 함수를 반영했습니다.
+
 ## [0.8.0] - 2026-10-28
 
 ### 추가

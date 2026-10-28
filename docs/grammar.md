@@ -246,13 +246,14 @@ type Value =
     | VClosure of param * body * env                      // fun param -> body + 정의 시점의 환경
     | VRecClosure of name * param * body * env            // let rec name param = body
     | VList of Value list                                 // [v1; v2; ...]
+    | VBuiltin of name * args                             // 내장 함수 (args: 지금까지 받은 인자)
 ```
 
-평가는 환경 `env : Map<string, Value>`에서 이루어집니다. 처음 환경은 비어 있습니다. 결과는 `formatValue`로 출력합니다.
+평가는 환경 `env : Map<string, Value>`에서 이루어집니다. 처음 환경에는 내장 함수만 들어 있습니다(아래 "내장 함수" 참고). 결과는 `formatValue`로 출력합니다.
 - 정수는 `3`, `-3`처럼 출력됩니다.
 - 불리언은 `true`, `false`로 출력됩니다.
 - 문자열은 따옴표와 이스케이프를 붙인 리터럴 형태로 출력됩니다. 예: `"say \"hi\"\n"`. 출력을 그대로 다시 입력하면 같은 값이 됩니다.
-- 함수는 `<fun>`으로 출력됩니다.
+- 함수는 `<fun>`으로 출력됩니다. 내장 함수도 같습니다.
 - 리스트는 `[1; 2; 3]`, `[]`, `[[true]; []]`처럼 출력됩니다.
 
 타입 오류 메시지에서 문자열의 타입 이름은 `string`, 함수는 `function`, 리스트는 `list`입니다.
@@ -324,11 +325,11 @@ type Value =
 - **함수는 비교할 수 없음**: `(fun x -> x) = (fun x -> x)`는 `Type error: expected int, bool, string or list but got function`입니다.
 - **문자열 비교는 문자 코드 순서**: 사전 순서나 현재 문화권의 정렬 규칙을 쓰지 않습니다. 그래서 대문자가 소문자보다 앞입니다.
   - `"B" < "a"`는 `true`, `"ab" < "abc"`는 `true`입니다.
-- **문자열에는 아직 내장 함수가 없음**: 길이, 부분 문자열, 숫자와의 변환은 지원하지 않습니다. `+`로 연결하고 `=`, `<` 등으로 비교만 할 수 있습니다.
+- **문자열 처리는 내장 함수로**: 길이, 부분 문자열, 검색, 나누기, 숫자 변환은 아래 "내장 함수"를 씁니다.
 - **리스트 원소 타입은 검사하지 않음**: `[1; true]`도 만들 수 있습니다. 비교할 때 원소끼리 타입이 다르면 오류입니다.
   - `[1] = [true]`는 `Type error: expected int but got bool`입니다.
   - 길이가 다르면 원소를 비교하지 않고 `false`입니다. 그래서 `[fun x -> x] = []`는 오류 없이 `false`입니다.
-- **리스트에는 내장 함수가 없음**: 길이, 합, `map` 같은 연산은 `let rec`과 `match`로 직접 정의합니다.
+- **리스트 내장 함수는 `length`뿐**: 합, `map` 같은 연산은 `let rec`과 `match`로 직접 정의합니다.
 
   ```
   let rec map f xs = match xs with [] -> [] | h :: t -> f h :: map f t in
@@ -338,6 +339,39 @@ type Value =
   - `calc` 명령은 512MB 스택의 스레드에서 평가하므로 재귀 깊이 약 100,000까지 동작합니다. 1,000,000에서는 넘칩니다.
   - .NET은 스택 오버플로를 잡을 수 없으므로 `Error:` 메시지 없이 `Stack overflow.`를 출력하고 프로세스가 끝납니다.
   - 꼬리 재귀 최적화는 하지 않습니다.
+
+### 내장 함수
+
+처음 환경에 들어 있는 함수입니다. 문법상으로는 보통 변수이므로 따로 키워드가 없습니다.
+
+| 함수 | 타입 | 예 | 결과 |
+|---|---|---|---|
+| `length` | string → int, list → int | `length "hello"`, `length [1; 2]` | `5`, `2` |
+| `substr s start count` | string → int → int → string | `substr "hello" 1 3` | `"ell"` |
+| `upper`, `lower` | string → string | `upper "abc"` | `"ABC"` |
+| `trim` | string → string | `trim "  a b  "` | `"a b"` (앞뒤 공백 제거) |
+| `contains s sub` | string → string → bool | `contains "hello" "ell"` | `true` |
+| `startsWith s prefix`, `endsWith s suffix` | string → string → bool | `startsWith "hello" "he"` | `true` |
+| `indexOf s sub` | string → string → int | `indexOf "hello" "l"` | `2` (없으면 `-1`) |
+| `replace s old new` | string → string → string → string | `replace "a-b" "-" "+"` | `"a+b"` (모두 바꿈) |
+| `split s sep` | string → string → list | `split "a,b,,c" ","` | `["a"; "b"; ""; "c"]` |
+| `join sep xs` | string → list → string | `join ", " ["a"; "b"]` | `"a, b"` |
+| `toString v` | 아무 값 → string | `toString 42`, `toString [1]` | `"42"`, `"[1]"` |
+| `toInt s` | string → int | `toInt "-42"` | `-42` |
+
+- **인자 순서**: 다루는 문자열이 첫 인자입니다(`contains s sub`). 예외로 `join`은 .NET `String.Join`처럼 구분자가 먼저입니다.
+- **커링**: 보통 함수처럼 인자를 하나씩 받습니다. 인자가 다 모일 때까지 실행하지 않고, 인자 타입도 그때 검사합니다.
+  - `let first = substr "hello" 0 in first 2`는 `"he"`입니다.
+  - `map upper (split "a b" " ")`처럼 다른 함수에 넘길 수 있습니다.
+- **가리기**: `let length = 5 in length`처럼 같은 이름을 `let`으로 다시 묶으면 내장 함수가 가려집니다.
+- **음수 인자는 괄호로**: `toString -5`는 `toString - 5`(뺄셈)입니다. `toString (-5)`로 씁니다.
+- **위치와 길이는 UTF-16 코드 단위**: .NET `string`과 같습니다. 한글 한 글자는 1이지만 이모지(`"😀"`)는 2입니다.
+- **문화권에 영향받지 않음**: `upper`/`lower`는 `ToUpperInvariant`/`ToLowerInvariant`이고, `contains`/`startsWith`/`endsWith`/`indexOf`/`replace`는 문자 코드 그대로(ordinal) 비교합니다.
+- **세부 동작**:
+  - `contains s ""`와 `startsWith s ""`는 `true`, `indexOf s ""`는 `0`입니다.
+  - `split s ""`는 한 글자(UTF-16 코드 단위)씩 나눕니다. `split "" ","`는 `[""]`입니다.
+  - `toString`은 문자열은 그대로 돌려주고, 나머지 값은 출력 형태로 바꿉니다. 리스트 안의 문자열은 따옴표가 붙습니다(`toString ["a"]`는 `"[\"a\"]"`).
+  - `toInt`는 선택적인 `-`/`+` 부호와 숫자만 받습니다. 공백이 있거나(`" 4"`) `int` 범위를 넘으면 오류입니다.
 
 ## 5. 오류
 
@@ -353,6 +387,9 @@ type Value =
 | 평가 | 리스트가 아닌 값에 `::`나 `match` 사용 (예: `1 :: 2`) | `Type error: expected list but got int` |
 | 평가 | 함수가 아닌 값을 호출 (예: `1 2`) | `Type error: expected function but got int` |
 | 평가 | 0으로 나누기 | `Attempted to divide by zero.` |
+| 평가 | `substr`의 범위가 문자열 밖 | `substr: index out of range (length 5, start 3, count 5)` |
+| 평가 | `replace`의 찾을 문자열이 빈 문자열 | `replace: empty search string` |
+| 평가 | `toInt`가 정수로 읽을 수 없는 문자열 | `toInt: invalid integer: "abc"` |
 | 평가 | 재귀가 너무 깊음 | `Stack overflow.` (프로세스 종료, 잡을 수 없음) |
 
 파서 오류 메시지에는 아직 위치(줄, 열) 정보가 없습니다.

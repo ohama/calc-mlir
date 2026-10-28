@@ -127,7 +127,56 @@ let cases =
       "[\"a\"; \"b\"] = [\"a\"; \"b\"]", VBool true
       "let greet name = \"Hello, \" + name in greet \"F#\"", VString "Hello, F#"
       "let rec join xs = match xs with [] -> \"\" | h :: t -> h + join t in join [\"a\"; \"b\"]", VString "ab"
-      "if \"a\" = \"a\" then \"yes\" else \"no\"", VString "yes" ]
+      "if \"a\" = \"a\" then \"yes\" else \"no\"", VString "yes"
+      // 내장 함수
+      "length \"hello\"", VInt 5
+      "length \"\"", VInt 0
+      "length \"안녕\"", VInt 2
+      // UTF-16 코드 단위: 이모지는 서로게이트 쌍이라 2
+      "length \"😀\"", VInt 2
+      "length [1; 2; 3]", VInt 3
+      "length []", VInt 0
+      "substr \"hello\" 1 3", VString "ell"
+      "substr \"hello\" 0 5", VString "hello"
+      "substr \"hello\" 5 0", VString ""
+      "upper \"abc\"", VString "ABC"
+      "lower \"ABC\"", VString "abc"
+      "trim \"  a b \\t\\n\"", VString "a b"
+      "contains \"hello\" \"ell\"", VBool true
+      "contains \"hello\" \"x\"", VBool false
+      "contains \"hello\" \"\"", VBool true
+      "startsWith \"hello\" \"he\"", VBool true
+      "startsWith \"hello\" \"lo\"", VBool false
+      "endsWith \"hello\" \"lo\"", VBool true
+      "indexOf \"hello\" \"l\"", VInt 2
+      "indexOf \"hello\" \"z\"", VInt -1
+      "replace \"a-b-c\" \"-\" \"+\"", VString "a+b+c"
+      "replace \"aaa\" \"a\" \"\"", VString ""
+      "split \"a,b,,c\" \",\"", VList [ VString "a"; VString "b"; VString ""; VString "c" ]
+      "split \"abc\" \"\"", VList [ VString "a"; VString "b"; VString "c" ]
+      "split \"\" \",\"", VList [ VString "" ]
+      "split \"a::b\" \"::\"", VList [ VString "a"; VString "b" ]
+      "join \", \" [\"a\"; \"b\"]", VString "a, b"
+      "join \",\" []", VString ""
+      "join \"-\" (split \"2026-10-28\" \"-\")", VString "2026-10-28"
+      "toString 42", VString "42"
+      "toString (-5)", VString "-5"
+      "toString true", VString "true"
+      "toString \"x\"", VString "x"
+      "toString [1; 2]", VString "[1; 2]"
+      "toString [\"a\"]", VString "[\"a\"]"
+      "toInt \"42\"", VInt 42
+      "toInt \"-42\"", VInt -42
+      "toInt (toString 123) + 1", VInt 124
+      // 커링: 내장 함수도 부분 적용 가능
+      "let first = substr \"hello\" 0 in first 2", VString "he"
+      "let rec map f xs = match xs with [] -> [] | h :: t -> f h :: map f t in map upper (split \"a b\" \" \")",
+          VList [ VString "A"; VString "B" ]
+      "let rec map f xs = match xs with [] -> [] | h :: t -> f h :: map f t in map (contains \"abc\") [\"a\"; \"z\"]",
+          VList [ VBool true; VBool false ]
+      // 내장 함수 이름은 let 으로 가릴 수 있음
+      "let length = 5 in length", VInt 5
+      "let upper s = s + \"!\" in upper \"a\"", VString "a!" ]
 
 /// 오류 메시지가 정확히 일치하는지 확인
 let expectError input message =
@@ -214,6 +263,43 @@ let tests =
             expectError "if \"a\" then 1 else 2" "Type error: expected bool but got string"
             expectError "\"f\" 1" "Type error: expected function but got string"
         ]
+
+        testList "내장 함수 오류" [
+            expectError "length 1" "Type error: expected string or list but got int"
+            expectError "upper 1" "Type error: expected string but got int"
+            expectError "substr \"hello\" true 1" "Type error: expected int but got bool"
+            expectError "substr \"hello\" 3 5" "substr: index out of range (length 5, start 3, count 5)"
+            expectError "substr \"hello\" (-1) 2" "substr: index out of range (length 5, start -1, count 2)"
+            expectError "substr \"hello\" 6 0" "substr: index out of range (length 5, start 6, count 0)"
+            expectError "substr \"hello\" 0 (-1)" "substr: index out of range (length 5, start 0, count -1)"
+            expectError "replace \"abc\" \"\" \"x\"" "replace: empty search string"
+            expectError "join \",\" [1]" "Type error: expected string but got int"
+            expectError "join \",\" \"a\"" "Type error: expected list but got string"
+            expectError "toInt \"abc\"" "toInt: invalid integer: \"abc\""
+            expectError "toInt \" 4\"" "toInt: invalid integer: \" 4\""
+            expectError "toInt \"\"" "toInt: invalid integer: \"\""
+            expectError "toInt \"2147483648\"" "toInt: invalid integer: \"2147483648\""
+            expectError "length = length" "Type error: expected int, bool, string or list but got function"
+            // 인자를 다 받기 전에는 실행하지 않음 (오류도 나중에)
+            expectError "let f = substr 1 in f 2 3" "Type error: expected string but got int"
+        ]
+
+        test "내장 함수 값" {
+            Expect.equal (formatValue (calc "length")) "<fun>" ""
+            Expect.equal (formatValue (calc "substr \"a\"")) "<fun>" ""
+            Expect.equal (typeName (calc "upper")) "function" ""
+            Expect.equal (calc "substr \"abc\" 1") (VBuiltin ("substr", [ VString "abc"; VInt 1 ])) ""
+        }
+
+        test "evalIn 빈 환경에는 내장 함수가 없음" {
+            Expect.throwsC
+                (fun () -> evalIn Map.empty (Program.parse "length \"a\"") |> ignore)
+                (fun ex -> Expect.equal ex.Message "Unbound variable: length" "")
+        }
+
+        test "모든 내장 함수가 builtins 환경에 있음" {
+            Expect.equal (builtins |> Map.keys |> Set.ofSeq) (builtinArity |> Map.keys |> Set.ofSeq) ""
+        }
 
         test "문자열 값 출력 (리터럴 형태로 이스케이프)" {
             Expect.equal (formatValue (VString "hi")) "\"hi\"" ""
@@ -315,6 +401,22 @@ let tests =
 
             testProperty "문자열 + 는 F# 의 + 와 같음" <| fun (NonNull (a: string)) (NonNull (b: string)) ->
                 calc (formatValue (VString a) + " + " + formatValue (VString b)) = VString (a + b)
+
+            testProperty "length 는 .NET String.Length 와 같음" <| fun (NonNull (s: string)) ->
+                calc (sprintf "length %s" (formatValue (VString s))) = VInt s.Length
+
+            testProperty "toInt (toString n) = n" <| fun (NonNegativeInt n) ->
+                // 음수는 괄호로 감싸야 함수 인자가 됨 (toString -n 은 뺄셈)
+                calc (sprintf "toInt (toString %d)" n) = VInt n
+                && calc (sprintf "toInt (toString (-%d))" n) = VInt -n
+
+            testProperty "join sep (split s sep) = s" <| fun (NonNull (s: string)) ->
+                let lit = formatValue (VString s)
+                calc (sprintf "join \",\" (split %s \",\")" lit) = VString s
+
+            testProperty "substr s 0 (length s) = s" <| fun (NonNull (s: string)) ->
+                let lit = formatValue (VString s)
+                calc (sprintf "substr %s 0 (length %s)" lit lit) = VString s
 
             testProperty "if 는 조건에 따라 분기" <| fun (c: bool) (NonNegativeInt a) (NonNegativeInt b) ->
                 let cond = if c then "true" else "false"

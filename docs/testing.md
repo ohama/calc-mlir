@@ -31,7 +31,7 @@ dotnet run --project tests/Calc.Tests -- --debug            # 각 테스트 시�
 |---|---|---|
 | `LexerTests.fs` | `Lexer` | 토큰 순서, 공백과 줄바꿈 무시, 키워드와 식별자, 비교·논리 연산자, `->`, 리스트 토큰(`[` `]` `;` `::` `|`), 문자열과 이스케이프, 닫히지 않은 문자열, 빈 입력, 알 수 없는 문자 오류 |
 | `ParserTests.fs` | `Parser` | 우선순위, 결합 방향, 괄호, 단항 마이너스, `let`/`if`/`fun`의 범위와 중첩, 함수 호출, 함수 정의 문법 설탕, 리스트와 `::`, `match`, 문자열 리터럴, 파서 오류 |
-| `EvalTests.fs` | `Eval` | 식 계산 표(정수, 불리언, 함수, 재귀, 리스트, 문자열), `let`과 섀도잉, 클로저, 단락 평가, 타입 오류, 리스트·문자열 오류와 출력, 정의되지 않은 변수, 0으로 나누기, FsCheck 속성 테스트 |
+| `EvalTests.fs` | `Eval` | 식 계산 표(정수, 불리언, 함수, 재귀, 리스트, 문자열, 내장 함수), `let`과 섀도잉, 클로저, 단락 평가, 타입 오류, 리스트·문자열·내장 함수 오류와 출력, 정의되지 않은 변수, 0으로 나누기, FsCheck 속성 테스트 |
 | `Main.fs` | — | 진입점 (`runTestsInAssemblyWithCLIArgs`) |
 
 `[<Tests>]` 속성이 붙은 값은 Expecto가 자동으로 찾아서 실행합니다.
@@ -121,6 +121,8 @@ Result: 11
 | `let rec len xs = match xs with [] -> 0 \| h :: t -> 1 + len t in len [1; 2; 3]` | `match`와 재귀 | | `3` |
 | `"a" + "b"` | 문자열 연결 | `Add (Str "a", Str "b")` | `"ab"` |
 | `"B" < "a"` | 문자열 비교 (문자 코드 순서) | `Less (Str "B", Str "a")` | `true` |
+| `join "-" (split "2026-10-28" "-")` | 내장 함수 | | `"2026-10-28"` |
+| `let first = substr "hello" 0 in first 2` | 내장 함수 부분 적용 | | `"he"` |
 
 ## 오류 처리 확인
 
@@ -143,6 +145,7 @@ Result: 11
 | `match xs with [] -> 0` | 파서 (분기가 하나뿐) | `Error: parse error` |
 | `"abc` | 렉서 (닫히지 않은 문자열) | `Error: Unterminated string` |
 | `"a" + 1` | 평가 (타입) | AST 출력 후 `Error: Type error: expected string but got int` |
+| `toInt "abc"` | 평가 (내장 함수) | AST 출력 후 `Error: toInt: invalid integer: "abc"` |
 | `let rec loop n = if n = 0 then 0 else loop (n - 1) in loop 1000000` | 평가 (재귀가 너무 깊음) | `Stack overflow.` 후 프로세스 종료 (종료 코드 134) |
 
 모든 경우 종료 코드는 `1`입니다. 종료 코드는 `echo $?`로 확인할 수 있습니다.
@@ -152,7 +155,7 @@ Result: 11
 | 명령 | 기대 출력 | 종료 코드 |
 |---|---|---|
 | `--help`, `-h` | `USAGE: calc [--help] [--expr=<expr>] [--version]`로 시작하는 사용법 | 0 |
-| `--version`, `-v` | `calc 0.8.0` (`Calc.fsproj`의 `<Version>`) | 0 |
+| `--version`, `-v` | `calc 0.9.0` (`Calc.fsproj`의 `<Version>`) | 0 |
 | `-e "(2+3)*4"` | `Result: 20` | 0 |
 | `--expr=7/2` | `Result: 3` | 0 |
 | `--expr "-5 + 2"` | `Result: -3` (`-`로 시작하는 식도 값으로 처리됨) | 0 |
