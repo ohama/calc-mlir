@@ -90,17 +90,11 @@ let private runtimeErrorCases =
 
 인터프리터는 `1 / 0`에서 `Error: Attempted to divide by zero.`를 낸다. 컴파일한 실행 파일도 이 문장을 stderr에 쓰고 종료 코드 1로 끝나야 한다. 런타임의 `calc_error`가 `fflush(stdout)` 뒤에 `Error: %s\n`을 쓰고 `exit(1)`하는 것은 이 비교를 위해서다.
 
-### Step 5: 예제는 병렬로 컴파일한다
+### Step 5: 예제는 실행 파일 하나로 묶어 빌드한다
 
-예제 하나에 외부 프로세스 4개(`mlir-opt`, `mlir-translate`, `clang`, 실행 파일)가 뜬다. 결과를 먼저 병렬로 모으고 비교는 차례로 한다. 실패 메시지의 순서가 일정해진다.
+처음에는 예제마다 실행 파일을 만들고 병렬로 컴파일했다(`Array.Parallel.map compileAndRun`). 예제가 200개를 넘자 테스트가 1분 30초 걸렸다. 병목은 컴파일이 아니라 macOS의 새 실행 파일 첫 실행 검사였고, 이 검사는 순서대로 처리돼서 병렬화로는 줄지 않았다.
 
-```fsharp
-let actual = inputs |> Array.ofList |> Array.Parallel.map compileAndRun
-for input, result in Array.zip (Array.ofList inputs) actual do
-    Expect.equal result (interpret input) input
-```
-
-임시 폴더와 실행 파일 이름은 `Guid`로 만들어야 병렬 실행에서 서로 덮어쓰지 않는다.
+지금은 모든 입력을 실행 파일 하나로 묶어 빌드하고, 그 안의 드라이버가 입력마다 `fork`해서 실행한다(약 5초). 방법은 `batch-compiled-test-programs-into-one-executable.md`에 있다. 입력마다 프로세스가 따로이므로 stdout, stderr, 종료 코드를 비교하는 이 문서의 방식은 그대로다.
 
 ## Example
 
@@ -129,7 +123,7 @@ expected: ("6\n", "", 0)
 - [ ] stdout, stderr, 종료 코드를 모두 비교하는가?
 - [ ] 비교한 예제 수의 하한을 단계마다 올리는가? (짐작하지 말고 실제 값으로)
 - [ ] 실행 중 오류 예제를 따로 더했는가?
-- [ ] 병렬로 컴파일할 때 임시 파일 이름이 겹치지 않는가?
+- [ ] 예제 수가 늘어도 새 실행 파일 수가 늘지 않는가? (묶음 빌드)
 
 ## 관련 문서
 
