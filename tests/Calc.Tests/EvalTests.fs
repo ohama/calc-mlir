@@ -333,6 +333,15 @@ let cases =
       "let rec loop n = if n = 0 then raise Not_found else loop (n - 1) in try loop 100000 with Not_found -> \"deep\"", VString "deep"
       "exception E of int in [E 1; Failure \"x\"; Not_found]", VList [ VData ("exn", "E", Some (VInt 1)); VData ("exn", "Failure", Some (VString "x")); VData ("exn", "Not_found", None) ]
       "exception E of int in E 1 = E 1 && E 1 <> E 2", VBool true
+      // 문자열 포맷
+      "sprintf \"%d is %s\" 42 \"answer\"", VString "42 is answer"
+      "sprintf \"%b|%A|%A|100%%\" true [Some \"a\"] \"s\"", VString "true|[Some \"a\"]|s|100%"
+      "map (sprintf \"<%d>\") [1; 2]", VList [ VString "<1>"; VString "<2>" ]
+      "let f = sprintf \"%s-%s\" \"a\" in (f \"b\", f \"c\")", VTuple [ VString "a-b"; VString "a-c" ]
+      "let sprintf x = x + 1 in sprintf 2", VInt 3
+      "let name = \"Kim\" in let age = 30 in $\"Hello {name}, {age + 1} next year\"", VString "Hello Kim, 31 next year"
+      "$\"{{x}} %d{1 + 2} {[1; 2]} {(1, \"a\")} 5%\"", VString "{x} 3 [1; 2] (1, \"a\") 5%"
+      "let toString x = \"shadowed\" in $\"{1}\" + sprintf \"%A\" 2", VString "12" // 포맷은 가린 toString 을 쓰지 않음
       "let safeDiv a b = try Some (if b = 0 then failwith \"div\" else a / b) with Failure _ -> None in (safeDiv 6 2, safeDiv 1 0)", VTuple [ some (VInt 3); none ] ]
 
 /// 오류 메시지가 정확히 일치하는지 확인

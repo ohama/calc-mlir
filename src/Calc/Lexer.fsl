@@ -6,6 +6,19 @@ let lexeme (lexbuf: LexBuffer<_>) = LexBuffer<_>.LexemeString lexbuf
 
 open System.Text
 open Errors
+
+/// $"..." 의 구멍 {e} 안의 식을 파싱. 위치는 바깥 입력에서 이어지도록 구멍의 시작 위치부터 셈 (오류가 원래 줄과 열을 가리킴)
+let parseHole (tokenize: LexBuffer<char> -> token) (source: string) (start: Position) : Ast.Expr =
+    if source.Trim() = "" then syntaxError "Empty expression in interpolated string" start
+    let lexbuf = LexBuffer<char>.FromString source
+    lexbuf.EndPos <- start
+    try
+        Parser.start tokenize lexbuf
+    with ParseFailure ->
+        let tokenStart = lexbuf.StartPos.AbsoluteOffset - start.AbsoluteOffset
+        let tokenEnd = lexbuf.EndPos.AbsoluteOffset - start.AbsoluteOffset
+        if tokenStart >= tokenEnd then syntaxError "parse error: unexpected end of interpolated expression" lexbuf.StartPos
+        else syntaxError (sprintf "parse error: unexpected '%s'" (source.Substring(tokenStart, tokenEnd - tokenStart))) lexbuf.StartPos
 }
 
 let digit = ['0'-'9']
@@ -30,6 +43,8 @@ rule tokenize = parse
                       | false, _ -> syntaxError (sprintf "Integer literal out of range: %s" (lexeme lexbuf)) lexbuf.StartPos }
     // 닫히지 않은 문자열 오류는 여는 " 위치로 알려야 하므로 시작 위치를 넘김
     | '"'           { readString (StringBuilder()) lexbuf.StartPos lexbuf }
+    // 보간 문자열 $"a{x}b" (F# 와 같음)
+    | '$' '"'       { readInterpolated (StringBuilder()) [] lexbuf.StartPos lexbuf }
     // 키워드는 IDENT 보다 먼저 와야 함 (같은 길이로 매치되면 앞의 규칙이 이김)
     | "let"         { LET }
     | "in"          { IN }
@@ -102,6 +117,47 @@ and readString (sb: StringBuilder) (start: Position) = parse
     | newline       { lexbuf.EndPos <- lexbuf.EndPos.NextLine; sb.Append(lexeme lexbuf) |> ignore; readString sb start lexbuf }
     | eof           { syntaxError "Unterminated string" start }
     | _             { sb.Append(lexeme lexbuf) |> ignore; readString sb start lexbuf }
+
+// $" 다음부터 닫는 " 까지. 글자는 포맷 문자열로 모으고(% 는 %%), 구멍(중괄호 안의 식)은 %A 자리,
+// 앞에 %d 처럼 지정자를 붙이면 그 지정자 자리. 중괄호를 두 번 쓰면 중괄호 글자 (F# 와 같음). holes 는 거꾸로 모은 구멍의 식.
+// (fslex 는 규칙 부분의 주석 속 중괄호도 코드로 읽으므로 주석에 중괄호를 쓰지 않음)
+and readInterpolated (sb: StringBuilder) holes (start: Position) = parse
+    | '"'           { lexbuf.StartPos <- start; INTERP (sb.ToString(), List.rev holes) }
+    | '\\' '"'      { sb.Append('\"') |> ignore; readInterpolated sb holes start lexbuf }
+    | '\\' '\\'     { sb.Append('\\') |> ignore; readInterpolated sb holes start lexbuf }
+    | '\\' 'n'      { sb.Append('\n') |> ignore; readInterpolated sb holes start lexbuf }
+    | '\\' 't'      { sb.Append('\t') |> ignore; readInterpolated sb holes start lexbuf }
+    | '\\' 'r'      { sb.Append('\r') |> ignore; readInterpolated sb holes start lexbuf }
+    | '\\' _        { syntaxError (sprintf "Invalid escape sequence: %s" (lexeme lexbuf)) lexbuf.StartPos }
+    // 액션 코드의 중괄호 문자 리터럴은 fslex 가 코드의 중괄호로 세므로 문자열로 씀
+    | "{{"          { sb.Append("{") |> ignore; readInterpolated sb holes start lexbuf }
+    | "}}"          { sb.Append("}") |> ignore; readInterpolated sb holes start lexbuf }
+    | '}'           { syntaxError "Unmatched } in interpolated string (use }} for a brace)" lexbuf.StartPos }
+    | '%' ['d' 's' 'b' 'A'] '{'
+                    { let spec = (lexeme lexbuf).Substring(0, 2)
+                      let holeStart = lexbuf.EndPos
+                      let source = interpolationHole (StringBuilder()) 0 start lexbuf
+                      sb.Append(spec) |> ignore
+                      readInterpolated sb (parseHole tokenize source holeStart :: holes) start lexbuf }
+    | '{'           { let holeStart = lexbuf.EndPos
+                      let source = interpolationHole (StringBuilder()) 0 start lexbuf
+                      sb.Append("%A") |> ignore
+                      readInterpolated sb (parseHole tokenize source holeStart :: holes) start lexbuf }
+    | '%'           { sb.Append("%%") |> ignore; readInterpolated sb holes start lexbuf }
+    | newline       { lexbuf.EndPos <- lexbuf.EndPos.NextLine; sb.Append(lexeme lexbuf) |> ignore; readInterpolated sb holes start lexbuf }
+    | eof           { syntaxError "Unterminated string" start }
+    | _             { sb.Append(lexeme lexbuf) |> ignore; readInterpolated sb holes start lexbuf }
+
+// 보간 문자열의 구멍: 여는 중괄호 다음부터 짝이 맞는 닫는 중괄호까지의 소스 (닫는 것은 빼고). 안의 문자열 리터럴 속 중괄호는 세지 않음
+and interpolationHole (source: StringBuilder) (depth: int) (start: Position) = parse
+    | '}'           { if depth = 0 then source.ToString()
+                      else (source.Append(lexeme lexbuf) |> ignore; interpolationHole source (depth - 1) start lexbuf) }
+    | '{'           { source.Append(lexeme lexbuf) |> ignore; interpolationHole source (depth + 1) start lexbuf }
+    | '"' ([^ '"' '\\' '\n' '\r'] | '\\' _)* '"'
+                    { source.Append(lexeme lexbuf) |> ignore; interpolationHole source depth start lexbuf }
+    | newline       { lexbuf.EndPos <- lexbuf.EndPos.NextLine; source.Append(lexeme lexbuf) |> ignore; interpolationHole source depth start lexbuf }
+    | eof           { syntaxError "Unterminated string" start }
+    | _             { source.Append(lexeme lexbuf) |> ignore; interpolationHole source depth start lexbuf }
 
 // (* 다음부터 짝이 맞는 *) 까지 건너뜀. depth 는 열린 주석 수
 and comment (depth: int) (start: Position) = parse

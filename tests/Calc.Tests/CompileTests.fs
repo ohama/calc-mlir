@@ -346,6 +346,12 @@ let private runCases =
           "exception E of int in let rec go n = try (if n = 0 then raise (E 0) else go (n - 1)) with E k -> raise (E (k + 1)) in try go 1000 with E k -> k", ("1001\n", "", 0), "try 1000개가 쌓였다가 하나씩 다시 raise"
           "let f () = try raise Not_found with Not_found -> 1 in (f (), f (), try f () + raise Not_found with Not_found -> 7)", ("(1, 1, 7)\n", "", 0), "끝난 try 는 handler 목록에서 빠짐"
         ]
+      "문자열 포맷",
+        [
+          "printf \"%d-\" 1; printfn \"%s\" \"a\"; printfn \"%A\" [1]; printf \"end\"", ("1-a\n[1]\nend", "", 0), "출력 순서"
+          "let p = printfn \"%d\" in ignore (map p [1; 2])", ("1\n2\n", "", 0), "partial application"
+          "$\"π={3}, s={\"x\"}, t={(true, [\"y\"])}\"", ("\"π=3, s=x, t=(true, [\\\"y\\\"])\"\n", "", 0), "결과 문자열은 따옴표와 이스케이프를 붙여 출력"
+        ]
       "Match failure",
         [
           "match [1] with | [] -> 0", ("", "Error: Match failure: [1]\n", 1), ""

@@ -515,6 +515,23 @@ value calc_try(value body, value handler) {
 - **생성자:** 예외는 `exn` 타입의 생성자라서 보통 생성자처럼 이름 전역과 `DATA` 블록이 됩니다(9장). 실행 중에는 이름 포인터로 구분하므로, 타입 검사가 같은 이름의 예외를 프로그램에 하나만 허용합니다.
 - **tail call:** `try`의 본문과 handler는 클로저 안에서 불리므로 `try` 바깥 함수의 tail position이 아닙니다. 본문 안의 tail call은 그 클로저 안에서 그대로 `musttail`입니다(12장).
 
+## 14. 문자열 포맷
+
+`sprintf`, `printf`, `printfn`과 `$"..."`는 런타임 함수가 없습니다. 포맷 문자열 하나가 정하는 함수를 `Format.expand`가 Calc 코드로 펼치고, `Lower`가 그것을 보통 함수처럼 낮춥니다.
+
+```
+sprintf "%d is %s" 42 "x"
+  ==> App (App (Printf ("sprintf", "%d is %s"), 42), "x")                  (Lower 가 리터럴을 보고 바꿈)
+  ==> (fun $f0 -> fun $f1 -> toString $f0 + " is " + $f1) 42 "x"          (Format.expand)
+$"a{x}"
+  ==> App (Printf ("sprintf", "a%A"), x)                                   (렉서와 파서)
+```
+
+- **타입:** `Infer`는 펼친 코드를 추론하지 않고 포맷 문자열에서 바로 타입을 만듭니다(`%d`는 `int`, `%A`는 새 type variable). 펼친 코드는 `%A`의 인자를 `toString`으로 바꾸므로, 추론하면 `%d`와 `%A`를 구분할 수 없습니다.
+- **범위:** 펼친 코드는 `toString`, `print`, `println`이 내장 함수인 범위에서 낮춥니다(`Lower`의 `scope`가 빈 집합). 사용자가 `toString`을 가려도 포맷의 결과는 같습니다. 인터프리터도 펼친 코드를 처음 환경(`Eval.builtins`)에서 평가합니다.
+- **`sprintf`를 가린 경우:** `Lower`와 `Infer`는 `sprintf`가 아직 내장 함수일 때만 포맷으로 다룹니다. `Infer`는 처음 환경의 `sprintf`에 보통 타입 대신 표시(`$format:sprintf`)를 넣어 둡니다. 사용자가 같은 이름을 묶으면 그 표시가 사라집니다.
+- **C 런타임:** 바뀐 것이 없습니다. 모듈의 선언에서도 `sprintf`, `printf`, `printfn`은 뺍니다.
+
 ## 관련 문서
 
 - [compiler-design.md](compiler-design.md): 설계 결정(D1–D10), value representation, 단계별 계획

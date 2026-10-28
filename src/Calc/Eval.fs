@@ -191,6 +191,10 @@ let builtinArity =
         "println", 1
         // 예외: exn -> 'a
         "raise", 1
+        // 포맷: 첫 인자(포맷 문자열)가 나머지 인자를 정함 (Format.expand 로 만든 함수를 돌려줌)
+        "sprintf", 1
+        "printf", 1
+        "printfn", 1
         // fst, map, fold, range, head, failwith 같은 함수는 Calc 로 쓴 prelude (prelude.calc)
     ]
 
@@ -375,6 +379,7 @@ let rec evalIn (env: Env) expr =
         | _ -> failwithf "Unknown constructor: %s" name
     | TypeDecl (typeName, _, ctors, body) -> evalIn (declareConstructors env typeName ctors) body
     | ExceptionDecl (name, argType, body) -> evalIn (declareConstructors env "exn" [ name, argType ]) body
+    | Printf (kind, format) -> formatFunction kind format
     // 본문에서 raise 된 예외만 받음 (0으로 나누기 같은 실행 중 오류는 받지 않음). 맞는 분기가 없으면 같은 값을 다시 raise
     | Try (body, cases) ->
         try
@@ -430,6 +435,10 @@ and apply fv av =
     | VRecGroup (index, bindings, closureEnv) ->
         let _, param, body = bindings[index]
         evalIn (declareRecGroup closureEnv bindings |> Map.add param av) body
+    | VBuiltin (name, []) when Format.kinds.Contains name ->
+        match av with
+        | VString format -> formatFunction name format
+        | v -> typeError "string" v
     | VBuiltin (name, args) ->
         let args = args @ [ av ]
         if List.length args = builtinArity.[name] then callBuiltin name args
@@ -441,6 +450,12 @@ and apply fv av =
         | VTuple items when List.length items = fields -> VData (typeName, ctor, Some av)
         | v -> failwithf "Constructor %s expects %d fields but got %s" ctor fields (describe v)
     | v -> typeError "function" v
+
+/// 포맷 문자열의 함수 (Format.expand). 타입 검사를 건너뛰면 잘못된 포맷이 여기까지 옴
+and private formatFunction (kind: string) (format: string) =
+    match Format.parse format with
+    | Ok pieces -> evalIn builtins (Format.expand kind pieces)
+    | Error message -> failwith message
 
 /// 내장 함수만 있는 환경에서 평가
 let eval expr = evalIn builtins expr

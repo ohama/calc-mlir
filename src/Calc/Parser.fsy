@@ -128,6 +128,8 @@ let makeTuple (items: TypeExpr list) =
 %token <string> IDENT
 %token <string> CTOR TYVAR
 %token <string> STRING
+/// $"..." 보간: (포맷 문자열, 구멍의 식들). 포맷의 %A, %d 같은 자리마다 식 하나
+%token <string * Ast.Expr list> INTERP
 %token LET REC IN EQUALS FUN FUNCTION ANDKW ARROW
 %token IF THEN ELSE TRUE FALSE
 %token NOTEQUAL LESS GREATER LESSEQUAL GREATEREQUAL
@@ -269,6 +271,9 @@ Atom:
     | TRUE                          { at parseState (Bool true) }
     | FALSE                         { at parseState (Bool false) }
     | STRING                        { at parseState (Str $1) }
+    // $"a{x}b{y}" == sprintf "a%Ab%A" x y (Printf 에 구멍의 식을 차례로 적용)
+    | INTERP                        { let format, holes = $1 in
+                                      at parseState (List.fold (fun f e -> App (f, e)) (at parseState (Printf ("sprintf", format))) holes) }
     | IDENT                         { at parseState (Var $1) }
     | CTOR                          { at parseState (Ctor $1) }
     | LPAREN RPAREN                 { Unit }

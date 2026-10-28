@@ -36,7 +36,7 @@ let chain (declarations: TopItem list) (body: Expr) =
 let rec private varNames (expr: Expr) : Set<string> =
     match expr with
     | Var name -> Set.singleton name
-    | Number _ | Bool _ | Str _ | Unit | Nil | Ctor _ -> Set.empty
+    | Number _ | Bool _ | Str _ | Unit | Nil | Ctor _ | Printf _ -> Set.empty
     | Negate e | Not e | Annot (e, _) | Lambda (_, e) | TypeDecl (_, _, _, e) | ExceptionDecl (_, _, e) -> varNames e
     | Seq (a, b) | Let (_, a, b) | LetRec (_, _, a, b) | LetPattern (_, a, b) | App (a, b)
     | Add (a, b) | Subtract (a, b) | Multiply (a, b) | Divide (a, b) | Modulo (a, b)

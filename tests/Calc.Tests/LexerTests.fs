@@ -114,6 +114,17 @@ let tests =
                 [ LBRACKET; NUMBER 1; SEMI; NUMBER 2; RBRACKET; CONS; LBRACKET; RBRACKET; EOF ]
                 ""
         }
+        test "보간 문자열 $\"...\": 글자는 포맷(% 는 %%), 구멍은 %A 또는 붙인 지정자, 중괄호 두 번은 글자" {
+            Expect.equal
+                (tokens "$\"a {x} %d{y + 1} {{}} 5%\"")
+                [ INTERP ("a %A %d {} 5%%", [ Ast.Var "x"; Ast.Add (Ast.Var "y", Ast.Number 1) ]); EOF ]
+                ""
+            Expect.equal (tokens "$\"{\"}\"}\"") [ INTERP ("%A", [ Ast.Str "}" ]); EOF ] "구멍 안 문자열의 } 는 세지 않음"
+            expectLexError "$\"a } b\"" "Unmatched } in interpolated string (use }} for a brace)" 1 5
+            expectLexError "$\"a {}\"" "Empty expression in interpolated string" 1 6
+            expectLexError "$\"a {1 +}\"" "parse error: unexpected end of interpolated expression" 1 9
+            expectLexError "$\"abc" "Unterminated string" 1 1
+        }
         test "try, exception 키워드 (raise, failwith 는 보통 이름)" {
             Expect.equal
                 (tokens "exception E try raise failwith")

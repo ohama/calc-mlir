@@ -46,6 +46,12 @@ let tests =
                   "failwith \"no\";;", "Error: no\n"
                   "1;;", "- : int = 1\n" ]
         }
+        test "printf 와 보간 문자열" {
+            expectSession
+                [ "let greet name = printfn \"hi %s\" name;;", "val greet : string -> unit = <fun>\n"
+                  "greet \"Lee\";;", "hi Lee\n- : unit = ()\n"
+                  "$\"{1 + 1}!\";;", "- : string = \"2!\"\n" ]
+        }
         test "타입 표기와 'a 경고" {
             expectSession
                 [ "let f (x: int) : string = toString x;;", "val f : int -> string = <fun>\n"

@@ -127,6 +127,16 @@ let inferred =
       "exception E of int * string in E", "int * string -> exn"
       "fun f -> try f () with Failure m -> m", "(unit -> string) -> string"
       "let f n = if n > 0 then n else failwith \"neg\" in f", "int -> int"
+      // 포맷: 포맷 문자열 리터럴이 타입을 정함
+      "sprintf \"%d is %s\"", "int -> string -> string"
+      "sprintf \"%b %A %A\"", "bool -> 'a -> 'b -> string"
+      "sprintf \"100%%\"", "string"
+      "printf \"%d\"", "int -> unit"
+      "printfn \"hi\"", "unit"
+      "map (sprintf \"<%d>\")", "int list -> string list"
+      "let sprintf x = x + 1 in sprintf 2", "int" // 가린 sprintf 는 보통 함수
+      "fun x -> $\"a{x}b\"", "'a -> string"
+      "fun x -> $\"%d{x}\"", "int -> string"
       "(fun (x: 'a) -> x + 1)", "int -> int"
       // = 는 모든 타입 (함수 비교는 실행 중 오류로 남음, OCaml 과 같음)
       "(fun x -> x) = (fun x -> x)", "bool" ]
@@ -192,11 +202,19 @@ let tests =
             // 범위가 겹치지 않아도: 실행 중에는 이름으로 구분하므로 v 가 안쪽 E s 와 맞아 버림
             expectTypeError "let v = (exception E of int in E 1) in exception E of string in match v with E s -> s | _ -> \"\"" "Exception E is already defined"
             expectTypeError "exception Failure in 1" "Exception Failure is already defined"
+            // 포맷
+            expectTypeError "sprintf" "The format string of sprintf must be a string literal"
+            expectTypeError "let f = printfn in f \"%d\" 1" "The format string of printfn must be a string literal"
+            expectTypeError "sprintf \"%d\" \"x\"" "Type mismatch: expected int but got string"
+            expectTypeError "sprintf \"%q\" 1" "Unknown format specifier: %q"
+            expectTypeError "sprintf \"50%\"" "Missing format specifier after %"
+            expectTypeError "$\"%s{1}\"" "Type mismatch: expected string but got int"
         ]
 
-        test "모든 내장 함수와 생성자에 타입이 있음" {
+        test "모든 내장 함수와 생성자에 타입이 있음 (sprintf, printf, printfn 은 포맷 문자열을 주면)" {
             for name in builtins |> Map.keys do
-                Expect.isNotEmpty (typeOf name) name
+                let input = if Format.kinds.Contains name then name + " \"\"" else name
+                Expect.isNotEmpty (typeOf input) name
         }
 
         test "건전성: 타입이 맞는 식은 실행 중 타입 오류 없이 그 타입의 값이 됨" {

@@ -685,6 +685,12 @@ let tests =
             }
         ]
 
+        test "보간 문자열은 Printf 에 구멍의 식을 차례로 적용" {
+            Expect.equal (parse "$\"a{x}b{y}\"") (App (App (Printf ("sprintf", "a%Ab%A"), Var "x"), Var "y")) ""
+            Expect.equal (parse "$\"plain\"") (Printf ("sprintf", "plain")) ""
+            Expect.equal (parse "sprintf \"%d\" 1") (App (App (Var "sprintf", Str "%d"), Number 1)) "sprintf 는 파서에서 보통 함수 호출"
+        }
+
         testList "예외" [
             test "try ... with 는 match 처럼 분기 목록, 본문은 ; 까지" {
                 Expect.equal

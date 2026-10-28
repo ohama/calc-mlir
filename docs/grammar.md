@@ -18,6 +18,7 @@ Calc 언어의 어휘 구조, 구문, 의미를 정리한 문서입니다. 구�
 |---|---|---|
 | `NUMBER` | `[0-9]+` | `0`, `42` |
 | `STRING` | `"`로 시작해서 `"`로 끝남 (아래 "문자열 리터럴" 참고) | `"hello"`, `""`, `"a\"b"` |
+| `INTERP` | `$"`로 시작하는 보간 문자열. 렉서가 구멍의 식까지 파싱해서 (포맷 문자열, 식 목록)으로 넘김 (아래 "문자열 포맷") | `$"hi {name}"` |
 | `IDENT` | `[a-z_][A-Za-z0-9_]*` (키워드와 `_` 하나는 제외). 변수와 타입 이름 | `x`, `foo_1`, `_tmp`, `fooBar` |
 | `CTOR` | `[A-Z][A-Za-z0-9_]*`. 생성자 (타입 이름으로도 쓸 수 있음) | `Some`, `None`, `Node`, `X2` |
 | `TYVAR` | `'` 다음에 `IDENT` 모양. type variable | `'a`, `'key` |
@@ -70,6 +71,22 @@ Calc 언어의 어휘 구조, 구문, 의미를 정리한 문서입니다. 구�
 - 닫는 `"`가 없으면 `Unterminated string` 오류입니다. `"abc\"`도 마지막 `"`가 이스케이프되므로 닫히지 않은 문자열입니다.
 - 문자열 안에 실제 줄바꿈을 넣어도 됩니다. 그대로 값에 포함됩니다.
 
+### 보간 문자열 `$"..."`
+
+F#과 같은 보간 문자열입니다. 중괄호 안의 식을 계산해서 그 자리에 넣습니다.
+
+```
+let name = "Kim" in let age = 30 in $"Hello {name}, {age + 1} next year"   (* "Hello Kim, 31 next year" *)
+$"{{literal}} %d{1 + 2} {[1; 2]} 100%"                                      (* "{literal} 3 [1; 2] 100%" *)
+```
+
+- **`{e}`:** 아무 타입의 식. `toString`과 같은 모양으로 넣습니다(문자열은 따옴표 없이, 나머지는 결과 출력과 같음).
+- **`%d{e}`, `%s{e}`, `%b{e}`, `%A{e}`:** 지정자를 붙이면 식의 타입을 검사합니다. `$"%d{"x"}"`는 `Type mismatch: expected int but got string`입니다.
+- **중괄호 글자:** `{{`와 `}}`. 짝이 없는 `}`는 `Unmatched } in interpolated string (use }} for a brace)` 오류입니다.
+- **`%` 글자:** 지정자와 `{`가 뒤따르지 않으면 그냥 `%`입니다.
+- **구멍 안:** 아무 식이나 쓸 수 있고 문자열 리터럴도 됩니다(`$"{"}"}"`). 빈 구멍 `{}`는 `Empty expression in interpolated string`입니다. 구멍 안의 오류는 원래 입력의 줄과 열을 가리킵니다.
+- **뜻:** `$"a{x}b{y}"`는 `sprintf "a%Ab%A" x y`와 같습니다(아래 "문자열 포맷").
+
 ## 2. 구문
 
 ### EBNF
@@ -111,6 +128,7 @@ app     = app atom                                       (* 함수 호출 *)
 
 atom    = NUMBER
         | STRING
+        | INTERP                                         (* $"a{e}b" *)
         | "true" | "false"
         | IDENT
         | CTOR                                           (* 생성자 *)
@@ -474,6 +492,7 @@ defaultValue 0 (tryFind (fun x -> x > 10) xs)
 | `match e with p1 -> e1 \| p2 when g -> e2` | `Match (e, [ (p1, None, e1); (p2, Some g, e2) ])` (분기 순서 유지) |
 | `try e with p -> e1` | `Try (e, [ (p, None, e1) ])` |
 | `exception E of t in e` | `ExceptionDecl ("E", Some t, e)` |
+| `$"a{x}"` | `App (Printf ("sprintf", "a%A"), Var "x")` (`sprintf "…"`는 파서에서 보통 `App`) |
 | `let (a, b) = e1 in e2` | `LetPattern (PTuple [PVar "a"; PVar "b"], e1, e2)` |
 | 패턴 `x` / `_` / `1` / `true` / `"s"` | `PVar "x"` / `PWildcard` / `PInt 1` / `PBool true` / `PString "s"` |
 | 패턴 `[]` / `p1 :: p2` / `[p1; p2]` | `PNil` / `PCons (p1, p2)` / `PCons (p1, PCons (p2, PNil))` |
@@ -615,6 +634,7 @@ type Value =
 
 함수는 두 종류로 구현되어 있지만, 쓰는 쪽에서는 구분되지 않습니다.
 
+- **포맷 함수(3개):** `sprintf`, `printf`, `printfn`. 포맷 문자열 리터럴이 함수의 타입을 정합니다. 아래 "문자열 포맷"을 참고하세요.
 - **prelude(Calc로 쓴 함수, 20개):** `failwith`, `fst`, `snd`, `ignore`, `isEmpty`, `head`, `tail`, `nth`, `fold`, `reverse`, `append`, `range`, `sum`, `map`, `filter`, `exists`, `forall`, `tryHead`, `tryFind`, `defaultValue`. 아래 "prelude"를 참고하세요.
 - **내장 함수(F#과 C로 구현, 18개):** 나머지. 문자열 함수, `toString`, `toInt`, 여러 타입을 받는 `length`, `sort`, 출력 함수, `raise`입니다.
 
@@ -697,6 +717,28 @@ type Value =
 | `print v` | 값 → unit | `print "a"; print 1` | `a1` (줄바꿈 없음) |
 | `println v` | 값 → unit | `println [Some "b"]` | `[Some "b"]` 다음 줄바꿈 |
 | `ignore v` | 값 → unit | `ignore (f x)` | `()` (값을 버림) |
+
+#### 문자열 포맷
+
+| 함수 | 타입 | 예 | 결과 |
+|---|---|---|---|
+| `sprintf fmt …` | 포맷이 정함 | `sprintf "%d is %s" 42 "answer"` | `"42 is answer"` |
+| `printf fmt …` | 포맷이 정함, 결과는 unit | `printf "%d-" 1` | `1-` 출력 (줄바꿈 없음) |
+| `printfn fmt …` | 포맷이 정함, 결과는 unit | `printfn "x=%A" [1]` | `x=[1]` 출력 후 줄바꿈 |
+
+| 지정자 | 인자 타입 | 넣는 모양 |
+|---|---|---|
+| `%d` | `int` | `42`, `-1` |
+| `%s` | `string` | 따옴표 없이 그대로 |
+| `%b` | `bool` | `true`, `false` |
+| `%A` | 아무 타입 | `toString`과 같음: 문자열은 따옴표 없이, 나머지는 결과 출력과 같음 (`[Some "a"]`) |
+| `%%` | (인자 없음) | `%` 글자 |
+
+- **포맷 문자열이 타입을 정함:** `sprintf "%d is %s"`의 타입은 `int -> string -> string`, `printfn "hi"`는 `unit`입니다. 인자가 다 모이면 문자열을 만들거나 출력합니다. `map (sprintf "<%d>") [1; 2]`처럼 partial application을 할 수 있습니다.
+- **리터럴이어야 함:** 포맷 문자열은 함수 바로 뒤의 문자열 리터럴이어야 합니다(F#과 같음). `sprintf`만 쓰거나 변수에 담으면 `The format string of sprintf must be a string literal`입니다.
+- **오류:** 모르는 지정자는 `Unknown format specifier: %q`, 끝의 `%` 하나는 `Missing format specifier after %`입니다. 위치는 포맷 문자열을 가리킵니다. 인자 타입이 맞지 않으면 그 인자를 가리킵니다.
+- **가리기:** `let sprintf x = …`처럼 같은 이름을 정의하면 보통 함수입니다.
+- **F#과 다른 점:** `%A`는 문자열에 따옴표를 붙이지 않습니다(F#은 `"a"`). 폭, 정렬, `%f` 같은 지정자는 아직 없습니다.
 
 #### 예외
 
@@ -844,6 +886,7 @@ Error: parse error: unexpected '+' (line 1, column 5)
 | `defaultValue` | `'a -> 'a option -> 'a` |
 | `Some`, `None` | `'a -> 'a option`, `'a option` |
 | `raise`, `failwith` | `exn -> 'a`, `string -> 'a` |
+| `sprintf`, `printf`, `printfn` | 포맷 문자열이 정함 (`sprintf "%d %s"`: `int -> string -> string`) |
 | `Failure`, `Not_found` | `string -> exn`, `exn` |
 
 ### 타입 오류

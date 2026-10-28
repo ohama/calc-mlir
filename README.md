@@ -41,6 +41,7 @@ Result: 10
 | mutual recursion | `let rec even n = ... and odd n = ...` |
 | 타입 표기 | `(xs : int list)`, `let f (x: int) : string = ...`, `fun (x: 'a) -> x` |
 | 예외 | `exception Neg of int`, `raise (Neg 1)`, `failwith "bad"`, `try e with Failure m -> m \| Not_found -> ""` |
+| 문자열 포맷 | `sprintf "%d is %s" 42 "x"`, `printfn "%A" xs`, `$"Hello {name}, {age + 1}"` |
 
 - 우선순위 (낮은 것부터): `;` < `let`/`if`/`fun`/`match` < `||` < `&&` < 비교, `|>`, `>>` < `::` < `+ -` < `* / %` < 단항 `-`, `not` < 함수 호출
 - **타입 추론** (Hindley–Milner, let-polymorphism): 실행 전에 타입을 추론하고, 맞지 않으면 평가하지 않습니다. 타입 오류는 문제가 된 식의 위치(줄, 열, `^`)를 가리킵니다.
@@ -80,7 +81,7 @@ dotnet run --project src/Calc
 ```
 
 ```
-calc 0.32.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
+calc 0.33.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
 # let add a b = a + b;;
 val add : int -> int -> int = <fun>
 # add 1 2;;

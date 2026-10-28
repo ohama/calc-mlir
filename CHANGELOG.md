@@ -4,6 +4,19 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.33.0] - 2026-10-29
+
+### 추가
+- 문자열 포맷(F#과 같은 문법). 인터프리터, 타입 추론, 컴파일러, REPL 모두 지원합니다.
+  - `sprintf`, `printf`, `printfn`: 지정자 `%d`(int), `%s`(string), `%b`(bool), `%A`(아무 값, `toString`과 같은 모양), `%%`. 포맷 문자열 리터럴이 함수의 타입을 정합니다(`sprintf "%d is %s" : int -> string -> string`). 리터럴이 아니면 `The format string of sprintf must be a string literal`입니다.
+  - 보간 문자열 `$"Hello {name}, {age + 1}"`: 구멍은 아무 식, `%d{e}`처럼 지정자를 붙이면 타입을 검사합니다. `{{`, `}}`는 중괄호 글자입니다. `$"a{x}"`는 `sprintf "a%A" x`와 같습니다.
+  - 포맷 오류(`Unknown format specifier: %q`, `Missing format specifier after %`)는 포맷 문자열을, 인자 타입 오류는 인자를 가리킵니다. 보간 문자열 안의 오류도 원래 줄과 열을 가리킵니다.
+  - 포맷의 함수는 `Format.expand`가 Calc 코드로 펼쳐서 인터프리터와 컴파일러가 같은 코드를 실행합니다. C 런타임은 바뀌지 않았습니다.
+- 테스트 30개 추가 (총 936개)
+
+### 변경
+- `$"`가 보간 문자열의 시작이 되었습니다.
+
 ## [0.32.0] - 2026-10-28
 
 ### 추가

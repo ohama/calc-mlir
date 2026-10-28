@@ -81,6 +81,18 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Set<stri
         CLetRecGroup (closures, lower state ctors groupScope inExpr)
     // 생성자를 바로 적용하면 그 자리에서 블록을 만듦 (인터프리터의 VConstructor 호출과 같은 결과)
     | App (Ctor name, a) when Map.tryFind name ctors = Some true -> CData (name, Some (lower state ctors scope a))
+    // 내장 함수 sprintf 에 포맷 문자열 리터럴: 포맷의 함수에 나머지 인자를 적용
+    | App _ when (match spine expr with
+                  | Var name, Str _ :: _ -> isBuiltin name && Format.kinds.Contains name
+                  | _ -> false) ->
+        match spine expr with
+        | Var name, Str format :: rest -> lower state ctors scope (List.fold (fun f a -> App (f, a)) (Printf (name, format)) rest)
+        | _ -> failwith "unreachable"
+    // 포맷의 함수 (Format.expand) 는 내장 함수(toString, print)만 쓰므로 사용자 이름이 없는 범위에서 낮춤
+    | Printf (kind, format) ->
+        match Format.parse format with
+        | Ok pieces -> lower state ctors Set.empty (Format.expand kind pieces)
+        | Error message -> failwithf "Lower: %s" message // 타입 검사를 통과했으므로 생기지 않음
     // 인자가 다 모인 내장 함수는 런타임 함수를 바로 호출. 남는 인자는 결과에 차례로 적용
     | App _ when (match spine expr with
                   | Var name, args -> isBuiltin name && args.Length >= Eval.builtinArity[name]

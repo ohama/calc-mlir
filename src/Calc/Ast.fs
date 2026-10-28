@@ -87,6 +87,9 @@ type Expr =
     | Try of body: Expr * cases: (Pattern * Expr option * Expr) list
     /// exception E [of t] in body: exn 타입의 새 생성자 (OCaml 의 exception 선언)
     | ExceptionDecl of name: string * argType: TypeExpr option * body: Expr
+    /// 포맷 문자열 하나가 정하는 함수: sprintf "%d" (내장 함수 sprintf, printf, printfn 에 리터럴을 준 것) 또는
+    /// $"a{x}" 가 만드는 것. kind 는 "sprintf", "printf", "printfn". $"a{x}" == App (Printf ("sprintf", "a%A"), x)
+    | Printf of kind: string * format: string
 
 /// 프로그램의 최상위 항목: in 없는 선언 또는 식. 위치는 선언의 시작 (풀어 쓴 let 노드에 기록)
 type TopItem =

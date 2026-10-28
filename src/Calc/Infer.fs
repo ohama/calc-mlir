@@ -72,6 +72,7 @@ let private optionOf t = TyCon ("option", [ t ])
 /// 예외 값의 타입. exception 선언마다 생성자가 늘어나는 열린 타입이라 빠진 분기 검사는 int 처럼 _ 가 필요함
 let private tExn = TyCon ("exn", [])
 
+
 let rec prune t =
     match t with
     | TyVar ({ Link = Some linked } as v) ->
@@ -79,6 +80,31 @@ let rec prune t =
         v.Link <- Some root
         root
     | _ -> t
+
+/// sprintf, printf, printfn 이 내장 함수일 때 환경에 넣는 표시. 사용자가 같은 이름을 묶으면 보통 타입으로 바뀜
+let private formatMarker kind = TyCon ("$format:" + kind, [])
+
+let private isFormatMarker t =
+    match prune t with
+    | TyCon (name, []) -> name.StartsWith "$format:"
+    | _ -> false
+
+/// 포맷 문자열의 함수 타입: 자리(%d, %s, %b, %A)마다 인자 하나, 결과는 sprintf 면 string, printf 와 printfn 이면 unit
+let private formatType (newVar: unit -> Type) (kind: string) (format: string) =
+    match Format.parse format with
+    | Error message -> raise (TypeError (message, None))
+    | Ok pieces ->
+        let argTypes =
+            pieces
+            |> List.choose (fun piece ->
+                match piece with
+                | Format.Hole Format.SInt -> Some (TyCon ("int", []))
+                | Format.Hole Format.SString -> Some (TyCon ("string", []))
+                | Format.Hole Format.SBool -> Some (TyCon ("bool", []))
+                | Format.Hole Format.SAny -> Some (newVar ())
+                | Format.Text _ -> None)
+        let result = if kind = "sprintf" then TyCon ("string", []) else TyCon ("unit", [])
+        List.foldBack (fun a acc -> TyFun (a, acc)) argTypes result
 
 let private newVarAt (st: State) level allowed =
     st.NextId <- st.NextId + 1
@@ -278,6 +304,9 @@ let private initialContext (st: State) =
             "Not_found", tExn
             // map, fold, head, failwith 같은 함수는 prelude.calc 에서 추론한 타입
         ]
+        // 포맷: 타입이 포맷 문자열 리터럴에 따라 정해지므로 보통 타입이 없음 (표시만, App 에서 Format 으로 다룸).
+        // 위 리스트 안에 for 를 쓰면 앞 항목이 버려지므로(FS0020) 따로 더함
+        |> fun vars -> Format.kinds |> Seq.fold (fun acc kind -> Map.add kind (formatMarker kind) acc) vars
     let types =
         Map.ofList [ "int", ("int", 0); "bool", ("bool", 0); "string", ("string", 0); "unit", ("unit", 0); "list", ("list", 1); "option", ("option", 1); "exn", ("exn", 0) ]
     { Vars = vars; Types = types }
@@ -406,8 +435,14 @@ and private inferNode (st: State) (ctx: Context) expr : Type =
         infer' rest
     | Var name ->
         match Map.tryFind name ctx.Vars with
+        // sprintf 를 리터럴 없이 쓰면 인자 타입을 알 수 없음 (F# 와 같음)
+        | Some scheme when isFormatMarker scheme -> typeError (sprintf "The format string of %s must be a string literal" name)
         | Some scheme -> instantiate st scheme
         | None -> typeError (sprintf "Unbound variable: %s" name)
+    | Printf (kind, format) -> formatType (fun () -> newVar st) kind format
+    // 내장 함수 sprintf 에 리터럴: 포맷 문자열의 오류는 리터럴을 가리킴
+    | App (Var name, (Str format as literal)) when Map.tryFind name ctx.Vars |> Option.exists isFormatMarker ->
+        locate literal (fun () -> formatType (fun () -> newVar st) name format)
     | Ctor name ->
         match Map.tryFind name ctx.Vars with
         | Some scheme -> instantiate st scheme

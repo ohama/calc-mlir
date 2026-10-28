@@ -588,8 +588,10 @@ let private declarations =
       "llvm.func @calc_match_failure(i64)"
       "llvm.func @calc_try(i64, i64) -> i64"
       // 내장 함수: runtime/builtins.c
+      // sprintf, printf, printfn 은 Lower 가 Calc 코드로 펼치므로 런타임 함수가 없음
       for KeyValue (name, arity) in Eval.builtinArity do
-          sprintf "llvm.func @calc_builtin_%s(%s) -> i64" name (List.replicate arity "i64" |> String.concat ", ")
+          if not (Format.kinds.Contains name) then
+              sprintf "llvm.func @calc_builtin_%s(%s) -> i64" name (List.replicate arity "i64" |> String.concat ", ")
       // option 의 이름과 None 값은 런타임에 하나 (runtime.h)
       "llvm.mlir.global external constant @calc_name_some() {addr_space = 0 : i32} : !llvm.array<5 x i8>"
       "llvm.mlir.global external constant @calc_name_none() {addr_space = 0 : i32} : !llvm.array<5 x i8>"

@@ -38,6 +38,9 @@ let tests =
                   "(\"a\" : int)", "Type mismatch: expected int but got string", (1, 2)
                   "let f (x: int) : string =\n  x in f", "Type mismatch: expected string but got int", (2, 3)
                   "(1 : foo)", "Unknown type: foo", (1, 6)
+                  "sprintf \"%d %s\" 1 2", "Type mismatch: expected string but got int", (1, 19)
+                  "sprintf \"%x\" 1", "Unknown format specifier: %x", (1, 9)
+                  "let s = \"a\" in\n$\"n = %d{s}\"", "Type mismatch: expected int but got string", (2, 10)
                   "(1, Nome)", "Unknown constructor: Nome", (1, 5) ] ->
                 test (input.Replace("\n", "\\n")) {
                     Expect.equal (errorAt input) (message, Some position) ""
