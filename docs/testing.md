@@ -31,6 +31,7 @@ dotnet run --project tests/Calc.Tests -- --debug            # 각 테스트 시�
 |---|---|---|
 | `LexerTests.fs` | `Lexer` | 토큰 순서, 공백과 줄바꿈 무시, 키워드와 식별자, 비교·논리 연산자, `->`, 리스트 토큰(`[` `]` `;` `::` `|`), 문자열과 이스케이프, 닫히지 않은 문자열, 빈 입력, 알 수 없는 문자 오류 |
 | `ParserTests.fs` | `Parser` | 우선순위, 결합 방향, 괄호, 단항 마이너스, `let`/`if`/`fun`의 범위와 중첩, 함수 호출, 함수 정의 문법 설탕, 리스트와 `::`, 튜플, 패턴과 `match`(가드, 중첩), 튜플 분해 `let`, 생성자와 `type` 선언, 타입 식, 문자열 리터럴, 파서 오류 |
+| `InferTests.fs` | `Infer` | 추론한 타입 표(다형성, 재귀, 패턴, 내장 함수, ADT), 타입 오류 메시지, 건전성(타입 검사를 통과한 `EvalTests` 예제는 실행 중 오류 없이 그 타입의 값이 됨), 타입 검사가 거부하는 동적 예제 목록, FsCheck 속성 |
 | `EvalTests.fs` | `Eval` | 식 계산 표(정수, 불리언, 함수, 재귀, 리스트, 문자열, 내장 함수, 튜플, 패턴 매칭, option, 사용자 정의 타입), `let`과 섀도잉, 클로저, 단락 평가, 타입 오류, 리스트·문자열·내장 함수·패턴 매칭·ADT 오류와 출력, 정의되지 않은 변수, 0으로 나누기, FsCheck 속성 테스트 |
 | `Main.fs` | — | 진입점 (`runTestsInAssemblyWithCLIArgs`) |
 
@@ -83,10 +84,12 @@ expectError "1 + true" "Type error: expected int but got bool"
 ```
 $ dotnet run --project src/Calc -- --expr "2 + 3 * (4 - 1)"
 AST:    Add (Number 2, Multiply (Number 3, Subtract (Number 4, Number 1)))
+Type:   int
 Result: 11
 ```
 
 - `AST:` 줄은 파서가 만든 트리입니다. 우선순위와 결합 방향이 올바른지 여기서 확인합니다.
+- `Type:` 줄은 타입 추론 결과입니다. 타입이 맞지 않으면 이 줄 대신 `Error: Type mismatch: ...`가 나오고 평가하지 않습니다. `--no-typecheck`를 주면 이 줄이 없습니다.
 - `Result:` 줄은 평가 결과입니다.
 - 오류가 나면 표준 에러로 `Error: ...`를 출력하고 종료 코드 `1`을 반환합니다. 성공하면 `0`입니다.
 
@@ -138,27 +141,30 @@ Result: 11
 | `1 +` | 파서 | `Error: parse error: unexpected end of input (line 1, column 4)` 아래에 오류 줄과 `^` 표시 |
 | `1 + + 2` | 파서 | `Error: parse error: unexpected '+' (line 1, column 5)` |
 | `2 $ 3` | 렉서 | `Error: Unexpected character: $ (line 1, column 3)` |
-| `1 / 0` | 평가 | AST 출력 후 `Error: Attempted to divide by zero.` |
-| `y + 1` | 평가 | AST 출력 후 `Error: Unbound variable: y` |
 | `let x = 1` | 파서 (`in` 없음) | `Error: parse error: unexpected end of input (line 1, column 10)` |
 | `let in = 1 in 2` | 파서 (키워드는 변수 이름이 될 수 없음) | `Error: parse error: unexpected 'in' (line 1, column 5)` |
 | `if true then 1` | 파서 (`else` 없음) | `Error: parse error: unexpected end of input (line 1, column 15)` |
-| `1 + true` | 평가 (타입) | AST 출력 후 `Error: Type error: expected int but got bool` |
-| `if 1 then 2 else 3` | 평가 (타입) | AST 출력 후 `Error: Type error: expected bool but got int` |
-| `1 < 2 < 3` | 평가 (타입: `(1 < 2) < 3`) | AST 출력 후 `Error: Type error: expected int but got bool` |
-| `1 2` | 평가 (함수가 아닌 값 호출) | AST 출력 후 `Error: Type error: expected function but got int` |
-| `let f x = f x in f 1` | 평가 (`rec` 없이 재귀) | AST 출력 후 `Error: Unbound variable: f` |
 | `let rec f = 1 in f` | 파서 (`let rec`에 인자 없음) | `Error: parse error: unexpected '=' (line 1, column 11)` |
-| `1 :: 2` | 평가 (`::` 오른쪽이 리스트가 아님) | AST 출력 후 `Error: Type error: expected list but got int` |
-| `match xs with [] -> 0` | 파서 (분기가 하나뿐) | `Error: parse error: unexpected end of input (line 1, column 22)` |
+| `match p with (a, a) -> a` | 파서 (패턴 안에 같은 이름) | `Error: Duplicate variable in pattern: a (line 1, column 14)` |
 | `"abc` | 렉서 (닫히지 않은 문자열) | `Error: Unterminated string (line 1, column 1)` |
 | `2147483648` | 렉서 (`int` 범위 밖) | `Error: Integer literal out of range: 2147483648 (line 1, column 1)` |
-| `"a" + 1` | 평가 (타입) | AST 출력 후 `Error: Type error: expected string but got int` |
-| `toInt "abc"` | 평가 (내장 함수) | AST 출력 후 `Error: toInt: invalid integer: "abc"` |
-| `head []` | 평가 (내장 함수) | AST 출력 후 `Error: head: empty list` |
-| `match 1 with 2 -> 0` | 평가 (일치하는 패턴 없음) | AST 출력 후 `Error: Match failure: 1` |
-| `match Some 1 with Nome -> 0 \| _ -> 1` | 평가 (모르는 생성자) | AST 출력 후 `Error: Unknown constructor: Nome` |
-| `match p with (a, a) -> a` | 파서 (패턴 안에 같은 이름) | `Error: Duplicate variable in pattern: a (line 1, column 14)` |
+| `y + 1` | 타입 추론 | AST 출력 후 `Error: Unbound variable: y` |
+| `let f x = f x in f 1` | 타입 추론 (`rec` 없이 재귀) | AST 출력 후 `Error: Unbound variable: f` |
+| `1 + true` | 타입 추론 | AST 출력 후 `Error: Type mismatch: expected int but got bool` |
+| `"a" + 1` | 타입 추론 | AST 출력 후 `Error: Type mismatch: expected string but got int` |
+| `if 1 then 2 else 3` | 타입 추론 | AST 출력 후 `Error: Type mismatch: expected bool but got int` |
+| `if true then 1 else false` | 타입 추론 (분기 타입이 다름) | AST 출력 후 `Error: Type mismatch: expected int but got bool` |
+| `[1; true]` | 타입 추론 (원소 타입이 다름) | AST 출력 후 `Error: Type mismatch: expected int list but got bool list` |
+| `1 < 2 < 3` | 타입 추론 (`(1 < 2) < 3`) | AST 출력 후 `Error: Type mismatch: expected int or string but got bool` |
+| `1 2` | 타입 추론 (함수가 아닌 값 호출) | AST 출력 후 `Error: Type mismatch: expected function but got int` |
+| `1 :: 2` | 타입 추론 (`::` 오른쪽이 리스트가 아님) | AST 출력 후 `Error: Type mismatch: expected int list but got int` |
+| `fun x -> x x` | 타입 추론 (무한 타입) | AST 출력 후 `Error: Type mismatch: cannot construct infinite type 'a = 'a -> 'b` |
+| `match Some 1 with Nome -> 0 \| _ -> 1` | 타입 추론 (모르는 생성자) | AST 출력 후 `Error: Unknown constructor: Nome` |
+| `--no-typecheck -e "1 + true"` | 평가 (동적 타입 검사) | AST 출력 후 `Error: Type error: expected int but got bool` |
+| `1 / 0` | 평가 | AST, `Type: int` 출력 후 `Error: Attempted to divide by zero.` |
+| `toInt "abc"` | 평가 (내장 함수) | AST, `Type: int` 출력 후 `Error: toInt: invalid integer: "abc"` |
+| `head []` | 평가 (내장 함수) | AST, `Type: 'a` 출력 후 `Error: head: empty list` |
+| `match 1 with 2 -> 0` | 평가 (일치하는 패턴 없음) | AST, `Type: int` 출력 후 `Error: Match failure: 1` |
 | `let rec loop n = if n = 0 then 0 else loop (n - 1) in loop 1000000` | 평가 (재귀가 너무 깊음) | `Stack overflow.` 후 프로세스 종료 (종료 코드 134) |
 
 모든 경우 종료 코드는 `1`입니다. 종료 코드는 `echo $?`로 확인할 수 있습니다.
@@ -167,11 +173,12 @@ Result: 11
 
 | 명령 | 기대 출력 | 종료 코드 |
 |---|---|---|
-| `--help`, `-h` | `USAGE: calc [--help] [--expr=<expr>] [--version]`로 시작하는 사용법 | 0 |
-| `--version`, `-v` | `calc 0.13.0` (`Calc.fsproj`의 `<Version>`) | 0 |
+| `--help`, `-h` | `USAGE: calc [--help] [--expr=<expr>] [--version] [--no-typecheck]`로 시작하는 사용법 | 0 |
+| `--version`, `-v` | `calc 0.14.0` (`Calc.fsproj`의 `<Version>`) | 0 |
 | `-e "(2+3)*4"` | `Result: 20` | 0 |
 | `--expr=7/2` | `Result: 3` | 0 |
 | `--expr "-5 + 2"` | `Result: -3` (`-`로 시작하는 식도 값으로 처리됨) | 0 |
+| `--no-typecheck -e "[1; true]"` | `Type:` 줄 없이 `Result: [1; true]` (타입 추론 생략, 평가만) | 0 |
 | `--expr` (값 없음) | `ERROR: argument '--expr' must be followed by <expr>.` + 사용법 | 1 |
 | `--bogus` | `ERROR: unrecognized argument: '--bogus'.` + 사용법 | 1 |
 
@@ -194,6 +201,7 @@ done
 ```sh
 echo "1 + 2 * 3" | dotnet run --project src/Calc
 # AST:    Add (Number 1, Multiply (Number 2, Number 3))
+# Type:   int
 # Result: 7
 ```
 

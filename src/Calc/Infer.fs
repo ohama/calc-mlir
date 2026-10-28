@@ -1,0 +1,470 @@
+/// Hindley–Milner 타입 추론 (let 다형성). 단계(level) 기반 일반화를 쓰는 Algorithm W 변형.
+/// 평가 전에 실행해서 타입이 맞지 않는 프로그램을 거부한다. 평가기는 그대로 동적 검사를 유지한다.
+module Infer
+
+open System.Collections.Generic
+open Ast
+
+type Type =
+    /// int, bool, string, 'a list, 'a option, 사용자 타입. 이름은 고유 이름 (사용자 타입은 "shape@3")
+    | TyCon of string * Type list
+    | TyFun of Type * Type
+    | TyTuple of Type list
+    | TyVar of TypeVar
+
+and TypeVar =
+    { Id: int
+      /// 단일화로 정해진 타입 (union-find 의 링크)
+      mutable Link: Type option
+      /// 이 변수가 생긴 let 깊이. genericLevel 이면 일반화된(∀) 변수
+      mutable Level: int
+      /// +, <, length, sort 처럼 일부 타입만 허용하는 변수 (타입 생성자 이름 목록). 이런 변수는 일반화하지 않음
+      mutable Allowed: string list option }
+
+/// 정적 타입 오류. 위치 정보는 아직 없음 (AST 에 위치가 없음)
+exception TypeError of string with
+    override this.Message = this.Data0
+
+let private typeError message = raise (TypeError message)
+
+let private genericLevel = System.Int32.MaxValue
+
+/// 추론 한 번의 상태. 테스트가 병렬로 돌기 때문에 모듈 전역 변수 대신 호출마다 만듦
+type private State = { mutable Level: int; mutable NextId: int }
+
+type private Context =
+    { Vars: Map<string, Type>
+      /// 타입 이름 → (고유 이름, 타입 인자 수)
+      Types: Map<string, string * int> }
+
+let private tInt = TyCon ("int", [])
+let private tBool = TyCon ("bool", [])
+let private tString = TyCon ("string", [])
+let private listOf t = TyCon ("list", [ t ])
+let private optionOf t = TyCon ("option", [ t ])
+
+let rec prune t =
+    match t with
+    | TyVar ({ Link = Some linked } as v) ->
+        let root = prune linked
+        v.Link <- Some root
+        root
+    | _ -> t
+
+let private newVarAt (st: State) level allowed =
+    st.NextId <- st.NextId + 1
+    TyVar { Id = st.NextId; Link = None; Level = level; Allowed = allowed }
+
+let private newVar (st: State) = newVarAt st st.Level None
+
+// ---- 출력 ----
+
+/// 고유 이름 "shape@3" 은 "shape" 로 보여 줌
+let private baseName (name: string) =
+    match name.IndexOf '@' with
+    | -1 -> name
+    | i -> name.Substring(0, i)
+
+/// 여러 타입을 같은 변수 이름 규칙('a, 'b, ...)으로 출력 (오류 메시지에서 두 타입을 함께 보여 줄 때)
+let typesToString (types: Type list) =
+    // 같이 출력하는 타입 안에 이름이 같은 서로 다른 타입이 있으면 OCaml 처럼 t/2 로 구분
+    let uniques = List<string>()
+    let rec collect t =
+        match prune t with
+        | TyCon (name, args) ->
+            if not (uniques.Contains name) then uniques.Add name
+            List.iter collect args
+        | TyFun (a, b) ->
+            collect a
+            collect b
+        | TyTuple items -> List.iter collect items
+        | TyVar _ -> ()
+    List.iter collect types
+    let displayName (name: string) =
+        let sameBase = uniques |> Seq.filter (fun u -> baseName u = baseName name) |> List.ofSeq
+        match sameBase with
+        | [ _ ] -> baseName name
+        | _ -> sprintf "%s/%d" (baseName name) (List.findIndex ((=) name) sameBase + 1)
+    let names = Dictionary<int, string>()
+    let nameOf (v: TypeVar) =
+        match names.TryGetValue v.Id with
+        | true, n -> n
+        | _ ->
+            let i = names.Count
+            let n = "'" + string (char (int 'a' + i % 26)) + (if i >= 26 then string (i / 26) else "")
+            names.[v.Id] <- n
+            n
+    // prec: 0 = 화살표 자리, 1 = 화살표 왼쪽, 2 = 튜플 원소·타입 인자 자리
+    let rec go prec t =
+        let paren cond (s: string) = if cond then "(" + s + ")" else s
+        match prune t with
+        | TyVar v -> nameOf v
+        | TyCon (name, []) -> displayName name
+        | TyCon (name, [ arg ]) -> go 2 arg + " " + displayName name
+        | TyCon (name, args) -> "(" + (args |> List.map (go 0) |> String.concat ", ") + ") " + displayName name
+        | TyTuple items -> paren (prec >= 2) (items |> List.map (go 2) |> String.concat " * ")
+        | TyFun (a, b) -> paren (prec >= 1) (go 1 a + " -> " + go 0 b)
+    types |> List.map (go 0)
+
+let typeToString t = typesToString [ t ] |> List.head
+
+// ---- 단일화 ----
+
+exception private Mismatch
+exception private NotAllowed of allowed: string list * actual: Type
+exception private Infinite of TypeVar * Type
+
+/// v 가 t 안에 있는지 확인하면서, t 안의 변수 단계를 v 의 단계 이하로 낮춤 (일반화가 맞게 되도록)
+let rec private occursAdjust (v: TypeVar) t =
+    match prune t with
+    | TyVar other ->
+        if other.Id = v.Id then true
+        else
+            if other.Level > v.Level then other.Level <- v.Level
+            false
+    | TyCon (_, args) -> args |> List.exists (occursAdjust v)
+    | TyFun (a, b) -> occursAdjust v a || occursAdjust v b
+    | TyTuple items -> items |> List.exists (occursAdjust v)
+
+let private bindVar (v: TypeVar) t =
+    match t with
+    | TyVar other ->
+        // 두 변수를 잇기: 허용 목록은 교집합, 단계는 낮은 쪽
+        let allowed =
+            match v.Allowed, other.Allowed with
+            | None, a
+            | a, None -> a
+            | Some a, Some b ->
+                match a |> List.filter (fun x -> List.contains x b) with
+                | [] -> raise (NotAllowed (a, t))
+                | both -> Some both
+        other.Allowed <- allowed
+        other.Level <- min v.Level other.Level
+        v.Link <- Some t
+    | _ ->
+        if occursAdjust v t then raise (Infinite (v, t))
+        match v.Allowed, t with
+        | Some allowed, TyCon (name, _) when List.contains name allowed -> ()
+        | Some allowed, _ -> raise (NotAllowed (allowed, t))
+        | None, _ -> ()
+        v.Link <- Some t
+
+let rec private unify t1 t2 =
+    match prune t1, prune t2 with
+    | TyVar a, TyVar b when a.Id = b.Id -> ()
+    | TyVar v, t
+    | t, TyVar v -> bindVar v t
+    | TyCon (n1, args1), TyCon (n2, args2) when n1 = n2 && List.length args1 = List.length args2 ->
+        List.iter2 unify args1 args2
+    | TyFun (a1, b1), TyFun (a2, b2) ->
+        unify a1 a2
+        unify b1 b2
+    | TyTuple items1, TyTuple items2 when List.length items1 = List.length items2 ->
+        List.iter2 unify items1 items2
+    | _ -> raise Mismatch
+
+/// expected 자리에 actual 이 왔을 때. 실패하면 두 타입 전체를 보여 주는 오류
+let private unifyAt expected actual =
+    try
+        unify expected actual
+    with
+    | Mismatch ->
+        match typesToString [ expected; actual ] with
+        | [ e; a ] -> typeError (sprintf "Type mismatch: expected %s but got %s" e a)
+        | _ -> failwith "unreachable"
+    | NotAllowed (allowed, t) ->
+        typeError (sprintf "Type mismatch: expected %s but got %s" (String.concat " or " allowed) (typeToString t))
+    | Infinite (v, t) ->
+        match typesToString [ TyVar v; t ] with
+        | [ a; b ] -> typeError (sprintf "Type mismatch: cannot construct infinite type %s = %s" a b)
+        | _ -> failwith "unreachable"
+
+// ---- 일반화와 인스턴스화 ----
+
+/// 현재 단계보다 깊은 변수를 ∀ 로 만듦. 허용 목록이 있는 변수는 일반화하지 않음 (첫 사용이 타입을 정함)
+let rec private generalize (st: State) t =
+    match prune t with
+    | TyVar v when v.Level > st.Level && v.Level <> genericLevel && v.Allowed.IsNone -> v.Level <- genericLevel
+    | TyVar _ -> ()
+    | TyCon (_, args) -> List.iter (generalize st) args
+    | TyFun (a, b) ->
+        generalize st a
+        generalize st b
+    | TyTuple items -> List.iter (generalize st) items
+
+/// ∀ 변수마다 새 변수를 만들어 복사 (허용 목록도 복사)
+let private instantiate (st: State) t =
+    let fresh = Dictionary<int, Type>()
+    let rec go t =
+        match prune t with
+        | TyVar v when v.Level = genericLevel ->
+            match fresh.TryGetValue v.Id with
+            | true, copy -> copy
+            | _ ->
+                let copy = newVarAt st st.Level v.Allowed
+                fresh.[v.Id] <- copy
+                copy
+        | TyVar _ as t -> t
+        | TyCon (name, args) -> TyCon (name, List.map go args)
+        | TyFun (a, b) -> TyFun (go a, go b)
+        | TyTuple items -> TyTuple (List.map go items)
+    go t
+
+// ---- 처음 환경 ----
+
+let private initialContext (st: State) =
+    let gen allowed = newVarAt st genericLevel allowed
+    let a = gen None
+    let b = gen None
+    let ( ^-> ) x y = TyFun (x, y)
+    let intOrString = gen (Some [ "int"; "string" ])
+    let stringOrList = gen (Some [ "string"; "list" ])
+    let vars =
+        Map.ofList [
+            // 문자열
+            "length", stringOrList ^-> tInt
+            "substr", tString ^-> tInt ^-> tInt ^-> tString
+            "upper", tString ^-> tString
+            "lower", tString ^-> tString
+            "trim", tString ^-> tString
+            "contains", tString ^-> tString ^-> tBool
+            "startsWith", tString ^-> tString ^-> tBool
+            "endsWith", tString ^-> tString ^-> tBool
+            "indexOf", tString ^-> tString ^-> tInt
+            "replace", tString ^-> tString ^-> tString ^-> tString
+            "split", tString ^-> tString ^-> listOf tString
+            "join", tString ^-> listOf tString ^-> tString
+            "toString", a ^-> tString
+            "toInt", tString ^-> tInt
+            // 리스트
+            "head", listOf a ^-> a
+            "tail", listOf a ^-> listOf a
+            "isEmpty", listOf a ^-> tBool
+            "nth", listOf a ^-> tInt ^-> a
+            "reverse", listOf a ^-> listOf a
+            "append", listOf a ^-> listOf a ^-> listOf a
+            "range", tInt ^-> tInt ^-> listOf tInt
+            "sum", listOf tInt ^-> tInt
+            "sort", listOf intOrString ^-> listOf intOrString
+            "map", (a ^-> b) ^-> listOf a ^-> listOf b
+            "filter", (a ^-> tBool) ^-> listOf a ^-> listOf a
+            "fold", (b ^-> a ^-> b) ^-> b ^-> listOf a ^-> b
+            "exists", (a ^-> tBool) ^-> listOf a ^-> tBool
+            "forall", (a ^-> tBool) ^-> listOf a ^-> tBool
+            // 튜플
+            "fst", TyTuple [ a; b ] ^-> a
+            "snd", TyTuple [ a; b ] ^-> b
+            // option
+            "tryHead", listOf a ^-> optionOf a
+            "tryFind", (a ^-> tBool) ^-> listOf a ^-> optionOf a
+            "defaultValue", a ^-> optionOf a ^-> a
+            "None", optionOf a
+            "Some", a ^-> optionOf a
+        ]
+    let types =
+        Map.ofList [ "int", ("int", 0); "bool", ("bool", 0); "string", ("string", 0); "list", ("list", 1); "option", ("option", 1) ]
+    { Vars = vars; Types = types }
+
+// ---- 추론 ----
+
+/// type 선언의 TypeExpr 를 Type 으로. params 는 선언의 타입 변수
+let rec private convertType (ctx: Context) (typeParams: Map<string, Type>) te =
+    match te with
+    | TName (name, args) ->
+        match Map.tryFind name ctx.Types with
+        | Some (unique, arity) when arity = List.length args ->
+            TyCon (unique, args |> List.map (convertType ctx typeParams))
+        | Some (_, arity) ->
+            typeError (sprintf "Type %s expects %d type argument(s) but got %d" name arity (List.length args))
+        | None -> typeError (sprintf "Unknown type: %s" name)
+    | TVar name ->
+        match Map.tryFind name typeParams with
+        | Some t -> t
+        | None -> typeError (sprintf "Unbound type variable: '%s" name)
+    | TTuple items -> TyTuple (items |> List.map (convertType ctx typeParams))
+    | TFun (a, b) -> TyFun (convertType ctx typeParams a, convertType ctx typeParams b)
+
+/// 패턴의 타입과, 패턴이 묶는 이름들 (단형)
+let rec private inferPattern (st: State) (ctx: Context) pattern : Type * (string * Type) list =
+    match pattern with
+    | PVar name ->
+        let t = newVar st
+        t, [ name, t ]
+    | PWildcard -> newVar st, []
+    | PInt _ -> tInt, []
+    | PBool _ -> tBool, []
+    | PString _ -> tString, []
+    | PNil -> listOf (newVar st), []
+    | PCons (head, tail) ->
+        let th, bh = inferPattern st ctx head
+        let tt, bt = inferPattern st ctx tail
+        unifyAt (listOf th) tt
+        listOf th, bh @ bt
+    | PTuple items ->
+        let results = items |> List.map (inferPattern st ctx)
+        TyTuple (results |> List.map fst), results |> List.collect snd
+    | PCtor (name, arg) ->
+        match Map.tryFind name ctx.Vars with
+        | None -> typeError (sprintf "Unknown constructor: %s" name)
+        | Some scheme ->
+            match prune (instantiate st scheme), arg with
+            | TyFun (argType, result), Some p ->
+                let tp, binds = inferPattern st ctx p
+                unifyAt argType tp
+                result, binds
+            | TyFun _, None -> typeError (sprintf "Constructor %s requires an argument" name)
+            | result, None -> result, []
+            | _, Some _ -> typeError (sprintf "Constructor %s takes no argument" name)
+
+let rec private infer (st: State) (ctx: Context) expr : Type =
+    let infer' = infer st ctx
+    let withVars binds (ctx: Context) =
+        { ctx with Vars = binds |> List.fold (fun vars (name, t) -> Map.add name t vars) ctx.Vars }
+    /// +, <: int 끼리 또는 string 끼리
+    let sameIntOrString a b =
+        let t = newVarAt st st.Level (Some [ "int"; "string" ])
+        unifyAt t (infer' a)
+        unifyAt t (infer' b)
+        t
+    let ints a b =
+        unifyAt tInt (infer' a)
+        unifyAt tInt (infer' b)
+    let bools a b =
+        unifyAt tBool (infer' a)
+        unifyAt tBool (infer' b)
+    match expr with
+    | Number _ -> tInt
+    | Bool _ -> tBool
+    | Str _ -> tString
+    | Var name ->
+        match Map.tryFind name ctx.Vars with
+        | Some scheme -> instantiate st scheme
+        | None -> typeError (sprintf "Unbound variable: %s" name)
+    | Ctor name ->
+        match Map.tryFind name ctx.Vars with
+        | Some scheme -> instantiate st scheme
+        | None -> typeError (sprintf "Unknown constructor: %s" name)
+    | Let (name, value, body) ->
+        // let 다형성: 값의 타입을 한 단계 안에서 추론하고, 그 단계에서 생긴 변수를 ∀ 로 만듦
+        st.Level <- st.Level + 1
+        let tv = infer' value
+        st.Level <- st.Level - 1
+        generalize st tv
+        infer st (withVars [ name, tv ] ctx) body
+    | LetRec (name, param, body, inExpr) ->
+        st.Level <- st.Level + 1
+        let tf = newVar st
+        let tp = newVar st
+        let tb = infer st (withVars [ name, tf; param, tp ] ctx) body
+        unifyAt tf (TyFun (tp, tb))
+        st.Level <- st.Level - 1
+        generalize st tf
+        infer st (withVars [ name, tf ] ctx) inExpr
+    | Lambda (param, body) ->
+        let tp = newVar st
+        TyFun (tp, infer st (withVars [ param, tp ] ctx) body)
+    | App (f, arg) ->
+        let tf = infer' f
+        let ta = infer' arg
+        match prune tf with
+        | TyFun (param, result) ->
+            unifyAt param ta
+            result
+        | TyVar _ ->
+            let result = newVar st
+            unifyAt tf (TyFun (ta, result))
+            result
+        | other -> typeError (sprintf "Type mismatch: expected function but got %s" (typeToString other))
+    | If (cond, thenExpr, elseExpr) ->
+        unifyAt tBool (infer' cond)
+        let t = infer' thenExpr
+        unifyAt t (infer' elseExpr)
+        t
+    | Add (a, b) -> sameIntOrString a b
+    | Subtract (a, b)
+    | Multiply (a, b)
+    | Divide (a, b) ->
+        ints a b
+        tInt
+    | Negate e ->
+        unifyAt tInt (infer' e)
+        tInt
+    | Equal (a, b)
+    | NotEqual (a, b) ->
+        // OCaml 처럼 모든 타입에 대해 'a -> 'a -> bool. 함수 비교는 실행 중 오류로 남음
+        let t = infer' a
+        unifyAt t (infer' b)
+        tBool
+    | Less (a, b)
+    | Greater (a, b)
+    | LessEqual (a, b)
+    | GreaterEqual (a, b) ->
+        sameIntOrString a b |> ignore
+        tBool
+    | And (a, b)
+    | Or (a, b) ->
+        bools a b
+        tBool
+    | Not e ->
+        unifyAt tBool (infer' e)
+        tBool
+    | Nil -> listOf (newVar st)
+    | Cons (head, tail) ->
+        let th = infer' head
+        unifyAt (listOf th) (infer' tail)
+        listOf th
+    | Tuple items -> TyTuple (items |> List.map infer')
+    | Match (scrutinee, cases) ->
+        let ts = infer' scrutinee
+        let result = newVar st
+        for pattern, guard, body in cases do
+            let tp, binds = inferPattern st ctx pattern
+            unifyAt ts tp
+            let caseCtx = withVars binds ctx
+            guard |> Option.iter (fun g -> unifyAt tBool (infer st caseCtx g))
+            unifyAt result (infer st caseCtx body)
+        result
+    | LetPattern (pattern, value, body) ->
+        st.Level <- st.Level + 1
+        let tv = infer' value
+        let tp, binds = inferPattern st ctx pattern
+        unifyAt tp tv
+        st.Level <- st.Level - 1
+        binds |> List.iter (snd >> generalize st)
+        infer st (withVars binds ctx) body
+    | TypeDecl (name, typeParams, ctors, body) ->
+        match typeParams |> List.countBy id |> List.tryFind (fun (_, n) -> n > 1) with
+        | Some (p, _) -> typeError (sprintf "Duplicate type variable: '%s" p)
+        | None -> ()
+        // 같은 이름의 다른 type 선언과 섞이지 않도록 고유 이름 (출력할 때는 @ 뒤를 뗌)
+        st.NextId <- st.NextId + 1
+        let unique = sprintf "%s@%d" name st.NextId
+        let paramVars = typeParams |> List.map (fun p -> p, newVarAt st genericLevel None)
+        let declCtx = { ctx with Types = Map.add name (unique, List.length typeParams) ctx.Types }
+        let result = TyCon (unique, paramVars |> List.map snd)
+        let ctorTypes =
+            ctors
+            |> List.map (fun (ctor, argType) ->
+                match argType with
+                | None -> ctor, result
+                | Some te -> ctor, TyFun (convertType declCtx (Map.ofList paramVars) te, result))
+        infer st (withVars ctorTypes declCtx) body
+
+/// 아직 정해지지 않은 허용 목록 변수는 첫 번째 허용 타입으로 정함 (F# 가 + 를 int 로 정하는 것과 같음)
+let rec private applyDefaults (st: State) t =
+    match prune t with
+    | TyVar ({ Allowed = Some (first :: _) } as v) ->
+        v.Link <- Some (if first = "list" then listOf (newVar st) else TyCon (first, []))
+    | TyVar _ -> ()
+    | TyCon (_, args) -> List.iter (applyDefaults st) args
+    | TyFun (a, b) ->
+        applyDefaults st a
+        applyDefaults st b
+    | TyTuple items -> List.iter (applyDefaults st) items
+
+/// 식 전체의 타입. 타입이 맞지 않으면 TypeError
+let typecheck (expr: Expr) : Type =
+    let st = { Level = 0; NextId = 0 }
+    let t = infer st (initialContext st) expr
+    applyDefaults st t
+    t

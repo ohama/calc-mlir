@@ -4,6 +4,25 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.14.0] - 2026-10-28
+
+### 추가
+- Hindley–Milner 타입 추론 (`Infer.typecheck`). `calc`는 평가 전에 타입을 추론하고, 맞지 않으면 평가하지 않습니다.
+  - let 다형성, `let rec`, 패턴, 튜플, 리스트, `option`, 사용자 정의 타입(`type` 선언의 `of` 타입 사용)
+  - `+`, `<` 등은 `int` 끼리 또는 `string` 끼리. 허용 목록이 있는 타입 변수는 일반화하지 않고, 끝까지 정해지지 않으면 `int`
+  - `=`는 OCaml처럼 `'a -> 'a -> bool`
+  - 같은 이름의 다른 타입은 오류 메시지에서 `t/1`, `t/2`로 구분
+- 출력에 `Type:` 줄 추가 (`AST:`와 `Result:` 사이)
+- 옵션 `--no-typecheck`: 타입 추론을 건너뛰고 평가만 합니다(평가 중 동적 타입 검사는 그대로).
+- 타입 오류 `Type mismatch: expected ... but got ...`, `cannot construct infinite type`, `Unknown type`, `Unbound type variable`, `Duplicate type variable`
+- 테스트 85개 추가 (총 638개). 건전성 테스트: 타입 검사를 통과한 평가 예제는 실행 중 타입 오류 없이 그 타입의 값이 됩니다.
+
+### 변경
+- `[1; true]`, `if true then 1 else false`, 원소 수가 다른 튜플 비교처럼 예전에 실행되던 식이 이제 타입 오류입니다. `--no-typecheck`로는 여전히 실행됩니다.
+- 대부분의 실행 중 `Type error`가 평가 전의 `Type mismatch`로 바뀌었습니다.
+- 타입 추론도 평가처럼 512MB 스택의 스레드에서 실행합니다.
+- `docs/grammar.md`(6. 타입 추론), `docs/testing.md`, `docs/build.md`, `README.md`에 반영했습니다.
+
 ## [0.13.0] - 2026-10-28
 
 ### 추가

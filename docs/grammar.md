@@ -7,6 +7,7 @@ Calc 언어의 어휘 구조, 구문, 의미를 정리한 문서입니다. 구�
 | 어휘 (토큰) | `src/Calc/Lexer.fsl` |
 | 구문 (파서) | `src/Calc/Parser.fsy` |
 | AST | `src/Calc/Ast.fs` |
+| 타입 추론 | `src/Calc/Infer.fs` |
 | 의미 (평가) | `src/Calc/Eval.fs` |
 
 ## 1. 어휘 구조
@@ -283,7 +284,7 @@ sum (Node (Node (Leaf, 1, Leaf), 2, Node (Leaf, 3, Leaf)))   (* 6 *)
 - 생성자 이름은 대문자로 시작합니다. 타입 이름은 소문자(OCaml 방식)나 대문자로 시작할 수 있습니다.
 - 타입 변수는 OCaml처럼 이름 **앞에** 씁니다. `type 'a tree`, `type ('k, 'v) entry` (F#의 `Tree<'a>` 문법은 지원하지 않음)
 - 첫 생성자 앞의 `|`는 생략할 수 있습니다. 한 선언 안에서 같은 생성자 이름을 두 번 쓰면 `Duplicate constructor: <이름> (line L, column C)`입니다.
-- **`of` 뒤의 타입은 검사하지 않습니다**(이 언어는 동적 타입). 쓰이는 것은 튜플 원소 수뿐입니다.
+- **`of` 뒤의 타입은 타입 추론이 사용합니다**("6. 타입 추론"). `--no-typecheck`로 평가만 할 때는 튜플 원소 수만 검사합니다.
   - `of int * int`(원소 2개) 생성자는 원소 2개짜리 튜플을 받아야 합니다. `Rect 1`은 `Constructor Rect expects 2 fields but got int`, `Rect (1, 2, 3)`은 `... but got tuple of 3`입니다.
   - `of int`(원소 1개) 생성자는 어떤 값이든 하나 받습니다. `Circle (1, 2)`도 됩니다.
   - 타입 식 문법: `int`, `'a`, `int list`, `'a tree option`(인자가 앞), `int * string`, `int -> bool`, `(int * int)`
@@ -422,13 +423,13 @@ type Value =
 
 ### 성질
 
-- **동적 타입 검사**: 타입은 실행 중에 연산을 할 때 검사합니다. 피연산자 타입이 맞지 않으면 `Type error: expected <기대 타입> but got <실제 타입>` 오류가 납니다.
+- **동적 타입 검사**: 평가기도 연산을 할 때 타입을 검사합니다. 보통은 평가 전에 타입 추론("6. 타입 추론")이 먼저 걸러내므로, 아래 오류들은 `--no-typecheck`로 실행하거나 `Eval.eval`을 직접 부를 때 보입니다. 피연산자 타입이 맞지 않으면 `Type error: expected <기대 타입> but got <실제 타입>` 오류가 납니다.
   - `1 + true`는 `Type error: expected int but got bool`입니다.
   - `if 1 then 2 else 3`은 `Type error: expected bool but got int`입니다.
   - `=`, `<>`, `+`, `<` 등은 왼쪽 값의 타입을 기준으로 오른쪽을 검사합니다. `1 = true`는 `expected int`, `true = 1`은 `expected bool` 오류입니다.
   - `"a" + 1`은 `expected string but got int`, `1 + "a"`는 `expected int but got string`입니다.
   - 왼쪽 값이 쓸 수 없는 타입이면 가능한 타입을 모두 적습니다. `true + 1`과 `true < false`는 `expected int or string but got bool`입니다.
-- **if 분기 타입**: 두 분기의 타입이 같은지는 검사하지 않습니다. 선택된 분기만 평가하기 때문에 `if true then 1 else false`는 `1`입니다.
+- **if 분기 타입**: 평가기는 두 분기의 타입이 같은지 검사하지 않습니다. 선택된 분기만 평가하기 때문에 `--no-typecheck`로는 `if true then 1 else false`가 `1`입니다. 타입 추론은 이 식을 거부합니다.
 - **단락 평가**:
   - `false && e`는 `e`를 평가하지 않고 `false`입니다. `true || e`는 `e`를 평가하지 않고 `true`입니다.
   - 예를 들어 `false && 1 / 0 = 0`은 0으로 나누기 오류 없이 `false`입니다.
@@ -591,3 +592,90 @@ Error: parse error: unexpected '+' (line 1, column 5)
 
 - 오류 위치는 "파서가 더 진행할 수 없게 된 곳"입니다. 실제 실수는 더 앞에 있을 수 있습니다.
   - 예를 들어 `let x = 1 in\n  let y = 2\n  x + y`에서 빠진 것은 둘째 줄의 `in`입니다. 하지만 파서는 `2\n  x + y`를 함수 호출 `2 x + y`로 읽으므로 입력 끝(`line 3, column 8`)에서야 오류를 냅니다.
+
+## 6. 타입 추론
+
+`calc`는 파싱한 다음, 평가하기 **전에** Hindley–Milner 타입 추론(`Infer.typecheck`)을 실행합니다. 타입이 맞지 않으면 `Error: Type mismatch: ...`를 출력하고 평가하지 않습니다. 추론한 타입은 `Type:` 줄에 나옵니다. `--no-typecheck`를 주면 추론을 건너뜁니다.
+
+### 타입
+
+| 타입 | 예 |
+|---|---|
+| `int`, `bool`, `string` | `1`, `true`, `"a"` |
+| `t list` | `[1; 2]`: `int list` |
+| `t1 * t2 * ...` | `(1, "a")`: `int * string` |
+| `t1 -> t2` | `fun x -> x + 1`: `int -> int` |
+| `t option` | `Some 1`: `int option` |
+| 사용자 타입 | `Node (Leaf, 1, Leaf)`: `int tree` |
+| 타입 변수 | `'a`, `'b`, ... |
+
+출력할 때 `->`는 오른쪽 결합이고, `*`가 `->`보다, 타입 인자(`int list`)가 `*`보다 강합니다. 필요한 곳에만 괄호를 씁니다. 예: `('a -> 'b) -> 'a list -> 'b list`, `(int * int) list`
+
+### 규칙
+
+- **let 다형성**: `let`으로 묶은 값의 타입은 일반화됩니다. `let id x = x in (id 1, id true)`는 `int * bool`입니다.
+  - 일반화는 `let`, `let rec`, `let (a, b) = ...`에서만 합니다. 함수 인자는 단형입니다. `fun f -> (f 1, f true)`는 오류입니다.
+- **`if`**: 조건은 `bool`, 두 분기는 같은 타입입니다.
+- **리스트**: 원소는 모두 같은 타입입니다. `[1; true]`는 오류입니다.
+- **`=`, `<>`**: 같은 타입이면 어떤 타입이든 됩니다(`'a -> 'a -> bool`). OCaml과 같습니다. 함수끼리 비교하면 타입 검사는 통과하지만 실행 중에 오류가 납니다.
+- **`+`, `<`, `>`, `<=`, `>=`**: 두 피연산자가 같은 타입이고, 그 타입은 `int` 또는 `string`이어야 합니다.
+  - 이런 "허용 목록이 있는 타입 변수"는 **일반화하지 않습니다**. 처음 쓰인 곳이 타입을 정합니다.
+    - `let add x y = x + y in add "a" "b"`는 `string`입니다.
+    - `let add x y = x + y in (add 1 2, add "a" "b")`는 오류입니다(F#에서도 `add`는 한 타입).
+  - 끝까지 정해지지 않으면 첫 번째 허용 타입으로 정합니다. `fun x y -> x + y`는 `int -> int -> int`입니다(F#과 같음).
+- **내장 함수 `length`**: `string` 또는 리스트, **`sort`**: `int list` 또는 `string list`. 같은 허용 목록 규칙을 따릅니다. 정해지지 않으면 `length`는 `string -> int`입니다.
+- **패턴**: 패턴의 타입은 대상 식의 타입과 같아야 합니다. `match "1" with 1 -> ...`, 원소 수가 다른 튜플 패턴은 오류입니다.
+- **생성자**: `type` 선언의 `of` 타입으로 생성자 타입을 만듭니다.
+  - `type 'a tree = Leaf | Node of 'a tree * 'a * 'a tree`에서 `Leaf : 'a tree`, `Node : 'a tree * 'a * 'a tree -> 'a tree`
+  - 선언에 쓴 타입 이름과 타입 변수는 알려진 것이어야 합니다: `Unknown type: foo`, `Unbound type variable: 'b`, `Type list expects 1 type argument(s) but got 0`
+  - 같은 이름의 `type`을 다시 선언하면 다른 타입입니다. 오류 메시지에서는 `t/1`, `t/2`처럼 구분합니다.
+
+### 내장 함수의 타입
+
+| 함수 | 타입 |
+|---|---|
+| `length` | `'a -> int` (`'a`는 `string` 또는 리스트) |
+| `substr` | `string -> int -> int -> string` |
+| `upper`, `lower`, `trim` | `string -> string` |
+| `contains`, `startsWith`, `endsWith` | `string -> string -> bool` |
+| `indexOf` | `string -> string -> int` |
+| `replace` | `string -> string -> string -> string` |
+| `split` | `string -> string -> string list` |
+| `join` | `string -> string list -> string` |
+| `toString` | `'a -> string` |
+| `toInt` | `string -> int` |
+| `head`, `tail`, `isEmpty`, `nth` | `'a list -> 'a`, `'a list -> 'a list`, `'a list -> bool`, `'a list -> int -> 'a` |
+| `reverse`, `append` | `'a list -> 'a list`, `'a list -> 'a list -> 'a list` |
+| `range`, `sum` | `int -> int -> int list`, `int list -> int` |
+| `sort` | `'a list -> 'a list` (`'a`는 `int` 또는 `string`) |
+| `map`, `filter` | `('a -> 'b) -> 'a list -> 'b list`, `('a -> bool) -> 'a list -> 'a list` |
+| `fold` | `('b -> 'a -> 'b) -> 'b -> 'a list -> 'b` |
+| `exists`, `forall` | `('a -> bool) -> 'a list -> bool` |
+| `fst`, `snd` | `'a * 'b -> 'a`, `'a * 'b -> 'b` |
+| `tryHead`, `tryFind` | `'a list -> 'a option`, `('a -> bool) -> 'a list -> 'a option` |
+| `defaultValue` | `'a -> 'a option -> 'a` |
+| `Some`, `None` | `'a -> 'a option`, `'a option` |
+
+### 타입 오류
+
+| 원인 | 메시지 |
+|---|---|
+| 타입이 다름 | `Type mismatch: expected <기대 타입> but got <실제 타입>` (예: `[1; true]`는 `expected int list but got bool list`) |
+| 허용 목록에 없는 타입 | `Type mismatch: expected int or string but got bool` |
+| 함수가 아닌 값을 호출 | `Type mismatch: expected function but got int` |
+| 자기 자신을 포함하는 타입 (`fun x -> x x`) | `Type mismatch: cannot construct infinite type 'a = 'a -> 'b` |
+| 정의되지 않은 변수, 생성자 | `Unbound variable: x`, `Unknown constructor: X` |
+| 생성자 패턴의 인자 유무 | `Constructor Some requires an argument`, `Constructor None takes no argument` |
+| `type` 선언의 타입 | `Unknown type: foo`, `Unbound type variable: 'b`, `Duplicate type variable: 'a`, `Type list expects 1 type argument(s) but got 0` |
+
+- 오류 메시지에는 아직 위치가 없습니다. AST에 위치 정보가 없기 때문입니다.
+- 메시지의 두 타입은 단일화가 실패한 시점의 **전체 타입**입니다. 일부가 이미 단일화된 상태로 보일 수 있습니다.
+
+### 건전성과 남은 실행 중 오류
+
+타입 검사를 통과한 프로그램은 실행 중에 `Type error`가 나지 않습니다. 함수끼리 `=` 비교만 예외입니다(테스트: `InferTests`의 건전성 테스트). 다음 오류는 여전히 실행 중에 납니다.
+
+- `Match failure` (모든 경우를 다루는지 검사하지 않음), `head []`, `nth`/`substr` 범위, `toInt` 변환 실패
+- 0으로 나누기, 재귀가 너무 깊음
+- 함수끼리 `=` 비교: 타입은 `'a -> 'a -> bool`로 통과하고, 실행 중에 `Type error: expected int, bool, string, list, tuple or data but got function`
+

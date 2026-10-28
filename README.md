@@ -1,6 +1,6 @@
 # Calc
 
-F#과 [FsLexYacc](https://github.com/fsprojects/FsLexYacc)(fslex, fsyacc)로 만드는 작은 식(expression) 언어입니다. 렉서, 파서, AST, 평가기를 단계별로 확장하면서 언어 구현을 공부하기 위한 프로젝트입니다.
+F#과 [FsLexYacc](https://github.com/fsprojects/FsLexYacc)(fslex, fsyacc)로 만드는 작은 ML 계열 식(expression) 언어입니다. 렉서, 파서, AST, Hindley–Milner 타입 추론, 평가기를 단계별로 확장하면서 언어 구현을 공부하기 위한 프로젝트입니다.
 
 ```
 $ dotnet run --project src/Calc -- --expr "let x = 5 in if x > 3 && not (x = 4) then x * 2 else 0"
@@ -9,6 +9,7 @@ AST:    Let
    If
      (And (Greater (Var "x", Number 3), Not (Equal (Var "x", Number 4))),
       Multiply (Var "x", Number 2), Number 0))
+Type:   int
 Result: 10
 ```
 
@@ -33,7 +34,9 @@ Result: 10
 | 패턴 매칭 (중첩 패턴, `when` 가드) | `match xs with [] -> 0 \| [x] -> x \| x :: _ when x > 0 -> x \| _ -> -1` |
 
 - 우선순위 (낮은 것부터): `let`/`if`/`fun`/`match` < `||` < `&&` < 비교 < `::` < `+ -` < `* /` < 단항 `-`, `not` < 함수 호출
-- 타입은 실행 중에 검사합니다. 예를 들어 `1 + true`는 `Type error: expected int but got bool`입니다.
+- **타입 추론** (Hindley–Milner, let 다형성): 실행 전에 타입을 추론하고, 맞지 않으면 평가하지 않습니다.
+  - `fun f x -> f (f x)`는 `('a -> 'a) -> 'a -> 'a`, `[1; true]`는 `Type mismatch: expected int list but got bool list`
+  - `--no-typecheck`를 주면 추론을 건너뛰고 평가 중에 동적으로 검사합니다.
 
 자세한 문법과 의미는 [docs/grammar.md](docs/grammar.md)에 있습니다.
 
@@ -62,6 +65,7 @@ echo "1 < 2" | dotnet run --project src/Calc
 |---|---|
 | `--expr <expr>`, `-e <expr>` | 식을 계산합니다. 생략하면 표준 입력에서 읽습니다. |
 | `--version`, `-v` | 버전을 출력합니다. |
+| `--no-typecheck` | 타입 추론을 건너뛰고 평가합니다. |
 | `--help`, `-h` | 사용법을 출력합니다. |
 
 성공하면 종료 코드 0, 렉서·파서·평가 오류가 나면 `Error: ...`를 표준 에러로 출력하고 종료 코드 1을 반환합니다.
@@ -85,6 +89,7 @@ Error: parse error: unexpected '+' (line 1, column 5)
 │   ├── Ast.fs                # AST (Expr)
 │   ├── Errors.fs             # 렉서·파서 오류 (SyntaxError, 위치 포함)
 │   ├── Eval.fs               # 평가기 (Value, Env, eval)
+│   ├── Infer.fs              # Hindley–Milner 타입 추론 (typecheck)
 │   ├── Parser.fsy            # fsyacc 문법 → Parser.fs (빌드 시 생성)
 │   ├── Lexer.fsl             # fslex 규칙 → Lexer.fs (빌드 시 생성)
 │   └── Program.fs            # 명령줄 처리 (Argu)
@@ -97,7 +102,7 @@ Error: parse error: unexpected '+' (line 1, column 5)
 처리 흐름:
 
 ```
-문자열 → Lexer.tokenize → Parser.start → Ast.Expr → Eval.eval → Value
+문자열 → Lexer.tokenize → Parser.start → Ast.Expr → Infer.typecheck (타입) → Eval.eval → Value
 ```
 
 `Lexer.fs`와 `Parser.fs`는 빌드할 때 `.fsl`과 `.fsy`에서 생성되며 git에 포함되지 않습니다. 직접 수정하지 말고 `.fsl`, `.fsy` 파일을 고치세요.

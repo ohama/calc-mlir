@@ -9,11 +9,13 @@ open Ast
 type CliArgs =
     | [<AltCommandLine("-e"); EqualsAssignmentOrSpaced>] Expr of expr: string
     | [<AltCommandLine("-v")>] Version
+    | No_Typecheck
     interface IArgParserTemplate with
         member a.Usage =
             match a with
             | Expr _ -> "evaluate the given expression (reads stdin if omitted)"
             | Version -> "print version and exit"
+            | No_Typecheck -> "skip static type inference (types are still checked while evaluating)"
 
 let parse (input: string) : Expr =
     let lexbuf = LexBuffer<char>.FromString input
@@ -70,10 +72,14 @@ let errorLocation (input: string) line column =
         [ sprintf "  %s | %s" gutter text
           sprintf "  %s | %s^" (String.replicate gutter.Length " ") padding ]
 
-let run (input: string) =
+let run (typecheck: bool) (input: string) =
     try
         let ast = parse input
         printfn "AST:    %A" ast
+        if typecheck then
+            // 추론도 식의 깊이만큼 재귀하므로 평가와 같은 큰 스택에서 실행
+            let t = runWithLargeStack (fun () -> Infer.typeToString (Infer.typecheck ast))
+            printfn "Type:   %s" t
         let value = runWithLargeStack (fun () -> Eval.eval ast)
         printfn "Result: %s" (Eval.formatValue value)
         0
@@ -95,9 +101,10 @@ let main argv =
             printfn "calc %s" (version ())
             0
         else
+            let typecheck = not (results.Contains No_Typecheck)
             match results.TryGetResult Expr with
-            | Some expr -> run expr
-            | None -> run (stdin.ReadToEnd())
+            | Some expr -> run typecheck expr
+            | None -> run typecheck (stdin.ReadToEnd())
     with :? ArguParseException as ex ->
         match ex.ErrorCode with
         | ErrorCode.HelpText ->
