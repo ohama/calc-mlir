@@ -23,8 +23,11 @@
 | 17 | [implement-pattern-matching-evaluator](implement-pattern-matching-evaluator.md) | 패턴 매칭 평가는 matchPattern: Pattern -> Value -> Env -> Env option 하나로 끝난다. 분기 선택, 가드, let 분해가 모두 이 함수를 쓴다 | 2026-10-28 |
 | 18 | [distinguish-constructors-from-variables-in-patterns](distinguish-constructors-from-variables-in-patterns.md) | 패턴의 이름은 생성자일 수도 변수일 수도 있다. 대소문자로 구분하고 모르는 생성자는 오류로 만들어 오타가 catch-all이 되는 것을 막는다 | 2026-10-28 |
 | 19 | [represent-adt-values-in-dynamic-interpreter](represent-adt-values-in-dynamic-interpreter.md) | ADT 값은 (타입 이름, 생성자, 인자) 데이터로, 생성자는 환경에 든 보통 값으로 표현한다. 생성자를 함수처럼 넘길 수 있다 | 2026-10-28 |
+| 20 | [implement-hindley-milner-with-levels](implement-hindley-milner-with-levels.md) | HM의 let 일반화를 단계(level)로 한다. 변수를 이을 때 단계를 낮추지 않으면 잘못된 프로그램이 통과한다 | 2026-10-28 |
+| 21 | [handle-overloaded-operators-in-hindley-milner](handle-overloaded-operators-in-hindley-milner.md) | int와 string 모두에 쓰는 +는 허용 목록 타입 변수로 표현한다. 일반화하지 않으면 F# 기본, 하면 F# inline과 같은 결과 | 2026-10-28 |
+| 22 | [write-soundness-test-for-type-checker](write-soundness-test-for-type-checker.md) | 평가기 예제를 타입 추론에 넣어, 통과한 식은 실행 중 오류 없이 그 타입의 값이 되는지 확인하고 거부 목록을 고정한다 | 2026-10-28 |
 
-추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 → 16 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match → 오류 위치), 17 → 18 → 19 (패턴 매칭, 생성자, ADT), 8 → 9 → 13 → 14 → 15 (함수 평가, 재귀 한계, 내장 함수), 4 → 6 (테스트), 5 (릴리스)
+추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 → 16 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match → 오류 위치), 17 → 18 → 19 (패턴 매칭, 생성자, ADT), 20 → 21 → 22 (타입 추론), 8 → 9 → 13 → 14 → 15 (함수 평가, 재귀 한계, 내장 함수), 4 → 6 (테스트), 5 (릴리스)
 
 ---
-총 19개 | 업데이트: 2026-10-28
+총 22개 | 업데이트: 2026-10-28
