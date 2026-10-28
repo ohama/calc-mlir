@@ -114,6 +114,7 @@ Error: parse error: unexpected '+' (line 1, column 5)
 | [docs/build.md](docs/build.md) | 빌드, 실행, 빌드 과정과 파일 순서, 문법 충돌 확인 |
 | [docs/testing.md](docs/testing.md) | 자동 테스트(Expecto) 실행과 추가 방법, 수동 테스트 표 |
 | [docs/grammar.md](docs/grammar.md) | 토큰, EBNF, 우선순위, AST 대응, 평가 규칙, 오류 |
+| [docs/compiler-design.md](docs/compiler-design.md) | MLIR/LLVM 네이티브 컴파일 설계와 단계별 계획 (준비 중) |
 | [howto/](howto/README.md) | 개발하면서 부딪힌 문제와 해결 방법 |
 | [CHANGELOG.md](CHANGELOG.md) | 버전별 변경 사항 |
 
