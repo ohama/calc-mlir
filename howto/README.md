@@ -26,8 +26,12 @@
 | 20 | [implement-hindley-milner-with-levels](implement-hindley-milner-with-levels.md) | HM의 let 일반화를 단계(level)로 한다. 변수를 이을 때 단계를 낮추지 않으면 잘못된 프로그램이 통과한다 | 2026-10-28 |
 | 21 | [handle-overloaded-operators-in-hindley-milner](handle-overloaded-operators-in-hindley-milner.md) | int와 string 모두에 쓰는 +는 허용 목록 타입 변수로 표현한다. 일반화하지 않으면 F# 기본, 하면 F# inline과 같은 결과 | 2026-10-28 |
 | 22 | [write-soundness-test-for-type-checker](write-soundness-test-for-type-checker.md) | 평가기 예제를 타입 추론에 넣어, 통과한 식은 실행 중 오류 없이 그 타입의 값이 되는지 확인하고 거부 목록을 고정한다 | 2026-10-28 |
+| 23 | [emit-mlir-as-llvm-func-and-lower](emit-mlir-as-llvm-func-and-lower.md) | 함수 포인터가 필요한 언어는 MLIR 함수를 처음부터 llvm.func로 만든다. 본문의 scf/cf/arith는 정해진 순서의 패스로 llvm까지 내린다 | 2026-10-28 |
+| 24 | [represent-values-as-tagged-words](represent-values-as-tagged-words.md) | 모든 값을 i64 하나로 두고 하위 3비트로 종류를 표시한다. GC 포인터는 8바이트 정렬이고, 복원은 산술 시프트다 | 2026-10-28 |
+| 25 | [run-external-toolchain-from-dotnet](run-external-toolchain-from-dotnet.md) | 외부 컴파일러는 ArgumentList로 실행하고 stderr를 비동기로 읽는다(동기로 차례로 읽으면 멈춤). 도구가 없으면 테스트를 건너뛴다 | 2026-10-28 |
+| 26 | [write-differential-tests-for-compiler](write-differential-tests-for-compiler.md) | 컴파일러의 정답은 인터프리터다. 컴파일할 수 있는 평가기 예제를 자동으로 골라 비교하면 기능과 함께 테스트가 늘어난다 | 2026-10-28 |
 
-추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 → 16 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match → 오류 위치), 17 → 18 → 19 (패턴 매칭, 생성자, ADT), 20 → 21 → 22 (타입 추론), 8 → 9 → 13 → 14 → 15 (함수 평가, 재귀 한계, 내장 함수), 4 → 6 (테스트), 5 (릴리스)
+추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 → 16 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match → 오류 위치), 17 → 18 → 19 (패턴 매칭, 생성자, ADT), 20 → 21 → 22 (타입 추론), 8 → 9 → 13 → 14 → 15 (함수 평가, 재귀 한계, 내장 함수), 23 → 24 → 25 → 26 (네이티브 컴파일러), 4 → 6 (테스트), 5 (릴리스)
 
 ---
-총 22개 | 업데이트: 2026-10-28
+총 26개 | 업데이트: 2026-10-28
