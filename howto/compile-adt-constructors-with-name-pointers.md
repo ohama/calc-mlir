@@ -123,6 +123,27 @@ int paren = (CALC_IS_KIND(p, CALC_KIND_DATA) && CALC_SIZE(p) == 2) || (CALC_IS_I
 | `Some (-1)` | `Some (-1)` |
 | `Rect (2, 3)` | `Rect (2, 3)` (튜플은 원래 괄호가 있음) |
 
+### Step 6: 런타임도 생성자 값을 만들면, 그 이름 전역은 런타임에 둔다
+
+내장 함수 `tryHead`, `tryFind`는 C 런타임에서 `Some x`를 만든다. 런타임의 `"Some"` 문자열과 생성한 모듈의 `@ctor_0("Some\00")`는 **주소가 다르다**. 그래서 컴파일한 패턴 `| Some x`의 포인터 비교가 런타임이 만든 값과 맞지 않는다.
+
+그래서 `Some`, `None`의 이름과 `None` 값은 런타임이 정의하고, 생성 코드는 외부 전역으로 선언해서 가리킨다.
+
+```c
+/* runtime.c */
+const char calc_name_some[] = "Some";
+const char calc_name_none[] = "None";
+const calc_unit calc_none __attribute__((aligned(8))) = {CALC_KIND_DATA | (1 << 8), calc_name_none};
+```
+
+```mlir
+// 생성한 모듈: 정의 없이 선언만
+llvm.mlir.global external constant @calc_name_some() {addr_space = 0 : i32} : !llvm.array<5 x i8>
+llvm.mlir.global external constant @calc_none() {addr_space = 0 : i32} : !llvm.struct<(i64, ptr)>
+```
+
+`match tryHead [7] with | Some x -> x | None -> 0`이 `7`이 되는 것을 테스트로 고정한다. 규칙은 이렇다. **값을 만드는 쪽이 둘 이상이면, 비교 기준이 되는 전역은 그중 한 곳에만 둔다.**
+
 ## Example
 
 ```
@@ -145,6 +166,7 @@ insert 2 (insert 3 (insert 1 Leaf))
 - [ ] 적용 위치의 생성자는 클로저 없이 바로 블록을 만드는가?
 - [ ] 값 위치의 생성자는 함수 값처럼 행동하는가? (`<fun>`, `=` 오류)
 - [ ] 출력의 괄호 규칙이 기준 구현과 같은가?
+- [ ] 런타임도 만드는 생성자(`Some`, `None`)의 이름 전역이 한 곳(런타임)에만 있는가?
 
 ## 관련 문서
 
