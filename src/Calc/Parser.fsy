@@ -10,9 +10,36 @@ let at (parseState: FSharp.Text.Parsing.IParseState) (node: 'a) : 'a =
     Errors.recordPosition (box node) (parseState.InputStartPosition 1)
     node
 
+/// 매개변수 () 는 이름 "()" 로 받고 본문에서 unit 패턴으로 확인: fun () -> e  ==  fun "()" -> match "()" with () -> e
+/// (타입이 unit 으로 정해짐. "()" 는 렉서가 만들 수 없는 이름이라 사용자 이름과 겹치지 않음)
+let paramBody (param: string) (body: Expr) =
+    if param = "()" then Match(Var "()", [ PUnit, None, body ]) else body
+
 /// fun x y -> body  ==  fun x -> fun y -> body
 let makeLambda (parameters: string list) (body: Expr) =
-    List.foldBack (fun p acc -> Lambda(p, acc)) parameters body
+    List.foldBack (fun p acc -> Lambda(p, paramBody p acc)) parameters body
+
+/// 최상위 항목: in 없는 선언 또는 식. 위치는 선언의 시작 (풀어 쓴 let 노드에 기록)
+type TopItem =
+    | TopLet of string * Expr * FSharp.Text.Lexing.Position
+    | TopLetRec of string * string * Expr * FSharp.Text.Lexing.Position
+    | TopLetPattern of Pattern * Expr * FSharp.Text.Lexing.Position
+    | TopType of string * string list * (string * TypeExpr option) list * FSharp.Text.Lexing.Position
+    | TopExpr of Expr
+
+/// 최상위 항목들을 식 하나로: 선언은 뒤 항목 전체를 본문으로 하는 let, 식은 e; (나머지). 끝이 선언이면 ()
+let rec makeProgram (items: TopItem list) : Expr =
+    let located (pos: FSharp.Text.Lexing.Position) (e: Expr) =
+        Errors.recordPosition (box e) pos
+        e
+    match items with
+    | [] -> Unit
+    | [ TopExpr e ] -> e
+    | TopExpr e :: rest -> Seq(e, makeProgram rest)
+    | TopLet (name, value, pos) :: rest -> located pos (Let(name, value, makeProgram rest))
+    | TopLetRec (name, param, body, pos) :: rest -> located pos (LetRec(name, param, body, makeProgram rest))
+    | TopLetPattern (pattern, value, pos) :: rest -> located pos (LetPattern(pattern, value, makeProgram rest))
+    | TopType (name, typeParams, ctors, pos) :: rest -> located pos (TypeDecl(name, typeParams, ctors, makeProgram rest))
 
 /// [a; b; c]  ==  a :: b :: c :: []
 /// 안쪽 cons 에는 그 원소의 위치를 기록: [1; true] 의 오류가 true 를 가리키도록
@@ -30,7 +57,7 @@ let rec patternVars pattern =
     | PTuple items -> List.collect patternVars items
     | PCtor (_, Some p) -> patternVars p
     | PCtor (_, None) -> []
-    | PWildcard | PInt _ | PBool _ | PString _ | PNil -> []
+    | PWildcard | PInt _ | PBool _ | PString _ | PNil | PUnit -> []
 
 /// 한 패턴 안에서 같은 이름을 두 번 묶으면 오류 (F# 와 같음). pos 는 패턴의 시작 위치
 let checkPattern (pos: FSharp.Text.Lexing.Position) pattern =
@@ -60,10 +87,10 @@ let makeTuple (items: TypeExpr list) =
 %token IF THEN ELSE TRUE FALSE
 %token NOTEQUAL LESS GREATER LESSEQUAL GREATEREQUAL
 %token AND OR NOT
-%token MATCH WITH WHEN BAR CONS LBRACKET RBRACKET SEMI
+%token MATCH WITH WHEN BAR CONS LBRACKET RBRACKET SEMI SEMISEMI
 %token COMMA UNDERSCORE
 %token TYPE OF
-%token NOBAR
+%token NOBAR BELOWSEMI
 %token PLUS MINUS STAR SLASH LPAREN RPAREN
 %token EOF
 
@@ -79,6 +106,10 @@ let makeTuple (items: TypeExpr list) =
 // (fsyacc 는 %nonassoc 연산자가 연달아 나와도 오류로 만들지 않고 shift/reduce 충돌을 보고하므로 %left 사용)
 // 함수 호출(f x)은 우선순위 선언이 아니라 AppExpr/Atom 계층으로 가장 강하게 묶임.
 // match 분기 목록을 끝내는 규칙(Arms: Arm)은 BAR 보다 약함 → 중첩 match 의 뒤 분기는 안쪽 match 것 (F# 와 같음)
+// SeqExpr: Expr 규칙이 가장 약함 → e1; e2 와 이항 연산자는 항상 이어짐 (let 본문은 ; 까지 포함, OCaml 과 같음).
+// 리스트 [a; b] 의 ; 는 SeqExpr 를 쓰지 않으므로 구분자로 남음
+%nonassoc BELOWSEMI
+%nonassoc SEMI
 %nonassoc NOBAR
 %nonassoc BAR
 %nonassoc IN ELSE ARROW
@@ -96,20 +127,56 @@ let makeTuple (items: TypeExpr list) =
 %%
 
 start:
-    | Expr EOF                      { $1 }
+    | Items EOF                     { makeProgram $1 }
+
+// 프로그램 = 최상위 항목들. 선언(in 없는 let, let rec, type)은 차례로 쓰고, 선언 뒤의 식은 ;; 다음에 씀 (OCaml 과 같음).
+// 식 하나만 있는 프로그램은 예전과 같은 AST
+Items:
+    |                               { [] }
+    | SEMISEMI Items                { $2 }
+    | SeqExpr                       { [ TopExpr $1 ] }
+    | SeqExpr SEMISEMI Items        { TopExpr $1 :: $3 }
+    | TopDecl AfterDecl             { $1 :: $2 }
+
+// 선언 바로 뒤에는 식이 올 수 없음 (let x = f 다음 줄의 g 가 f g 인지 알 수 없으므로)
+AfterDecl:
+    |                               { [] }
+    | SEMISEMI Items                { $2 }
+    | TopDecl AfterDecl             { $1 :: $2 }
+
+TopDecl:
+    | LET IDENT EQUALS SeqExpr      { TopLet($2, $4, parseState.InputStartPosition 1) }
+    | LET IDENT Params EQUALS SeqExpr
+                                    { TopLet($2, makeLambda $3 $5, parseState.InputStartPosition 1) }
+    | LET LetPattern EQUALS SeqExpr { TopLetPattern($2, $4, parseState.InputStartPosition 1) }
+    | LET REC IDENT Params EQUALS SeqExpr
+                                    { TopLetRec($3, List.head $4, paramBody (List.head $4) (makeLambda (List.tail $4) $6), parseState.InputStartPosition 1) }
+    | TYPE TypeParams TypeName EQUALS OptBar CtorDecls
+                                    { TopType($3, $2, checkCtors (parseState.InputStartPosition 6) $6, parseState.InputStartPosition 1) }
+
+// let 의 왼쪽에 오는 패턴: 튜플, (), _
+LetPattern:
+    | TuplePattern                  { checkPattern (parseState.InputStartPosition 1) $1 }
+    | LPAREN RPAREN                 { PUnit }
+    | UNDERSCORE                    { PWildcard }
+
+// e1; e2; e3 == e1; (e2; e3). let 본문, fun 본문, match 분기, 괄호 안, 최상위에서 씀
+SeqExpr:
+    | Expr %prec BELOWSEMI          { $1 }
+    | Expr SEMI SeqExpr             { at parseState (Seq($1, $3)) }
 
 Expr:
     | AppExpr                       { $1 }
-    | LET IDENT EQUALS Expr IN Expr { at parseState (Let($2, $4, $6)) }
-    | LET IDENT Params EQUALS Expr IN Expr
+    | LET IDENT EQUALS SeqExpr IN SeqExpr { at parseState (Let($2, $4, $6)) }
+    | LET IDENT Params EQUALS SeqExpr IN SeqExpr
                                     { at parseState (Let($2, makeLambda $3 $5, $7)) }
-    | LET TuplePattern EQUALS Expr IN Expr
-                                    { at parseState (LetPattern(checkPattern (parseState.InputStartPosition 2) $2, $4, $6)) }
-    | TYPE TypeParams TypeName EQUALS OptBar CtorDecls IN Expr
+    | LET LetPattern EQUALS SeqExpr IN SeqExpr
+                                    { at parseState (LetPattern($2, $4, $6)) }
+    | TYPE TypeParams TypeName EQUALS OptBar CtorDecls IN SeqExpr
                                     { at parseState (TypeDecl($3, $2, checkCtors (parseState.InputStartPosition 6) $6, $8)) }
-    | LET REC IDENT Params EQUALS Expr IN Expr
-                                    { at parseState (LetRec($3, List.head $4, makeLambda (List.tail $4) $6, $8)) }
-    | FUN Params ARROW Expr         { at parseState (makeLambda $2 $4) }
+    | LET REC IDENT Params EQUALS SeqExpr IN SeqExpr
+                                    { at parseState (LetRec($3, List.head $4, paramBody (List.head $4) (makeLambda (List.tail $4) $6), $8)) }
+    | FUN Params ARROW SeqExpr      { at parseState (makeLambda $2 $4) }
     | IF Expr THEN Expr ELSE Expr   { at parseState (If($2, $4, $6)) }
     | MATCH Expr WITH OptBar Arms   { at parseState (Match($2, $5)) }
     | Expr CONS Expr                { at parseState (Cons($1, $3)) }
@@ -140,7 +207,10 @@ Atom:
     | STRING                        { at parseState (Str $1) }
     | IDENT                         { at parseState (Var $1) }
     | CTOR                          { at parseState (Ctor $1) }
+    | LPAREN RPAREN                 { Unit }
     | LPAREN Expr RPAREN            { $2 }
+    | LPAREN Expr SEMI SeqExpr RPAREN
+                                    { at parseState (Seq($2, $4)) }
     | LPAREN Expr COMMA TupleItems RPAREN
                                     { at parseState (Tuple($2 :: $4)) }
     | LBRACKET RBRACKET             { Nil }
@@ -165,8 +235,9 @@ Arms:
     | Arm BAR Arms                  { $1 :: $3 }
 
 Arm:
-    | Pattern ARROW Expr            { (checkPattern (parseState.InputStartPosition 1) $1, None, $3) }
-    | Pattern WHEN Expr ARROW Expr  { (checkPattern (parseState.InputStartPosition 1) $1, Some $3, $5) }
+    | Pattern ARROW SeqExpr         { (checkPattern (parseState.InputStartPosition 1) $1, None, $3) }
+    | Pattern WHEN Expr ARROW SeqExpr
+                                    { (checkPattern (parseState.InputStartPosition 1) $1, Some $3, $5) }
 
 // :: 패턴은 오른쪽 결합 (h :: t :: rest == h :: (t :: rest))
 // 생성자 패턴이 :: 보다 강함: Some x :: rest == (Some x) :: rest
@@ -188,6 +259,7 @@ AtomPattern:
     | FALSE                         { at parseState (PBool false) }
     | STRING                        { at parseState (PString $1) }
     | LBRACKET RBRACKET             { PNil }
+    | LPAREN RPAREN                 { PUnit }
     | LBRACKET PatternItems RBRACKET
                                     { at parseState (makeListPattern $2) }
     | LPAREN Pattern RPAREN         { $2 }
@@ -250,6 +322,7 @@ TypeAtom:
 Param:
     | IDENT                         { $1 }
     | UNDERSCORE                    { "_" }
+    | LPAREN RPAREN                 { "()" }
 
 Params:
     | Param                         { [ $1 ] }

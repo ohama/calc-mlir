@@ -1,0 +1,29 @@
+(* 이진 탐색 트리: 넣고, 차례로 꺼내고, 찾기 *)
+type 'a tree = Leaf | Node of 'a tree * 'a * 'a tree
+
+let rec insert x t =
+  match t with
+  | Leaf -> Node (Leaf, x, Leaf)
+  | Node (l, v, r) ->
+      if x < v then Node (insert x l, v, r)
+      else if x > v then Node (l, v, insert x r)
+      else t
+
+let rec toList t =
+  match t with
+  | Leaf -> []
+  | Node (l, v, r) -> append (toList l) (v :: toList r)
+
+let rec contains x t =
+  match t with
+  | Leaf -> false
+  | Node (l, v, r) -> if x = v then true else if x < v then contains x l else contains x r
+
+let words = split "pear apple fig apple banana" " "
+let t = fold (fun acc w -> insert w acc) Leaf words
+
+let () =
+  println (join ", " (toList t));
+  println (map (fun w -> (w, contains w t)) ["fig"; "kiwi"])
+;;
+length (toList t)

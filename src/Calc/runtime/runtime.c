@@ -121,7 +121,9 @@ void calc_buffer_quoted(calc_buffer *b, const uint16_t *units, int64_t length) {
 
 /* Eval.formatValue 와 같은 형식 */
 void calc_buffer_value(calc_buffer *b, value v) {
-    if (CALC_IS_INT(v)) {
+    if (v == CALC_UNIT) {
+        buffer_ascii(b, "()");
+    } else if (CALC_IS_INT(v)) {
         char text[16];
         snprintf(text, sizeof text, "%d", CALC_INT_VAL(v));
         buffer_ascii(b, text);
@@ -211,6 +213,7 @@ static char *format_utf8(value v) {
 }
 
 void calc_print_result(value v) {
+    if (v == CALC_UNIT) return;
     char *text = format_utf8(v);
     fputs(text, stdout);
     putchar('\n');
@@ -246,7 +249,7 @@ static int equals(value a, value b) {
     if (CALC_IS_KIND(a, CALC_KIND_CLOSURE)) {
         calc_error("Type error: expected int, bool, string, list, tuple or data but got function");
     }
-    if (CALC_IS_INT(a) || CALC_IS_BOOL(a)) {
+    if (CALC_IS_INT(a) || CALC_IS_BOOL(a) || a == CALC_UNIT) {
         return a == b;
     }
     if (CALC_IS_KIND(a, CALC_KIND_STRING)) {

@@ -36,7 +36,7 @@
 | lowering | `Core.fs`, `Lower.fs` | `Ast.Expr` → Core IR. 연산을 `Prim`으로, `&&`/`||`를 `if`로, closure conversion(함수를 최상위로). 지원하지 않는 기능은 `NotSupported` |
 | 코드 생성 | `Codegen.fs` | Core IR → MLIR 텍스트 |
 | 빌드 | `Toolchain.fs` | 도구 찾기, 임시 폴더에서 외부 도구(`mlir-opt`, `mlir-translate`, `clang`)를 차례로 실행, C 런타임 오브젝트 캐시 |
-| 런타임 | `runtime/runtime.c`, `builtins.c`, `runtime.h`, `unicode.h` | 초기화, 결과 출력, 오류 종료, polymorphic 연산(`calc_add`, `calc_eq`, `calc_compare`), 내장 함수 33개, `calc_apply` |
+| 런타임 | `runtime/runtime.c`, `builtins.c`, `runtime.h`, `unicode.h` | 초기화, 결과 출력, 오류 종료, polymorphic 연산(`calc_add`, `calc_eq`, `calc_compare`), 내장 함수 36개, `calc_apply` |
 | 진입 | `Program.fs`의 `compile` | 위 단계를 잇고, 오류를 인터프리터와 같은 형식(`Error: ...`)으로 출력 |
 
 F#으로 하는 일은 MLIR **텍스트**를 만드는 데까지입니다. LLVM을 라이브러리로 링크하지 않고, 텍스트 파일을 외부 도구에 넘깁니다(설계 D1).
@@ -429,7 +429,7 @@ let f = substr "hello" in (f 1 3, map length ["a"; "bb"], tryHead [7])
 | 값으로: `map length xs` | `CBuiltin ("map", [<length 클로저>; xs])` | 런타임의 `map`이 `calc_apply`로 `length` 클로저를 부름 |
 | 가린 이름: `let length = ... in length x` | 보통 변수 `CVar` | 클로저 호출 |
 
-- **선언:** 모듈은 33개 내장 함수를 모두 `llvm.func @calc_builtin_<이름>(i64, ...) -> i64`로 선언합니다. 링커가 `builtins.o`와 이름으로 연결합니다.
+- **선언:** 모듈은 36개 내장 함수를 모두 `llvm.func @calc_builtin_<이름>(i64, ...) -> i64`로 선언합니다. 링커가 `builtins.o`와 이름으로 연결합니다.
 - **`calc_apply(f, x)`:** 클로저 1번 칸의 코드 포인터를 `(value *, value) -> value` 함수로 부릅니다. 생성한 코드의 calling convention과 같으므로 C와 MLIR이 서로의 함수를 그대로 부를 수 있습니다.
 - **option:** 런타임이 `Some`/`None`을 만들므로(`tryHead`, `tryFind`), 생성 코드는 `Some`/`None`의 이름 전역을 따로 만들지 않습니다. 대신 런타임의 `calc_name_some`, `calc_none`을 외부 전역으로 선언해서 씁니다(`llvm.mlir.global external constant`). 그래야 패턴 검사의 포인터 비교가 런타임이 만든 값에도 맞습니다.
 - **`upper`, `lower`, `trim`:** C 표준 라이브러리 대신 .NET에서 만든 표(`unicode.h`)를 씁니다. `ß`와 `İ`처럼 invariant 변환이 그대로 두는 문자까지 인터프리터와 같습니다.

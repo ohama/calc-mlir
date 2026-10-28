@@ -2,7 +2,7 @@
 
 Calc 언어를 인터프리터(`Eval`) 대신 **네이티브 실행 파일로 컴파일**하기 위한 설계 문서입니다. 구현은 간단한 것부터 단계별로 진행합니다(8장). 각 단계는 그 자체로 동작하고 테스트되는 상태로 끝납니다.
 
-**진행 상황**: 단계 7 완료. 내장 함수 33개까지 모든 기능을 컴파일합니다. 타입 검사를 통과하는 `EvalTests.cases` 263개와 실행 중 오류 예제가 모두 인터프리터와 같아서, 단계 8(완성도)의 기준도 함께 채웠습니다. 남은 것은 단계 9(최적화, 선택)입니다.
+**진행 상황**: 단계 7 완료. 내장 함수 36개까지 모든 기능을 컴파일합니다. 타입 검사를 통과하는 `EvalTests.cases` 263개와 실행 중 오류 예제가 모두 인터프리터와 같아서, 단계 8(완성도)의 기준도 함께 채웠습니다. 남은 것은 단계 9(최적화, 선택)입니다.
 
 지금 코드가 실제로 하는 일(예제 하나로 따라가는 흐름, entry point, 런타임 링크)은 [compiler-architecture.md](compiler-architecture.md)에 있습니다.
 
@@ -83,7 +83,7 @@ clang prog.o runtime.o builtins.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack
 | `src/Calc/Codegen.fs` | Core IR → MLIR 텍스트 |
 | `src/Calc/Toolchain.fs` | 도구 찾기, 외부 프로세스 실행, 오류 전달 |
 | `src/Calc/runtime/runtime.c`, `runtime.h` | C 런타임 (6장): 할당, 출력(`calc_buffer_value`), 오류, polymorphic 연산, `calc_apply`, option 전역. 빌드 출력 폴더의 `runtime/`으로 복사 (`CopyToOutputDirectory`) |
-| `src/Calc/runtime/builtins.c` | 내장 함수 33개 (단계 7) |
+| `src/Calc/runtime/builtins.c` | 내장 함수 36개 (단계 7) |
 | `src/Calc/runtime/unicode.h`, `gen-unicode.fsx` | .NET 대소문자 변환과 공백 표 (`upper`, `lower`, `trim`). `dotnet fsi src/Calc/runtime/gen-unicode.fsx`로 다시 만듦 |
 | `tests/Calc.Tests/CompileTests.fs` | differential testing (9장) |
 
@@ -123,7 +123,7 @@ clang prog.o runtime.o builtins.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack
 | `int n` (32비트) | `(n << 3) \| 1` | `001` |
 | `bool b` | `(b << 3) \| 3` | `011` |
 | `[]` | `5` | `101` |
-| (예약: unit 등) | | `111` |
+| `()` (unit) | `7` | `111` |
 | 그 밖의 모든 값 | 힙 블록 포인터 (8-byte alignment) | `000` |
 
 힙 블록은 첫 단어가 **헤더**(종류, 필드 수)입니다.
@@ -184,7 +184,7 @@ clang prog.o runtime.o builtins.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack
 
 ### D8. 내장 함수: C 런타임 + 클로저
 
-- 내장 함수 33개는 `runtime/builtins.c`의 C 함수 `calc_builtin_<이름>`로 구현합니다(단계 7). 인자 순서, 결과, 오류 메시지는 `Eval.callBuiltin`과 같습니다.
+- 내장 함수 36개는 `runtime/builtins.c`의 C 함수 `calc_builtin_<이름>`로 구현합니다(단계 7). 인자 순서, 결과, 오류 메시지는 `Eval.callBuiltin`과 같습니다.
 - **호출:** `Lower`가 변수 범위를 따라가서, 범위에 없는 이름만 내장 함수로 봅니다. `let length = ...`처럼 가린 이름은 보통 변수입니다.
   - 인자가 다 모인 호출(`substr s 1 3`)은 런타임 함수를 바로 부릅니다(`CBuiltin`). 남는 인자는 결과에 차례로 적용합니다.
   - 값으로 쓰거나 partial application을 하면(`map length xs`, `substr "abc"`), 인자를 하나씩 받는 클로저 `fun $b0 -> fun $b1 -> ...`가 됩니다. 인터프리터의 `VBuiltin`과 같게 `<fun>`으로 출력되고, `=` 비교 오류도 같습니다. 처음 설계한 "정적 클로저 객체"는 필요 없었습니다. closure conversion이 바깥 인자를 캡처하기 때문입니다.
@@ -263,7 +263,7 @@ value  calc_add(value a, value b);            // int 또는 string
 value  calc_eq(value a, value b);             // 구조적 비교
 int32_t calc_compare(value a, value b);       // int 또는 string (ordinal)
 value  calc_apply(value closure, value arg);  // 내장 고차 함수가 사용자 클로저를 부름
-// 내장 함수 (builtins.c): calc_builtin_length, calc_builtin_substr, ... (33개)
+// 내장 함수 (builtins.c): calc_builtin_length, calc_builtin_substr, ... (36개)
 extern const char calc_name_some[], calc_name_none[];   // option 의 생성자 이름
 extern const calc_unit calc_none;                       // None 값
 ```

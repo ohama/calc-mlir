@@ -4,9 +4,23 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
-## [Unreleased]
+## [0.25.0] - 2026-10-28
+
+### 추가
+- 최상위 선언: `let x = e`, `let f x = e`, `let rec`, `let (a, b) =`, `let () =`, `let _ =`, `type`을 `in` 없이 차례로 씁니다. 선언 뒤의 식은 `;;` 다음에 씁니다(OCaml과 같음). 파서가 `let … in` 사슬로 풀어 써서 평가기, 타입 추론, 컴파일러는 그대로입니다. 식 하나만 있는 프로그램은 예전과 같은 AST입니다.
+- `unit`: 값 `()`, 패턴 `()`, 매개변수 `let f () = …`(인자 타입이 `unit`으로 정해짐), 타입 `unit`. 컴파일러에서는 즉시값 `7`입니다.
+- 순서 실행 `e1; e2`: `let`의 본문과 오른쪽, `fun`의 본문, `match` 분기, 괄호 안, 최상위에서 오른쪽 끝까지 이어집니다. `if`의 `else` 분기는 `;` 앞에서 끝납니다. 리스트 안의 `;`는 원소 구분자 그대로입니다.
+- 내장 함수 `print`, `println`, `ignore` (`'a -> unit`): 문자열은 따옴표 없이, 나머지는 결과와 같은 모양으로 표준 출력에 씁니다. 인터프리터와 컴파일러 모두(내장 함수 36개).
+- 주석: `//` 줄 주석, `(* … *)` 블록 주석(중첩 가능). 닫히지 않으면 `Unterminated comment`.
+- 파일 실행 `calc prog.calc`: 프로그램이 출력한 것만 보여 주고, 마지막 값이 `()`가 아니면 그 값을 출력합니다(`ocaml`, `dotnet fsi`처럼). `calc --compile out prog.calc`로 파일을 컴파일합니다. 컴파일한 실행 파일도 결과가 `()`면 결과 줄을 출력하지 않습니다.
+- 버리는 값 경고: `e1; e2`의 `e1`이 `unit`이 아니면 `Warning: this expression has type int and its value is ignored`(F# FS0020과 같음).
+- `examples/hello.calc`, `examples/tree.calc`. 컴파일러 테스트가 예제를 인터프리터와 비교합니다.
+- `Eval.evalWithOutput`: `print`의 출력을 받을 `TextWriter`를 정해서 평가합니다(테스트용, `AsyncLocal`이라 병렬 테스트끼리 섞이지 않음).
+- 테스트 27개 추가 (총 764개).
 
 ### 변경
+- 빈 입력과 `in` 없는 `let`은 이제 파스 오류가 아닙니다. 빈 프로그램의 결과는 `()`입니다.
+- `toString`은 `print`와 같은 규칙(`Eval.display`)을 씁니다.
 - 문서(`docs/`, `howto/`, `README.md`, `CHANGELOG.md`)의 전문용어를 영어로 바꿨습니다. 한국어로 옮긴 용어가 오히려 뜻을 흐리는 경우입니다. 예: unification, generalization, closure conversion, free variable, short-circuit evaluation, differential testing, soundness, code unit, surrogate pair, dialect, region, lowering, alignment, calling convention, entry point, level(HM).
   - 조사는 영어 발음에 맞췄습니다(`unification이`, `dialect가`, `level로`).
   - 널리 쓰는 말(타입, 함수, 클로저, 파서, 런타임, 패턴 매칭, 우선순위 등)과 정렬(sort), 영역(일반적인 뜻) 같은 다른 뜻의 말은 그대로 두었습니다. 코드 블록과 인라인 코드는 바꾸지 않았습니다.

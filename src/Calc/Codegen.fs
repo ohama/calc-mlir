@@ -23,6 +23,9 @@ let kindData = 5L
 /// [] 는 즉시값 5
 let nilValue = 5L
 
+/// () 는 즉시값 7 (하위 3비트 111)
+let unitValue = 7L
+
 let closureHeader (capturedCount: int) = kindClosure ||| (int64 (1 + capturedCount) <<< 8)
 
 /// cons 블록 = [헤더, head, tail]
@@ -249,7 +252,7 @@ let private emitBlock (fb: FunctionBuilder) (header: int64) (values: string list
 /// 어떤 값과도 일치하는 패턴 (검사 코드가 필요 없음)
 let rec private irrefutable (pattern: Ast.Pattern) =
     match pattern with
-    | Ast.PVar _ | Ast.PWildcard -> true
+    | Ast.PVar _ | Ast.PWildcard | Ast.PUnit -> true
     | Ast.PTuple items -> List.forall irrefutable items
     | _ -> false
 
@@ -271,6 +274,7 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
     match expr with
     | CInt n -> emitConst fb "i64" (tagInt n)
     | CBool b -> emitConst fb "i64" (tagBool b)
+    | CUnit -> emitConst fb "i64" unitValue
     | CString s -> emitGlobalAddress fb (fb.Strings.NameOf s)
     // let 은 새 코드가 없음: 값의 SSA 이름을 환경에 넣을 뿐. 섀도잉은 Map.add 가 덮어씀
     | CLet (name, value, body) ->
@@ -397,7 +401,8 @@ and private emitTest (fb: FunctionBuilder) (pattern: Ast.Pattern) (v: string) : 
             let c = emitTest fb p (emitField fb v index)
             emitIfOf fb "i1" c (fun () -> fields rest) (fun () -> emitConst fb "i1" 0L)
     match pattern with
-    | Ast.PVar _ | Ast.PWildcard -> emitConst fb "i1" 1L
+    // () 는 unit 의 유일한 값이라 항상 일치
+    | Ast.PVar _ | Ast.PWildcard | Ast.PUnit -> emitConst fb "i1" 1L
     | Ast.PInt n -> equalsConst (tagInt n)
     | Ast.PBool b -> equalsConst (tagBool b)
     | Ast.PNil -> equalsConst nilValue

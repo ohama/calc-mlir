@@ -4,6 +4,7 @@
 #include "unicode.h"
 
 #include <gc.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -315,3 +316,31 @@ value calc_builtin_tryFind(value f, value xs) {
 
 /* Some 은 인자가 있는 블록, None 은 없는 블록 */
 value calc_builtin_defaultValue(value d, value opt) { return CALC_SIZE(opt) == 2 ? CALC_FIELD(opt, 2) : d; }
+
+/* ---- 출력 ---- */
+
+/* print, println: 문자열은 따옴표 없이, 나머지는 formatValue (toString 과 같음). UTF-8 로 표준 출력 */
+static void put_display(value v) {
+    calc_buffer b = {0};
+    if (CALC_IS_KIND(v, CALC_KIND_STRING)) calc_buffer_units(&b, STR(v)->units, STR(v)->length);
+    else calc_buffer_value(&b, v);
+    char *text = calc_buffer_utf8(&b);
+    fputs(text, stdout);
+    free(text);
+}
+
+value calc_builtin_print(value v) {
+    put_display(v);
+    return CALC_UNIT;
+}
+
+value calc_builtin_println(value v) {
+    put_display(v);
+    putchar('\n');
+    return CALC_UNIT;
+}
+
+value calc_builtin_ignore(value v) {
+    (void)v;
+    return CALC_UNIT;
+}

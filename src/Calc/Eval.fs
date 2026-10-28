@@ -19,6 +19,8 @@ type Value =
     | VData of typeName: string * ctor: string * payload: Value option
     /// 인자가 있는 생성자 자체 (함수처럼 호출). fields 는 선언의 튜플 원소 수 (of int * int 면 2)
     | VConstructor of typeName: string * ctor: string * fields: int
+    /// () : unit
+    | VUnit
 
 type Env = Map<string, Value>
 
@@ -30,6 +32,7 @@ let quote (s: string) =
 
 let rec formatValue value =
     match value with
+    | VUnit -> "()"
     | VInt n -> string n
     | VBool true -> "true"
     | VBool false -> "false"
@@ -47,6 +50,7 @@ let rec formatValue value =
 
 let typeName value =
     match value with
+    | VUnit -> "unit"
     | VInt _ -> "int"
     | VBool _ -> "bool"
     | VString _ -> "string"
@@ -67,6 +71,7 @@ let typeError expected value =
 /// = 와 <> 는 같은 타입끼리만 비교 가능. 리스트는 원소를 차례로 비교
 let rec valueEquals a b =
     match a, b with
+    | VUnit, VUnit -> true
     | VInt x, VInt y -> x = y
     | VBool x, VBool y -> x = y
     | VString x, VString y -> x = y
@@ -92,6 +97,7 @@ let rec matchPattern pattern value (env: Env) : Env option =
     match pattern, value with
     | PVar name, v -> Some (Map.add name v env)
     | PWildcard, _ -> Some env
+    | PUnit, VUnit -> Some env
     | PInt n, VInt m -> if n = m then Some env else None
     | PBool b, VBool c -> if b = c then Some env else None
     | PString s, VString t -> if s = t then Some env else None
@@ -188,10 +194,29 @@ let builtinArity =
         "tryHead", 1
         "tryFind", 2
         "defaultValue", 2
+        // 출력: 문자열은 따옴표 없이, 나머지는 formatValue (toString 과 같음)
+        "print", 1
+        "println", 1
+        "ignore", 1
     ]
 
 let none = VData ("option", "None", None)
 let some v = VData ("option", "Some", Some v)
+
+/// print, println 이 쓰는 곳. 테스트는 evalWithOutput 으로 바꿈 (병렬 테스트끼리 섞이지 않게 AsyncLocal).
+/// 설정하지 않은 스레드에서는 null 이므로 표준 출력
+let private outputSlot = System.Threading.AsyncLocal<System.IO.TextWriter>()
+
+let private output () =
+    match outputSlot.Value with
+    | null -> System.Console.Out
+    | writer -> writer
+
+/// print, println, toString 이 보여 주는 모양: 문자열은 그대로, 나머지는 formatValue
+let display value =
+    match value with
+    | VString s -> s
+    | v -> formatValue v
 
 /// 인자가 다 모인 내장 함수를 실행. 문자열 위치와 길이는 UTF-16 코드 단위 (.NET string 과 같음)
 /// apply 는 map, filter 같은 고차 함수가 사용자 함수를 호출할 때 사용 (evalIn 보다 먼저 정의되므로 인자로 받음)
@@ -228,8 +253,7 @@ let callBuiltin (apply: Value -> Value -> Value) name args =
         match items with
         | VList xs -> VString (System.String.Join(str sep, xs |> List.map str))
         | v -> typeError "list" v
-    | "toString", [ VString s ] -> VString s
-    | "toString", [ v ] -> VString (formatValue v)
+    | "toString", [ v ] -> VString (display v)
     | "toInt", [ s ] ->
         let s = str s
         match System.Int32.TryParse(s, System.Globalization.NumberStyles.AllowLeadingSign,
@@ -280,6 +304,13 @@ let callBuiltin (apply: Value -> Value -> Value) name args =
         match list' xs |> List.tryFind (fun x -> bool' (apply f x)) with
         | Some x -> some x
         | None -> none
+    | "print", [ v ] ->
+        output().Write(display v)
+        VUnit
+    | "println", [ v ] ->
+        output().WriteLine(display v)
+        VUnit
+    | "ignore", [ _ ] -> VUnit
     | "defaultValue", [ d; opt ] ->
         match opt with
         | VData ("option", "Some", Some v) -> v
@@ -300,6 +331,10 @@ let rec evalIn (env: Env) expr =
     | Number n -> VInt n
     | Bool b -> VBool b
     | Str s -> VString s
+    | Unit -> VUnit
+    | Seq (first, rest) ->
+        evalIn env first |> ignore
+        evalIn env rest
     | Var name ->
         match Map.tryFind name env with
         | Some v -> v
@@ -425,3 +460,12 @@ and apply fv av =
 
 /// 내장 함수만 있는 환경에서 평가
 let eval expr = evalIn builtins expr
+
+/// print, println 의 출력을 output 으로 보내면서 평가 (테스트, 다른 스레드에서도 이 호출 안에서만)
+let evalWithOutput (writer: System.IO.TextWriter) expr =
+    let previous = outputSlot.Value
+    outputSlot.Value <- writer
+    try
+        eval expr
+    finally
+        outputSlot.Value <- previous

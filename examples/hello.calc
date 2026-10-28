@@ -1,0 +1,20 @@
+// 최상위 선언과 출력
+let greet name = "Hello, " + name + "!"
+
+let rec fact n = if n = 0 then 1 else n * fact (n - 1)
+
+type shape = Circle of int | Rect of int * int
+
+let area s =
+  match s with
+  | Circle r -> 3 * r * r
+  | Rect (w, h) -> w * h
+
+let () = println (greet "Calc")
+let _ = println (fact 10)
+;;
+print "areas: ";
+println (map area [Circle 2; Rect (3, 4)]);
+let total = sum (map area [Circle 2; Rect (3, 4)]) in
+println total;
+total * 2

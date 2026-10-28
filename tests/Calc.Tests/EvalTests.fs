@@ -343,6 +343,33 @@ let tests =
             Expect.equal (evalIn env (Program.parse "if c then a - b else 0")) (VInt 7) ""
         }
 
+        testList "unit, ;, print" [
+            let run (input: string) =
+                use writer = new System.IO.StringWriter()
+                let value = evalWithOutput writer (Program.parse input)
+                writer.ToString(), value
+            test "() 와 순서 실행" {
+                Expect.equal (calc "()") VUnit ""
+                Expect.equal (calc "let f () = 42 in f ()") (VInt 42) ""
+                Expect.equal (calc "1; 2") (VInt 2) "앞의 값은 버림"
+            }
+            test "print 와 println: 문자열은 따옴표 없이" {
+                Expect.equal (run "print \"a\"; println 1; println [Some \"b\"]") ("a1\n[Some \"b\"]\n", VUnit) ""
+            }
+            test "순서: 왼쪽부터, 오류 전의 출력은 남음" {
+                use writer = new System.IO.StringWriter()
+                Expect.throws (fun () -> evalWithOutput writer (Program.parse "println 1; 1 / 0") |> ignore) ""
+                Expect.equal (writer.ToString()) "1\n" ""
+            }
+            test "ignore 와 최상위 선언" {
+                Expect.equal (run "let x = 2\nlet _ = println x\n;; ignore (x + 1)") ("2\n", VUnit) ""
+            }
+            test "() 끼리 같음, 출력은 ()" {
+                Expect.equal (calc "() = ()") (VBool true) ""
+                Expect.equal (formatValue VUnit) "()" ""
+            }
+        ]
+
         testList "단락 평가" [
             test "false && <오류> 는 false" {
                 Expect.equal (calc "false && 1 / 0 = 0") (VBool false) ""

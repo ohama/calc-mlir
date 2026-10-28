@@ -46,7 +46,9 @@ type private State =
       /// 사용자 타입의 고유 이름 → (타입 매개변수 변수, 생성자와 인자 타입). 빠진 분기 검사가 씀
       DataTypes: Dictionary<string, TypeVar list * (string * Type option) list>
       /// 검사할 패턴 매칭: 대상 타입, (패턴, 가드가 있는지) 목록, 위치. 추론이 끝난 뒤 타입이 다 정해지면 검사
-      Matches: List<Type * (Pattern * bool) list * (int * int) option * string> }
+      Matches: List<Type * (Pattern * bool) list * (int * int) option * string>
+      /// e1; e2 에서 버리는 e1 의 타입과 위치
+      Discarded: List<Type * (int * int) option> }
 
 type private Context =
     { Vars: Map<string, Type>
@@ -56,6 +58,7 @@ type private Context =
 let private tInt = TyCon ("int", [])
 let private tBool = TyCon ("bool", [])
 let private tString = TyCon ("string", [])
+let private tUnit = TyCon ("unit", [])
 let private listOf t = TyCon ("list", [ t ])
 let private optionOf t = TyCon ("option", [ t ])
 
@@ -276,9 +279,13 @@ let private initialContext (st: State) =
             "defaultValue", a ^-> optionOf a ^-> a
             "None", optionOf a
             "Some", a ^-> optionOf a
+            // 출력
+            "print", a ^-> tUnit
+            "println", a ^-> tUnit
+            "ignore", a ^-> tUnit
         ]
     let types =
-        Map.ofList [ "int", ("int", 0); "bool", ("bool", 0); "string", ("string", 0); "list", ("list", 1); "option", ("option", 1) ]
+        Map.ofList [ "int", ("int", 0); "bool", ("bool", 0); "string", ("string", 0); "unit", ("unit", 0); "list", ("list", 1); "option", ("option", 1) ]
     { Vars = vars; Types = types }
 
 // ---- 추론 ----
@@ -310,6 +317,7 @@ and private inferPatternNode (st: State) (ctx: Context) pattern : Type * (string
         let t = newVar st
         t, [ name, t ]
     | PWildcard -> newVar st, []
+    | PUnit -> tUnit, []
     | PInt _ -> tInt, []
     | PBool _ -> tBool, []
     | PString _ -> tString, []
@@ -361,6 +369,11 @@ and private inferNode (st: State) (ctx: Context) expr : Type =
     | Number _ -> tInt
     | Bool _ -> tBool
     | Str _ -> tString
+    | Unit -> tUnit
+    | Seq (first, rest) ->
+        // 버리는 값이 unit 이 아니면 경고 (F# FS0020, OCaml Warning 10). 타입이 다 정해진 뒤에 확인
+        st.Discarded.Add((infer' first, Errors.positionOf first))
+        infer' rest
     | Var name ->
         match Map.tryFind name ctx.Vars with
         | Some scheme -> instantiate st scheme
@@ -514,11 +527,13 @@ let rec private toPat pattern =
     | PTuple items -> Con ("tuple", List.map toPat items)
     | PCtor (name, None) -> Con (name, [])
     | PCtor (name, Some p) -> Con (name, [ toPat p ])
+    | PUnit -> Con ("()", [])
 
 /// 타입의 생성자 전부 (이름, 하위 타입). 값이 무한히 많은 타입(int, string)과 정해지지 않은 타입은 None
 let private signature (st: State) (t: Type) : (string * Type list) list option =
     match prune t with
     | TyCon ("bool", []) -> Some [ "true", []; "false", [] ]
+    | TyCon ("unit", []) -> Some [ "()", [] ]
     | TyCon ("list", [ a ]) as listType -> Some [ "[]", []; "::", [ a; listType ] ]
     | TyCon ("option", [ a ]) -> Some [ "None", []; "Some", [ a ] ]
     | TyTuple items -> Some [ "tuple", items ]
@@ -613,10 +628,18 @@ let private checkMatches (st: State) : Warning list =
 
 /// 식 전체의 타입과, 모든 값을 덮지 못하는 패턴 매칭의 경고. 타입이 맞지 않으면 TypeError
 let typecheckWithWarnings (expr: Expr) : Type * Warning list =
-    let st = { Level = 0; NextId = 0; DataTypes = Dictionary(); Matches = List() }
+    let st = { Level = 0; NextId = 0; DataTypes = Dictionary(); Matches = List(); Discarded = List() }
     let t = infer st (initialContext st) expr
     applyDefaults st t
-    t, checkMatches st
+    let discarded =
+        [ for t, position in st.Discarded do
+              match prune t with
+              | TyCon ("unit", []) | TyVar _ -> ()
+              | other ->
+                  yield
+                      { Message = sprintf "this expression has type %s and its value is ignored (use ignore or let _ = ...)" (typeToString other)
+                        Position = position } ]
+    t, checkMatches st @ discarded |> List.sortBy (fun w -> w.Position)
 
 /// 식 전체의 타입. 타입이 맞지 않으면 TypeError
 let typecheck (expr: Expr) : Type = fst (typecheckWithWarnings expr)

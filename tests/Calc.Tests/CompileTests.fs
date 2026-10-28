@@ -50,12 +50,21 @@ let private compilable (input: string) =
     | Core.NotSupported _
     | Infer.TypeError _ -> false
 
-/// 인터프리터로 실행했을 때 calc 가 내는 것과 같은 (표준 출력, 표준 에러, 종료 코드)
+/// 인터프리터로 실행했을 때 calc prog.calc 가 내는 것과 같은 (표준 출력, 표준 에러, 종료 코드):
+/// print 의 출력, 그다음 결과 값 (() 면 없음). 오류가 나면 그때까지의 출력과 오류 메시지
 let private interpret (input: string) =
+    use output = new StringWriter()
     try
-        Eval.formatValue (Eval.eval (Program.parse input)) + "\n", "", 0
+        match Eval.evalWithOutput output (Program.parse input) with
+        | Eval.VUnit -> output.ToString(), "", 0
+        | value -> output.ToString() + Eval.formatValue value + "\n", "", 0
     with ex ->
-        "", "Error: " + ex.Message + "\n", 1
+        output.ToString(), "Error: " + ex.Message + "\n", 1
+
+/// 저장소의 examples/*.calc (이름, 내용)
+let private examples =
+    let dir = Path.Combine(__SOURCE_DIRECTORY__, "..", "..", "examples")
+    Directory.GetFiles(dir, "*.calc") |> Array.sort |> Array.map (fun f -> Path.GetFileName f, File.ReadAllText f) |> List.ofArray
 
 /// 실행 중 오류가 나는 예제 (EvalTests.cases 에는 성공하는 예제만 있음)
 let private runtimeErrorCases =
@@ -288,6 +297,16 @@ let private runCases =
           "toInt \" 1\\n\"", ("", "Error: toInt: invalid integer: \" 1\\n\"\n", 1), "따옴표와 이스케이프"
           "replace \"a\" \"\" \"b\"", ("", "Error: replace: empty search string\n", 1), ""
         ]
+      "unit, ;, print",
+        [
+          "()", ("", "", 0), "결과가 () 면 아무것도 출력하지 않음"
+          "print \"a\"; println 1; println [Some \"b\"]; 7", ("a1\n[Some \"b\"]\n7\n", "", 0), "문자열은 따옴표 없이"
+          "let f () = println \"hi\" in f (); f ()", ("hi\nhi\n", "", 0), ""
+          "println 1; 1 / 0", ("1\n", "Error: Attempted to divide by zero.\n", 1), "오류 전의 출력은 남음 (stdout 을 먼저 비움)"
+          "let x = 2\nlet _ = println x\n;; ignore (x + 1); x * 10", ("2\n20\n", "", 0), "최상위 선언"
+          "(() = (), [()], Some ())", ("(true, [()], Some ())\n", "", 0), "() 값"
+          "match () with () -> \"u\"", ("\"u\"\n", "", 0), ""
+        ]
       "Match failure",
         [
           "match [1] with | [] -> 0", ("", "Error: Match failure: [1]\n", 1), ""
@@ -319,7 +338,9 @@ let private batch =
     lazy
         (let t = requireTools ()
          let inputs =
-             (runCases |> List.collect (snd >> List.map (fun (input, _, _) -> input))) @ differentialInputs.Value
+             (runCases |> List.collect (snd >> List.map (fun (input, _, _) -> input)))
+             @ differentialInputs.Value
+             @ (examples |> List.map snd)
              |> List.distinct
          let programs =
              inputs
@@ -556,6 +577,13 @@ let tests =
                         Expect.equal (batchRun input) expected (if message = "" then input else message)
                 }
         ]
+
+        test "예제 프로그램 (examples/*.calc) 은 인터프리터와 같은 출력" {
+            requireTools () |> ignore
+            Expect.isNonEmpty examples "examples 폴더"
+            for name, source in examples do
+                Expect.equal (batchRun source) (interpret source) name
+        }
 
         test "차등: 컴파일할 수 있는 평가 예제는 인터프리터와 같은 결과" {
             requireTools () |> ignore

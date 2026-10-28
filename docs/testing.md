@@ -30,11 +30,11 @@ dotnet run --project tests/Calc.Tests -- --debug            # 각 테스트 시�
 | 파일 | 테스트 목록 | 내용 |
 |---|---|---|
 | `LexerTests.fs` | `Lexer` | 토큰 순서, 공백과 줄바꿈 무시, 키워드와 식별자, 비교·논리 연산자, `->`, 리스트 토큰(`[` `]` `;` `::` `|`), 문자열과 이스케이프, 닫히지 않은 문자열, 빈 입력, 알 수 없는 문자 오류 |
-| `ParserTests.fs` | `Parser` | 우선순위, associativity, 괄호, 단항 마이너스, `let`/`if`/`fun`의 범위와 중첩, 함수 호출, 함수 정의 syntactic sugar, 리스트와 `::`, 튜플, 패턴과 `match`(가드, 중첩), 튜플 분해 `let`, 생성자와 `type` 선언, 타입 식, 문자열 리터럴, 파서 오류 |
+| `ParserTests.fs` | `Parser` | 최상위 선언과 `;;`, `unit`과 `;`의 범위, 주석, 우선순위, associativity, 괄호, 단항 마이너스, `let`/`if`/`fun`의 범위와 중첩, 함수 호출, 함수 정의 syntactic sugar, 리스트와 `::`, 튜플, 패턴과 `match`(가드, 중첩), 튜플 분해 `let`, 생성자와 `type` 선언, 타입 식, 문자열 리터럴, 파서 오류 |
 | `InferTests.fs` | `Infer` | 추론한 타입 표(polymorphism, 재귀, 패턴, 내장 함수, ADT), 타입 오류 메시지, soundness(타입 검사를 통과한 `EvalTests` 예제는 실행 중 오류 없이 그 타입의 값이 됨), 타입 검사가 거부하는 동적 예제 목록, FsCheck property |
-| `DiagnosticTests.fs` | `Diagnostics` | 타입 오류의 위치(문제가 된 식을 가리킴), 빠진 `match` 분기 경고와 값의 예, 가드, 경고가 없는 경우, soundness(실행 중 `Match failure`가 나는 평가 예제는 모두 경고를 받음) |
-| `CompileTests.fs` | `Compile` | 생성한 MLIR, value representation(태그, 클로저 헤더), closure conversion(`Lower`), 컴파일한 실행 파일의 출력, **differential testing**(컴파일할 수 있는 `EvalTests` 예제를 인터프리터와 비교). LLVM/GC가 없으면 건너뜀(Skipped) |
-| `EvalTests.fs` | `Eval` | 식 계산 표(정수, 불리언, 함수, 재귀, 리스트, 문자열, 내장 함수, 튜플, 패턴 매칭, option, 사용자 정의 타입), `let`과 섀도잉, 클로저, short-circuit evaluation, 타입 오류, 리스트·문자열·내장 함수·패턴 매칭·ADT 오류와 출력, 정의되지 않은 변수, 0으로 나누기, FsCheck property-based testing |
+| `DiagnosticTests.fs` | `Diagnostics` | 타입 오류의 위치(문제가 된 식을 가리킴), 빠진 `match` 분기 경고와 값의 예, 버리는 값 경고, 가드, 경고가 없는 경우, soundness(실행 중 `Match failure`가 나는 평가 예제는 모두 경고를 받음) |
+| `CompileTests.fs` | `Compile` | 생성한 MLIR, value representation(태그, 클로저 헤더), closure conversion(`Lower`), 컴파일한 실행 파일의 출력(`print` 출력 포함), **differential testing**(컴파일할 수 있는 `EvalTests` 예제와 `examples/*.calc`를 인터프리터와 비교). LLVM/GC가 없으면 건너뜀(Skipped) |
+| `EvalTests.fs` | `Eval` | `unit`, `;`, `print`(출력을 `evalWithOutput`으로 받아 확인), 식 계산 표(정수, 불리언, 함수, 재귀, 리스트, 문자열, 내장 함수, 튜플, 패턴 매칭, option, 사용자 정의 타입), `let`과 섀도잉, 클로저, short-circuit evaluation, 타입 오류, 리스트·문자열·내장 함수·패턴 매칭·ADT 오류와 출력, 정의되지 않은 변수, 0으로 나누기, FsCheck property-based testing |
 | `Main.fs` | — | entry point (`runTestsInAssemblyWithCLIArgs`) |
 
 `[<Tests>]` attribute가 붙은 값은 Expecto가 자동으로 찾아서 실행합니다.
@@ -147,6 +147,8 @@ dotnet run --project tests/Calc.Tests -- --filter "Compile"
 - `brew install llvm bdw-gc`가 되어 있지 않으면 이 테스트들은 실패가 아니라 **Skipped**로 표시됩니다.
 - differential testing은 기대값을 따로 적지 않습니다. 같은 식을 `Eval.eval`로 실행한 결과(`Eval.formatValue`)와 실행 파일의 출력을 비교합니다. 컴파일러가 지원하는 기능이 늘어나면 비교하는 예제도 자동으로 늘어납니다.
 - 실행 중 오류가 나는 예제(`1 / 0` 등)는 표준 에러(`Error: <인터프리터와 같은 메시지>`)와 종료 코드 1까지 비교합니다.
+- 기대하는 표준 출력은 `calc prog.calc`와 같습니다. `print`가 출력한 것 다음에 결과 값을 출력하고, 결과가 `()`면 결과 줄이 없습니다. 인터프리터 쪽은 `Eval.evalWithOutput`으로 출력을 받습니다.
+- `examples/*.calc`도 같은 방식으로 비교합니다. 예제를 더하면 테스트도 자동으로 늘어납니다.
 - 단계 7에서 differential testing은 286개를 비교합니다. 타입 검사를 통과하는 평가 예제 263개 전부와 실행 중 오류 예제입니다.
 - `Unicode 표` 테스트는 `runtime/unicode.h`의 대소문자 변환이 모든 code point에서, 공백 목록이 `Char.IsWhiteSpace`와 같은지 확인합니다. 다르면 `dotnet fsi src/Calc/runtime/gen-unicode.fsx`로 다시 만듭니다.
 - **묶음 빌드:** 실행 테스트와 differential testing의 입력 약 220개를 실행 파일 하나로 빌드합니다(`Codegen.emitEntries`, `Toolchain.buildMany`).
@@ -197,7 +199,7 @@ dotnet run --project tests/Calc.Tests -- --filter "Compile"
 | 명령 | 기대 출력 | 종료 코드 |
 |---|---|---|
 | `--help`, `-h` | `USAGE: calc [--help] [--expr=<expr>] [--version] [--no-typecheck]`로 시작하는 사용법 | 0 |
-| `--version`, `-v` | `calc 0.24.0` (`Calc.fsproj`의 `<Version>`) | 0 |
+| `--version`, `-v` | `calc 0.25.0` (`Calc.fsproj`의 `<Version>`) | 0 |
 | `-e "(2+3)*4"` | `Result: 20` | 0 |
 | `--expr=7/2` | `Result: 3` | 0 |
 | `--expr "-5 + 2"` | `Result: -3` (`-`로 시작하는 식도 값으로 처리됨) | 0 |

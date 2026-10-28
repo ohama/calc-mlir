@@ -74,6 +74,15 @@ let tests =
             Expect.isEmpty (warnings "match 1 with | x when x > 0 -> 1 | _ -> 0") "_ 가 있으면 덮음"
         }
 
+        test "버리는 값이 unit 이 아니면 경고 (F# FS0020)" {
+            Expect.equal
+                (warnings "1; 2")
+                [ "this expression has type int and its value is ignored (use ignore or let _ = ...)", Some (1, 1) ]
+                ""
+            Expect.isEmpty (warnings "println 1; ignore 2; ()") "unit 이면 경고 없음"
+            Expect.equal (warnings "match () with () -> 1") [] "() 패턴은 unit 을 모두 덮음"
+        }
+
         test "모두 덮으면 경고 없음" {
             for input in
                 [ "match Some 1 with | Some x -> x | None -> 0"

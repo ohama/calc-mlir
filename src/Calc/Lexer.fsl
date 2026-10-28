@@ -20,6 +20,10 @@ let newline = ('\n' | '\r' '\n')
 rule tokenize = parse
     | whitespace    { tokenize lexbuf }
     | newline       { lexbuf.EndPos <- lexbuf.EndPos.NextLine; tokenize lexbuf }
+    // 주석: // 줄 끝까지 (F#), (* ... *) 중첩 가능 (OCaml, F#)
+    | "//" [^ '\n' '\r']*
+                    { tokenize lexbuf }
+    | "(*"          { comment 1 lexbuf.StartPos lexbuf; tokenize lexbuf }
     | digit+        { match System.Int32.TryParse(lexeme lexbuf, System.Globalization.NumberStyles.None,
                                               System.Globalization.CultureInfo.InvariantCulture) with
                       | true, n -> NUMBER n
@@ -64,6 +68,7 @@ rule tokenize = parse
     | '|'           { BAR }
     | '['           { LBRACKET }
     | ']'           { RBRACKET }
+    | ";;"          { SEMISEMI }
     | ';'           { SEMI }
     | ','           { COMMA }
     | '+'           { PLUS }
@@ -89,3 +94,11 @@ and readString (sb: StringBuilder) (start: Position) = parse
     | newline       { lexbuf.EndPos <- lexbuf.EndPos.NextLine; sb.Append(lexeme lexbuf) |> ignore; readString sb start lexbuf }
     | eof           { syntaxError "Unterminated string" start }
     | _             { sb.Append(lexeme lexbuf) |> ignore; readString sb start lexbuf }
+
+// (* 다음부터 짝이 맞는 *) 까지 건너뜀. depth 는 열린 주석 수
+and comment (depth: int) (start: Position) = parse
+    | "(*"          { comment (depth + 1) start lexbuf }
+    | "*)"          { if depth > 1 then comment (depth - 1) start lexbuf }
+    | newline       { lexbuf.EndPos <- lexbuf.EndPos.NextLine; comment depth start lexbuf }
+    | eof           { syntaxError "Unterminated comment" start }
+    | _             { comment depth start lexbuf }

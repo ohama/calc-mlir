@@ -27,12 +27,18 @@ type Pattern =
     | PTuple of Pattern list
     /// None, Some p, Node (l, x, r)
     | PCtor of string * Pattern option
+    /// ()
+    | PUnit
 
 type Expr =
     | Number of int
     | Bool of bool
     /// 문자열 리터럴 "..." (이스케이프는 렉서에서 처리된 값)
     | Str of string
+    /// () : unit 의 유일한 값
+    | Unit
+    /// e1; e2: e1 을 평가하고 버린 뒤 e2 (OCaml, F# 와 같음)
+    | Seq of Expr * Expr
     | Var of string
     | Let of string * Expr * Expr
     | LetRec of name: string * param: string * body: Expr * inExpr: Expr

@@ -27,17 +27,21 @@ Result: 10
 | 재귀 함수 | `let rec fact n = if n <= 1 then 1 else n * fact (n - 1) in fact 10` |
 | 문자열 (`+`로 연결, 비교) | `"Hello, " + name`, `"a" < "b"` |
 | 문자열 내장 함수 | `length`, `substr`, `upper`, `split`, `join`, `toInt`, `toString` 등 14개 |
-| 리스트·튜플·option 내장 함수 | `map`, `filter`, `fold`, `range`, `sum`, `sort`, `head`, `nth`, `fst`, `snd`, `tryHead`, `defaultValue` 등 19개 |
+| 리스트·튜플·option·출력 내장 함수 | `map`, `filter`, `fold`, `range`, `sum`, `sort`, `head`, `nth`, `fst`, `snd`, `tryHead`, `defaultValue`, `print`, `println`, `ignore` 등 22개 |
 | 리스트 | `[1; 2; 3]`, `0 :: xs` |
 | 튜플 | `(1, "a")`, `let (a, b) = p in a + b` |
 | algebraic data type, `option` | `type shape = Circle of int \| Rect of int * int in ...`, `Some 1`, `None` |
 | 패턴 매칭 (중첩 패턴, `when` 가드) | `match xs with [] -> 0 \| [x] -> x \| x :: _ when x > 0 -> x \| _ -> -1` |
+| 최상위 선언 (`in` 없이, 식은 `;;` 뒤에) | `let x = 1`, `let rec f n = ...`, `type t = ...`, `;; f x` |
+| `unit`, 순서 실행 `;`, 출력 | `()`, `let f () = ...`, `println "a"; print 1`, `ignore e` |
+| 주석 | `// 줄 끝까지`, `(* 블록, (* 중첩 *) 가능 *)` |
 
-- 우선순위 (낮은 것부터): `let`/`if`/`fun`/`match` < `||` < `&&` < 비교 < `::` < `+ -` < `* /` < 단항 `-`, `not` < 함수 호출
+- 우선순위 (낮은 것부터): `;` < `let`/`if`/`fun`/`match` < `||` < `&&` < 비교 < `::` < `+ -` < `* /` < 단항 `-`, `not` < 함수 호출
 - **타입 추론** (Hindley–Milner, let-polymorphism): 실행 전에 타입을 추론하고, 맞지 않으면 평가하지 않습니다. 타입 오류는 문제가 된 식의 위치(줄, 열, `^`)를 가리킵니다.
   - `fun f x -> f (f x)`는 `('a -> 'a) -> 'a -> 'a`, `[1; true]`는 `Type mismatch: expected int list but got bool list`
   - `--no-typecheck`를 주면 추론을 건너뛰고 평가 중에 동적으로 검사합니다.
 - **빠진 `match` 분기 경고**: 모든 값을 덮지 못하는 `match`와 `let` 패턴에 대해, 덮지 못하는 값의 예와 위치를 경고합니다(OCaml Warning 8, F# FS0025와 같음).
+- **버리는 값 경고**: `e1; e2`의 `e1`이 `unit`이 아니면 경고합니다(F# FS0020과 같음).
 
 자세한 문법과 의미는 [docs/grammar.md](docs/grammar.md)에 있습니다.
 
@@ -58,13 +62,27 @@ dotnet run --project src/Calc -- --expr "2 + 3 * (4 - 1)"
 
 # 표준 입력으로 전달
 echo "1 < 2" | dotnet run --project src/Calc
+
+# 프로그램 파일 실행: 프로그램이 출력한 것만 보여 줌
+dotnet run --project src/Calc -- examples/hello.calc
+```
+
+`examples/`에 예제 프로그램이 있습니다(`hello.calc`, `tree.calc`).
+
+```
+// examples/hello.calc 일부
+let greet name = "Hello, " + name + "!"
+let rec fact n = if n = 0 then 1 else n * fact (n - 1)
+let () = println (greet "Calc")
+let _ = println (fact 10)
 ```
 
 `--` 뒤의 인자는 `dotnet run`이 아니라 Calc 프로그램에 전달됩니다.
 
 | 옵션 | 설명 |
 |---|---|
-| `--expr <expr>`, `-e <expr>` | 식을 계산합니다. 생략하면 표준 입력에서 읽습니다. |
+| `<file>` | 프로그램 파일을 실행합니다. 프로그램이 출력한 것과, `()`가 아닌 마지막 값만 출력합니다. |
+| `--expr <expr>`, `-e <expr>` | 식을 계산하고 `AST:`, `Type:`, `Result:`를 출력합니다. 생략하면 표준 입력에서 읽습니다. |
 | `--version`, `-v` | 버전을 출력합니다. |
 | `--no-typecheck` | 타입 추론을 건너뛰고 평가합니다. |
 | `--compile <path>`, `--emit-mlir` | 네이티브 실행 파일을 만들거나 MLIR을 출력합니다. 실험 중이며 내장 함수를 포함한 모든 기능을 지원합니다. 결과와 오류 메시지는 인터프리터와 같습니다([설계](docs/compiler-design.md)). |
@@ -102,6 +120,7 @@ Error: parse error: unexpected '+' (line 1, column 5)
 │   └── Program.fs            # 명령줄 처리 (Argu)
 ├── tests/Calc.Tests/         # Expecto + FsCheck 테스트
 ├── docs/                     # 빌드, 테스트, 문법 문서
+├── examples/                 # 예제 프로그램 (calc examples/hello.calc)
 ├── howto/                    # 문제 해결 기록
 ├── CHANGELOG.md
 └── LICENSE                   # MIT

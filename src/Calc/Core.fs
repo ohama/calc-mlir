@@ -24,6 +24,8 @@ type Prim =
 type CExpr =
     | CInt of int
     | CBool of bool
+    /// () (즉시값 7)
+    | CUnit
     /// 문자열 상수 (전역 상수 블록이 됨)
     | CString of string
     /// 지역 변수, 함수 인자, 캡처한 변수, let rec 의 자기 자신. 어느 것인지는 함수 입구에서 정함
@@ -68,13 +70,14 @@ let rec patternVars (pattern: Pattern) : Set<string> =
     | PCons (h, t) -> Set.union (patternVars h) (patternVars t)
     | PTuple items -> items |> List.map patternVars |> Set.unionMany
     | PCtor (_, Some p) -> patternVars p
-    | PWildcard | PInt _ | PBool _ | PString _ | PNil | PCtor (_, None) -> Set.empty
+    | PWildcard | PInt _ | PBool _ | PString _ | PNil | PUnit | PCtor (_, None) -> Set.empty
 
 /// 식의 자유 변수 (CMakeClosure 는 캡처하는 변수가 곧 자유 변수)
 let rec freeVars (expr: CExpr) : Set<string> =
     match expr with
     | CInt _
     | CBool _
+    | CUnit
     | CString _ -> Set.empty
     | CVar name -> Set.singleton name
     | CLet (name, value, body) -> Set.union (freeVars value) (Set.remove name (freeVars body))

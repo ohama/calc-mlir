@@ -474,8 +474,8 @@ let tests =
         test "else 없는 if 는 parse error" {
             Expect.throws (fun () -> parse "if true then 1" |> ignore) ""
         }
-        test "in 없는 let 은 parse error" {
-            Expect.throws (fun () -> parse "let x = 1" |> ignore) ""
+        test "in 없는 let 은 최상위 선언 (뒤가 없으면 결과는 ())" {
+            Expect.equal (parse "let x = 1") (Let ("x", Number 1, Unit)) ""
         }
         test "키워드는 변수 이름이 될 수 없음" {
             Expect.throws (fun () -> parse "let in = 1 in 2" |> ignore) ""
@@ -501,14 +501,14 @@ let tests =
             test "입력 끝은 마지막 글자 바로 뒤" {
                 expectParseError "1 +" "parse error: unexpected end of input" 1 4
                 expectParseError "(1" "parse error: unexpected end of input" 1 3
-                expectParseError "let x = 1" "parse error: unexpected end of input" 1 10
+                expectParseError "let x = 1 in" "parse error: unexpected end of input" 1 13
             }
             test "입력 끝: 뒤의 공백과 줄바꿈은 건너뜀" {
                 expectParseError "1 +  \n\n" "parse error: unexpected end of input" 1 4
             }
-            test "빈 입력" {
-                expectParseError "" "parse error: unexpected end of input" 1 1
-                expectParseError "  \n " "parse error: unexpected end of input" 1 1
+            test "식이 와야 할 곳의 입력 끝" {
+                expectParseError "let x =" "parse error: unexpected end of input" 1 8
+                expectParseError "  \n (" "parse error: unexpected end of input" 2 3
             }
             test "여러 줄" {
                 expectParseError "let x = 1 in\n  let y = 2\n  x + y" "parse error: unexpected end of input" 3 8
@@ -537,7 +537,77 @@ let tests =
         test "닫히지 않은 괄호는 parse error" {
             Expect.throws (fun () -> parse "(1 + 2" |> ignore) ""
         }
-        test "빈 입력은 parse error" {
-            Expect.throws (fun () -> parse "" |> ignore) ""
+        testList "최상위 선언과 ;;" [
+            test "선언을 차례로 쓰고 ;; 뒤에 식: let ... in 사슬로" {
+                Expect.equal
+                    (parse "let x = 1\nlet y = 2\n;; x + y")
+                    (Let ("x", Number 1, Let ("y", Number 2, Add (Var "x", Var "y"))))
+                    ""
+            }
+            test "let rec, type, 패턴 선언" {
+                Expect.equal
+                    (parse "let rec f n = n\ntype t = A | B of int\nlet (a, b) = (1, 2)\nlet () = ()\nlet _ = 3")
+                    (LetRec ("f", "n", Var "n",
+                        TypeDecl ("t", [], [ "A", None; "B", Some (TName ("int", [])) ],
+                            LetPattern (PTuple [ PVar "a"; PVar "b" ], Tuple [ Number 1; Number 2 ],
+                                LetPattern (PUnit, Unit,
+                                    LetPattern (PWildcard, Number 3, Unit))))))
+                    "끝이 선언이면 결과는 ()"
+            }
+            test "식 사이의 ;; 는 순서 실행" {
+                Expect.equal (parse "1;; 2;;") (Seq (Number 1, Number 2)) "끝의 ;; 도 됨"
+            }
+            test "선언 바로 뒤의 식은 앞 선언에 이어짐 (OCaml 과 같음, ;; 가 필요)" {
+                Expect.equal (parse "let x = f\ng") (Let ("x", App (Var "f", Var "g"), Unit)) ""
+            }
+            test "식 하나만 있는 프로그램은 예전과 같음" {
+                Expect.equal (parse "let x = 1 in x") (Let ("x", Number 1, Var "x")) ""
+            }
+        ]
+
+        testList "unit 과 ;" [
+            test "() 는 Unit, 패턴 () 는 PUnit" {
+                Expect.equal (parse "()") Unit ""
+                Expect.equal (parse "match () with () -> 1") (Match (Unit, [ PUnit, None, Number 1 ])) ""
+            }
+            test "매개변수 () 는 unit 패턴으로 확인" {
+                Expect.equal
+                    (parse "fun () -> 1")
+                    (Lambda ("()", Match (Var "()", [ PUnit, None, Number 1 ])))
+                    ""
+            }
+            test "e1; e2; e3 는 오른쪽으로" {
+                Expect.equal (parse "a; b; c") (Seq (Var "a", Seq (Var "b", Var "c"))) ""
+            }
+            test "let 본문, fun 본문, match 분기는 ; 까지 포함" {
+                Expect.equal (parse "let x = 1 in a; b") (Let ("x", Number 1, Seq (Var "a", Var "b"))) "let"
+                Expect.equal (parse "fun x -> a; b") (Lambda ("x", Seq (Var "a", Var "b"))) "fun"
+                Expect.equal
+                    (parse "match x with A -> a; b | B -> c")
+                    (Match (Var "x", [ PCtor ("A", None), None, Seq (Var "a", Var "b"); PCtor ("B", None), None, Var "c" ]))
+                    "분기"
+            }
+            test "if 의 else 분기는 ; 앞에서 끝남 (OCaml 과 같음)" {
+                Expect.equal (parse "if c then a else b; d") (Seq (If (Var "c", Var "a", Var "b"), Var "d")) ""
+            }
+            test "리스트 안의 ; 는 구분자, 괄호 안은 순서 실행" {
+                Expect.equal (parse "[a; b]") (Cons (Var "a", Cons (Var "b", Nil))) ""
+                Expect.equal (parse "[(a; b)]") (Cons (Seq (Var "a", Var "b"), Nil)) ""
+                Expect.equal (parse "(a; b)") (Seq (Var "a", Var "b")) ""
+            }
+        ]
+
+        testList "주석" [
+            test "// 줄 주석과 (* *) 블록 주석 (중첩 가능)" {
+                Expect.equal (parse "1 // 끝까지\n+ (* 가운데 (* 중첩 *) *) 2") (Add (Number 1, Number 2)) ""
+            }
+            test "닫히지 않은 블록 주석은 여는 위치를 가리킴" {
+                expectParseError "1 +\n  (* 열림 (* *)" "Unterminated comment" 2 3
+            }
+        ]
+
+        test "빈 입력은 () (OCaml, F# 의 빈 파일처럼)" {
+            Expect.equal (parse "") Unit ""
+            Expect.equal (parse "  \n // 주석만\n (* 블록 *) ") Unit ""
         }
     ]

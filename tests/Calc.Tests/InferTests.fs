@@ -24,7 +24,8 @@ let rec valueMatches value t =
     | _, TyVar _ -> true
     | VInt _, TyCon ("int", [])
     | VBool _, TyCon ("bool", [])
-    | VString _, TyCon ("string", []) -> true
+    | VString _, TyCon ("string", [])
+    | VUnit, TyCon ("unit", []) -> true
     | VList items, TyCon ("list", [ e ]) -> items |> List.forall (fun v -> valueMatches v e)
     | VData ("option", _, payload), TyCon ("option", [ e ]) ->
         payload |> Option.forall (fun v -> valueMatches v e)
@@ -34,7 +35,14 @@ let rec valueMatches value t =
     | _ -> false
 
 let inferred =
-    [ // 기본
+    [ // unit, ;, 출력
+      "()", "unit"
+      "fun () -> 1", "unit -> int"
+      "println", "'a -> unit"
+      "ignore", "'a -> unit"
+      "println 1; \"a\"", "string"
+      "let x = 1", "unit"
+      // 기본
       "1 + 2", "int"
       "\"a\" + \"b\"", "string"
       "1 < 2", "bool"

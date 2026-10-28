@@ -30,6 +30,7 @@ Calc 언어의 어휘 구조, 구문, 의미를 정리한 문서입니다. 구�
 | `PLUS` `MINUS` `STAR` `SLASH` | `+` `-` `*` `/` | |
 | `LPAREN` `RPAREN` | `(` `)` | |
 | `LBRACKET` `RBRACKET` `SEMI` | `[` `]` `;` | |
+| `SEMISEMI` | `;;` (최상위 항목 구분) | |
 | `COMMA` | `,` | |
 | `CONS` | `::` | |
 | `BAR` | `\|` | |
@@ -48,7 +49,8 @@ Calc 언어의 어휘 구조, 구문, 의미를 정리한 문서입니다. 구�
 - **숫자 리터럴**: 음이 아닌 정수만 리터럴입니다. `-5`는 `MINUS`와 `NUMBER 5`로 나뉘고, 파서가 단항 마이너스로 처리합니다.
   - 32비트 `int` 범위를 넘는 리터럴(예: `2147483648`)은 렉서 단계에서 오류가 납니다.
 - **그 밖의 문자**: 위 패턴에 맞지 않는 문자는 `Unexpected character: <문자>` 오류를 냅니다. `&`나 `:` 하나만 쓴 경우도 여기에 해당합니다.
-- **주석**: 아직 지원하지 않습니다.
+- **주석**: `//`부터 줄 끝까지(F#), `(*`부터 짝이 맞는 `*)`까지(OCaml, F#)는 공백처럼 건너뜁니다. 블록 주석은 중첩할 수 있습니다(`(* a (* b *) c *)`). 닫히지 않은 블록 주석은 여는 위치에서 `Unterminated comment` 오류를 냅니다.
+- `()`는 토큰 하나가 아니라 `LPAREN`과 `RPAREN`입니다. `;;`는 `;` 두 개가 아니라 `SEMISEMI` 하나입니다(가장 긴 일치).
 
 ### 문자열 리터럴
 
@@ -71,17 +73,29 @@ Calc 언어의 어휘 구조, 구문, 의미를 정리한 문서입니다. 구�
 ### EBNF
 
 ```ebnf
-program = expr EOF ;
+(* 프로그램: 최상위 항목들. 선언 뒤의 식은 ";;" 다음에만 (아래 "최상위 선언") *)
+program = items EOF ;
+items   = ε
+        | ";;" items
+        | seq [ ";;" items ]
+        | decl afterDecl ;
+afterDecl = ε | ";;" items | decl afterDecl ;
+decl    = "let" IDENT [ params ] "=" seq
+        | "let" letPat "=" seq
+        | "let" "rec" IDENT params "=" seq
+        | "type" [ typeParams ] typeName "=" [ "|" ] ctorDecl { "|" ctorDecl } ;
+
+seq     = expr [ ";" seq ] ;                             (* e1; e2: 순서 실행 *)
 
 expr    = app
-        | "let" IDENT "=" expr "in" expr
-        | "let" tuplePat "=" expr "in" expr              (* 튜플 분해 *)
-        | "let" IDENT params "=" expr "in" expr          (* 함수 정의 *)
-        | "let" "rec" IDENT params "=" expr "in" expr    (* 재귀 함수 정의 *)
-        | "fun" params "->" expr                         (* 람다 *)
+        | "let" IDENT "=" seq "in" seq
+        | "let" letPat "=" seq "in" seq                  (* 튜플 분해, (), _ *)
+        | "let" IDENT params "=" seq "in" seq            (* 함수 정의 *)
+        | "let" "rec" IDENT params "=" seq "in" seq      (* 재귀 함수 정의 *)
+        | "fun" params "->" seq                          (* 람다 *)
         | "if" expr "then" expr "else" expr
         | "match" expr "with" [ "|" ] arm { "|" arm }    (* 패턴 매칭 *)
-        | "type" [ typeParams ] typeName "=" [ "|" ] ctorDecl { "|" ctorDecl } "in" expr
+        | "type" [ typeParams ] typeName "=" [ "|" ] ctorDecl { "|" ctorDecl } "in" seq
         | expr binop expr
         | "-" expr
         | "not" expr ;
@@ -94,25 +108,28 @@ atom    = NUMBER
         | "true" | "false"
         | IDENT
         | CTOR                                           (* 생성자 *)
+        | "(" ")"                                        (* unit *)
         | "(" expr ")"
+        | "(" expr ";" seq ")"                           (* 괄호 안의 순서 실행 *)
         | "(" expr "," expr { "," expr } ")"             (* 튜플 *)
         | "[" [ expr { ";" expr } ] "]" ;                (* 리스트 리터럴 *)
 
-arm     = pattern [ "when" expr ] "->" expr ;
+arm     = pattern [ "when" expr ] "->" seq ;
 
 pattern = ctorPat [ "::" pattern ] ;                     (* :: 는 오른쪽 결합 *)
 ctorPat = CTOR atomPat                                   (* Some x, Node (l, x, r) *)
         | atomPat ;
 atomPat = IDENT | "_" | CTOR
         | NUMBER | "-" NUMBER | STRING | "true" | "false"
-        | "[" "]"
+        | "[" "]" | "(" ")"
         | "[" pattern { ";" pattern } "]"                (* 리스트 패턴 *)
         | "(" pattern ")"
         | tuplePat ;
 tuplePat = "(" pattern "," pattern { "," pattern } ")" ;
+letPat  = tuplePat | "(" ")" | "_" ;
 
 params  = param { param } ;
-param   = IDENT | "_" ;
+param   = IDENT | "_" | "(" ")" ;                      (* () 는 unit 인자 *)
 
 typeParams = TYVAR | "(" TYVAR { "," TYVAR } ")" ;     (* 'a tree, ('k, 'v) map *)
 typeName   = IDENT | CTOR ;
@@ -136,7 +153,8 @@ binop   = "+" | "-" | "*" | "/"
 
 | 우선순위 | 연산자 | associativity | 선언 |
 |---|---|---|---|
-| 1 (가장 낮음) | `let ... in`, `if ... then ... else`, `fun ... ->`, `match` 분기 `->` | — | `%nonassoc IN ELSE ARROW` |
+| 0 (가장 낮음) | `;` (순서 실행) | 오른쪽 | `%nonassoc BELOWSEMI`, `%nonassoc SEMI` (`seq = expr [";" seq]` 규칙) |
+| 1 | `let ... in`, `if ... then ... else`, `fun ... ->`, `match` 분기 `->` | — | `%nonassoc IN ELSE ARROW` |
 | 2 | `\|\|` | 왼쪽 | `%left OR` |
 | 3 | `&&` | 왼쪽 | `%left AND` |
 | 4 | `=` `<>` `<` `>` `<=` `>=` | 왼쪽 | `%left EQUALS NOTEQUAL ...` |
@@ -172,6 +190,29 @@ F#과 같은 순서입니다. 함수 호출은 어떤 연산자보다 먼저 묶
 | `f -1` | `f - 1` (뺄셈). 음수를 넘기려면 `f (-1)` |
 
 > **F#과 다른 점:** F#은 `f -1`처럼 `-` 뒤에 공백이 없으면 함수 호출로 해석하는 특별 규칙이 있습니다. 이 언어는 공백을 구분하지 않으므로 `f -1`은 항상 뺄셈입니다.
+
+### 최상위 선언, `;;`, `;`
+
+프로그램은 최상위 항목을 차례로 씁니다(OCaml과 같은 방식).
+
+```
+type shape = Circle of int | Rect of int * int
+let area s = match s with Circle r -> 3 * r * r | Rect (w, h) -> w * h
+let rec fact n = if n = 0 then 1 else n * fact (n - 1)
+let () = println (fact 5)
+;;
+println (area (Rect (2, 3)));
+area (Circle 1)
+```
+
+- **선언:** `in` 없는 `let`, `let rec`, `let (a, b) =`, `let () =`, `let _ =`, `type`. 앞의 선언은 뒤의 모든 항목에서 보입니다. 파서가 `let … in (나머지 항목)` 사슬로 풀어 쓰므로, 의미는 `let … in`과 같습니다.
+- **선언 뒤의 식은 `;;` 다음에:** 선언의 오른쪽 식은 다음 선언이나 `;;`까지 이어집니다. 그래서 `let x = f` 다음 줄의 `g`는 `f g`(함수 호출)가 됩니다(OCaml과 같음). 프로그램의 처음에는 `;;` 없이 식을 쓸 수 있습니다.
+- **결과:** 마지막 항목이 식이면 그 값, 선언이면 `()`입니다. 식 항목이 여럿이면 앞의 것은 순서대로 실행하고 버립니다(`e1;; e2`는 `e1; e2`와 같음). 빈 프로그램(주석만 있는 파일 포함)은 `()`입니다.
+- **`;` (순서 실행):** `e1; e2`는 `e1`을 평가하고 버린 뒤 `e2`의 값이 됩니다.
+  - **어디까지 이어지는지:** `let`의 본문과 오른쪽, `fun`의 본문, `match` 분기, 괄호 안, 최상위에서 오른쪽 끝까지 이어집니다. `let x = 1 in a; b`는 `let x = 1 in (a; b)`입니다.
+  - **`if`:** `if`의 `else` 분기는 `;` 앞에서 끝납니다. `if c then a else b; d`는 `(if c then a else b); d`입니다(OCaml과 같음).
+  - **리스트 안:** 리스트 리터럴 안의 `;`는 원소 구분자입니다. 순서 실행을 넣으려면 괄호로 감쌉니다(`[(a; b)]`).
+  - **우선순위:** `;`는 모든 연산자보다 약합니다.
 
 ### 함수 인자
 
@@ -324,6 +365,10 @@ defaultValue 0 (tryFind (fun x -> x > 10) xs)
 | `"s"` | `Str "s"` (이스케이프는 렉서에서 처리된 값) |
 | `true` / `false` | `Bool true` / `Bool false` |
 | `x` | `Var "x"` |
+| `()` | `Unit` |
+| `e1; e2` | `Seq (e1, e2)` |
+| 최상위 `let x = e` (뒤 항목들 `rest`) | `Let ("x", e, rest)`. 끝이 선언이면 `rest`는 `Unit` |
+| `fun () -> e` | `Lambda ("()", Match (Var "()", [ (PUnit, None, e) ]))` (인자가 `()`인지 확인) |
 | `let x = e1 in e2` | `Let ("x", e1, e2)` |
 | `let f x = e1 in e2` | `Let ("f", Lambda ("x", e1), e2)` |
 | `let rec f x = e1 in e2` | `LetRec ("f", "x", e1, e2)` |
@@ -367,6 +412,7 @@ type Value =
     | VBuiltin of name * args                             // 내장 함수 (args: 지금까지 받은 인자)
     | VData of typeName * ctor * payload option           // None, Some 1, Rect (2, 3)
     | VConstructor of typeName * ctor * fields            // 인자 있는 생성자 자체 (Some, Rect)
+    | VUnit                                               // ()
 ```
 
 평가는 환경 `env : Map<string, Value>`에서 이루어집니다. 처음 환경에는 내장 함수만 들어 있습니다(아래 "내장 함수" 참고). 결과는 `formatValue`로 출력합니다.
@@ -374,6 +420,7 @@ type Value =
 - 불리언은 `true`, `false`로 출력됩니다.
 - 문자열은 따옴표와 이스케이프를 붙인 리터럴 형태로 출력됩니다. 예: `"say \"hi\"\n"`. 출력을 그대로 다시 입력하면 같은 값이 됩니다.
 - 함수는 `<fun>`으로 출력됩니다. 내장 함수도 같습니다.
+- `()`는 `()`로 출력됩니다. `calc prog.calc`와 컴파일한 실행 파일은 결과가 `()`면 아무것도 출력하지 않습니다.
 - 리스트는 `[1; 2; 3]`, `[]`, `[[true]; []]`처럼 출력됩니다.
 - 튜플은 `(1, "a", [true])`처럼 출력됩니다.
 - 생성자 값은 `None`, `Some 1`, `Node (Leaf, 1, Leaf)`처럼 출력됩니다. 다시 입력해도 같은 값이 되도록 인자가 있는 생성자 값과 음수는 괄호로 감쌉니다(`Some (Some 1)`, `Some (-1)`).
@@ -542,6 +589,17 @@ type Value =
 | `tryFind f xs` | 함수 → list → option | `tryFind (fun x -> x > 1) [1; 2; 3]` | `Some 2` |
 | `defaultValue d opt` | 기본값 → option → 값 | `defaultValue 0 None` | `0` |
 
+#### 출력
+
+| 함수 | 타입 | 예 | 출력 / 결과 |
+|---|---|---|---|
+| `print v` | 값 → unit | `print "a"; print 1` | `a1` (줄바꿈 없음) |
+| `println v` | 값 → unit | `println [Some "b"]` | `[Some "b"]` 다음 줄바꿈 |
+| `ignore v` | 값 → unit | `ignore (f x)` | `()` (값을 버림) |
+
+- 문자열은 따옴표 없이 그대로, 나머지 값은 결과와 같은 모양(`formatValue`)으로 출력합니다. `toString`과 같은 규칙입니다.
+- 출력은 표준 출력으로, 호출한 순서대로 나갑니다. 실행 중 오류가 나면 그때까지의 출력은 남습니다.
+
 ## 5. 오류
 
 | 단계 | 원인 | 메시지 |
@@ -601,7 +659,7 @@ Error: parse error: unexpected '+' (line 1, column 5)
 
 | 타입 | 예 |
 |---|---|
-| `int`, `bool`, `string` | `1`, `true`, `"a"` |
+| `int`, `bool`, `string`, `unit` | `1`, `true`, `"a"`, `()` |
 | `t list` | `[1; 2]`: `int list` |
 | `t1 * t2 * ...` | `(1, "a")`: `int * string` |
 | `t1 -> t2` | `fun x -> x + 1`: `int -> int` |
@@ -634,6 +692,7 @@ Error: parse error: unexpected '+' (line 1, column 5)
 
 | 함수 | 타입 |
 |---|---|
+| `print`, `println`, `ignore` | `'a -> unit` |
 | `length` | `'a -> int` (`'a`는 `string` 또는 리스트) |
 | `substr` | `string -> int -> int -> string` |
 | `upper`, `lower`, `trim` | `string -> string` |
@@ -707,6 +766,15 @@ Warning: this match is not exhaustive. Example of a value not matched: None (lin
 - **알고리즘:** Maranget, "Warnings for pattern matching"(2007)의 usefulness 검사입니다. 값의 예도 같은 계산에서 나옵니다(`Infer.typecheckWithWarnings`).
 - **같은 결과:** 경고가 없는 프로그램은 실행 중에 `Match failure`가 나지 않습니다. 평가 예제로 이것을 테스트합니다(`DiagnosticTests`).
 - **아직 하지 않는 것:** 쓰이지 않는 분기 경고(OCaml Warning 11)는 아직 없습니다.
+
+### 버리는 값 경고
+
+`e1; e2`에서 버리는 `e1`의 타입이 `unit`이 아니면 경고합니다(F# FS0020, OCaml Warning 10과 같음). 값을 일부러 버리려면 `ignore e1`이나 `let _ = e1`을 씁니다.
+
+```
+$ calc -e "1; 2"
+Warning: this expression has type int and its value is ignored (use ignore or let _ = ...) (line 1, column 1)
+```
 
 ### soundness와 남은 실행 중 오류
 

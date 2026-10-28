@@ -11,6 +11,7 @@ typedef int64_t value;
 #define CALC_TAG_INT 1  /* (n << 3) | 1, n 은 32비트 */
 #define CALC_TAG_BOOL 3 /* (b << 3) | 3 */
 #define CALC_NIL 5      /* [] */
+#define CALC_UNIT 7     /* () */
 
 #define CALC_IS_INT(v) (((v) & CALC_TAG_MASK) == CALC_TAG_INT)
 #define CALC_IS_BOOL(v) (((v) & CALC_TAG_MASK) == CALC_TAG_BOOL)
@@ -47,7 +48,7 @@ void *calc_alloc(int64_t bytes);
 void calc_error(const char *message);
 /* printf 형식의 calc_error */
 void calc_errorf(const char *format, ...);
-/* Eval.formatValue 와 같은 형식으로 결과를 출력 */
+/* Eval.formatValue 와 같은 형식으로 결과를 출력. () 면 아무것도 출력하지 않음 (calc 파일 실행과 같음) */
 void calc_print_result(value v);
 
 /* 인터프리터(.NET 예외 메시지)와 같은 문장으로 끝냄 */
@@ -131,5 +132,8 @@ value calc_builtin_snd(value pair);
 value calc_builtin_tryHead(value xs);
 value calc_builtin_tryFind(value f, value xs);
 value calc_builtin_defaultValue(value d, value opt);
+value calc_builtin_print(value v);
+value calc_builtin_println(value v);
+value calc_builtin_ignore(value v);
 
 #endif
