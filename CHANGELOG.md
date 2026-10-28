@@ -4,6 +4,12 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [Unreleased]
+
+### 변경
+- `howto/` 문서 44개의 파일 이름 앞에 쓴 순서대로 번호를 붙였습니다(`01-handle-fsyacc-nonassoc-conflict.md` … `44-redirect-interpreter-output-per-test-with-asynclocal.md`). 문서 사이의 참조도 새 이름으로 고쳤습니다. 옛 이름의 링크는 더 이상 열리지 않습니다.
+- 각 howto 문서에 관련 커밋을 연결했습니다. 문서가 설명하는 코드 변경(문서를 쓰기 직전의 릴리스 커밋)을 머리말의 `order`, `commit`, `version`과 제목 아래 링크로 적었습니다. `howto/README.md` 표에 "관련 커밋" 열을 더했습니다.
+
 ## [0.25.0] - 2026-10-28
 
 ### 추가
