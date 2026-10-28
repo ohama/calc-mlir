@@ -144,6 +144,6 @@ test "대문자 이름은 변수로 묶을 수 없음" {
 
 ## 관련 문서
 
-- `represent-adt-values-in-dynamic-interpreter.md` - `VData`, `VConstructor` 값 표현
+- `represent-adt-values-in-dynamic-interpreter.md` - `VData`, `VConstructor` value representation
 - `implement-pattern-matching-evaluator.md` - `matchPattern`의 전체 구조
 - `order-fslex-keywords-before-identifiers.md` - 렉서 규칙 순서와 가장 긴 일치

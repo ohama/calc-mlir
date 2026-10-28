@@ -1,6 +1,6 @@
 ---
 created: 2026-10-27
-description: fsyacc의 %nonassoc는 연쇄 비교를 막지 못한다. 충돌을 보고하고 조용히 오른쪽 결합으로 파싱한다
+description: fsyacc의 %nonassoc는 연쇄 비교를 막지 못한다. 충돌을 보고하고 조용히 right-associative로 파싱한다
 ---
 
 # fsyacc에서 `%nonassoc`로 연쇄 비교 막기가 안 될 때
@@ -13,7 +13,7 @@ ocamlyacc나 bison과 달리 fsyacc의 `%nonassoc`는 "같은 우선순위끼리
 
 > 같은 우선순위의 연산자가 연달아 나오면 그 자리에서 **parse error**로 만든다.
 
-이 동작은 파싱 테이블에 **error 액션**을 넣어서 구현한다. fsyacc(FsLexYacc 11.3.0)는 이 error 액션을 만들지 않는다. 같은 우선순위에서 결합 방향이 정해지지 않은 경우를 **shift/reduce 충돌로 보고하고, 기본 규칙대로 shift를 고른다**. shift를 고르면 결과적으로 **오른쪽 결합**이 된다.
+이 동작은 파싱 테이블에 **error 액션**을 넣어서 구현한다. fsyacc(FsLexYacc 11.3.0)는 이 error 액션을 만들지 않는다. 같은 우선순위에서 associativity가 정해지지 않은 경우를 **shift/reduce 충돌로 보고하고, 기본 규칙대로 shift를 고른다**. shift를 고르면 결과적으로 **right-associative**가 된다.
 
 ```
 1 < 2 < 3
@@ -41,7 +41,7 @@ Build succeeded.
 
 - 충돌이 36개 있는데도 MSBuild 기준으로는 **경고 0개, 오류 0개**다. 출력을 직접 읽지 않으면 아무도 모른다.
 - 36개가 나온 이유: 같은 우선순위에 연산자가 6개(`= <> < > <= >=`)이므로, "왼쪽 연산자 × 오른쪽 연산자" 조합 6 × 6 = 36가지가 모두 충돌한다.
-- 그대로 두면 `1 < 2 < 3`이 오류 없이 `1 < (2 < 3)`으로 파싱된다. 설계 의도(parse error)와도, 사람들이 기대하는 왼쪽 결합과도 다르다.
+- 그대로 두면 `1 < 2 < 3`이 오류 없이 `1 < (2 < 3)`으로 파싱된다. 설계 의도(parse error)와도, 사람들이 기대하는 left-associative과도 다르다.
 
 ## Recognition Pattern
 
@@ -149,7 +149,7 @@ test "비교는 왼쪽 결합" {
 
 | 문법 | fsyacc 충돌 | `1 < 2 < 3` 파싱 결과 |
 |---|---|---|
-| `%nonassoc LT` + `E: E LT E` | **1개** (`explicit nonassoc ... prefer shift`) | `(1<(2<3))` ← 오른쪽 결합 |
+| `%nonassoc LT` + `E: E LT E` | **1개** (`explicit nonassoc ... prefer shift`) | `(1<(2<3))` ← right-associative |
 | `%left LT` + `E: E LT E` | 0개 | `((1<2)<3)` |
 | 계층 분리 `E: A LT A \| A` | 0개 | `parse error` |
 
@@ -165,4 +165,4 @@ test "비교는 왼쪽 결합" {
 
 ## 관련 문서
 
-- 이 프로젝트의 문법 전체: `docs/grammar.md`의 "우선순위와 결합 방향" 절
+- 이 프로젝트의 문법 전체: `docs/grammar.md`의 "우선순위와 associativity" 절

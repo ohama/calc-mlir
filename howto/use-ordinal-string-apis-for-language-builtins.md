@@ -5,7 +5,7 @@ description: .NET 문자열 API 중 일부는 기본이 현재 문화권 비교�
 
 # 언어 내장 함수에는 Ordinal 문자열 API를 쓰기
 
-`s.IndexOf(sub)`, `s.StartsWith(prefix)`, `s.ToUpper()`, `String.Compare(a, b)`는 **현재 문화권(CurrentCulture)** 규칙을 쓴다. 이것으로 언어의 내장 함수를 만들면 같은 프로그램이 컴퓨터의 언어 설정에 따라 다른 결과를 낸다. 언어 의미론은 실행 환경과 무관해야 하므로 `StringComparison.Ordinal`과 `ToUpperInvariant`를 명시한다.
+`s.IndexOf(sub)`, `s.StartsWith(prefix)`, `s.ToUpper()`, `String.Compare(a, b)`는 **현재 문화권(CurrentCulture)** 규칙을 쓴다. 이것으로 언어의 내장 함수를 만들면 같은 프로그램이 컴퓨터의 언어 설정에 따라 다른 결과를 낸다. 언어 semantics는 실행 환경과 무관해야 하므로 `StringComparison.Ordinal`과 `ToUpperInvariant`를 명시한다.
 
 ## The Insight
 
@@ -47,7 +47,7 @@ description: .NET 문자열 API 중 일부는 기본이 현재 문화권 비교�
 
 ## The Approach
 
-**언어 의미론 = 문자 코드.** 사람용 정렬이나 대소문자 무시가 필요하면 그건 별도 함수로, 이름에 드러나게 추가한다.
+**언어 semantics = 문자 코드.** 사람용 정렬이나 대소문자 무시가 필요하면 그건 별도 함수로, 이름에 드러나게 추가한다.
 
 ### Step 1: 비교 방식을 받는 오버로드를 항상 쓴다
 
@@ -89,7 +89,7 @@ System.Int32.TryParse(s, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCul
 
 ### Step 5: 문서에 의미를 적는다
 
-- 문자열 위치와 길이는 UTF-16 코드 단위다 (`length "😀"`는 2)
+- 문자열 위치와 길이는 UTF-16 code unit이다 (`length "😀"`는 2)
 - 비교는 문자 코드 순서다 (`"B" < "a"`)
 - 합성/분해 문자는 다른 문자열이다
 

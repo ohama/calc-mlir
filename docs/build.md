@@ -89,7 +89,7 @@ F#은 앞에 나온 파일만 참조할 수 있습니다. 그래서 순서가 �
 - `Eval`은 `Ast`의 `Expr`를 평가합니다.
 - `Infer`는 `Ast`의 `Expr` 타입을 추론합니다. `Eval`과는 서로 참조하지 않습니다.
 - `Program`은 파싱한 다음 `Infer.typecheck`로 타입을 확인하고 `Eval.eval`로 평가합니다.
-- `Lower`는 `Ast.Expr`를 Core IR로 바꾸고(클로저 변환), `Codegen`은 Core IR을 MLIR 텍스트로 만들고, `Toolchain`은 외부 도구로 실행 파일을 만듭니다.
+- `Lower`는 `Ast.Expr`를 Core IR로 바꾸고(closure conversion), `Codegen`은 Core IR을 MLIR 텍스트로 만들고, `Toolchain`은 외부 도구로 실행 파일을 만듭니다.
 - `Parser`는 `Ast`의 `Expr` 타입을 사용합니다.
 - `Lexer`는 `Parser`가 정의한 토큰(`NUMBER`, `PLUS` 등)을 사용합니다.
 - `Program`은 `Lexer`와 `Parser`를 모두 사용합니다.
@@ -147,7 +147,7 @@ dotnet run --project src/Calc -- --emit-mlir -e "42"     # 생성한 MLIR 보기
 
 컴파일 과정은 다음과 같습니다. `--keep-temps`를 주면 중간 파일을 볼 수 있습니다.
 
-1. `mlir-opt`: scf/cf/arith → llvm 방언
+1. `mlir-opt`: scf/cf/arith → llvm dialect
 2. `mlir-translate`: LLVM IR
 3. `clang -c`: 오브젝트 파일
 4. `clang`: 링크. C 런타임 오브젝트와 `-lgc`를 함께 링크합니다.

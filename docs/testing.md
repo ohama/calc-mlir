@@ -30,14 +30,14 @@ dotnet run --project tests/Calc.Tests -- --debug            # 각 테스트 시�
 | 파일 | 테스트 목록 | 내용 |
 |---|---|---|
 | `LexerTests.fs` | `Lexer` | 토큰 순서, 공백과 줄바꿈 무시, 키워드와 식별자, 비교·논리 연산자, `->`, 리스트 토큰(`[` `]` `;` `::` `|`), 문자열과 이스케이프, 닫히지 않은 문자열, 빈 입력, 알 수 없는 문자 오류 |
-| `ParserTests.fs` | `Parser` | 우선순위, 결합 방향, 괄호, 단항 마이너스, `let`/`if`/`fun`의 범위와 중첩, 함수 호출, 함수 정의 문법 설탕, 리스트와 `::`, 튜플, 패턴과 `match`(가드, 중첩), 튜플 분해 `let`, 생성자와 `type` 선언, 타입 식, 문자열 리터럴, 파서 오류 |
-| `InferTests.fs` | `Infer` | 추론한 타입 표(다형성, 재귀, 패턴, 내장 함수, ADT), 타입 오류 메시지, 건전성(타입 검사를 통과한 `EvalTests` 예제는 실행 중 오류 없이 그 타입의 값이 됨), 타입 검사가 거부하는 동적 예제 목록, FsCheck 속성 |
-| `DiagnosticTests.fs` | `Diagnostics` | 타입 오류의 위치(문제가 된 식을 가리킴), 빠진 `match` 분기 경고와 값의 예, 가드, 경고가 없는 경우, 건전성(실행 중 `Match failure`가 나는 평가 예제는 모두 경고를 받음) |
-| `CompileTests.fs` | `Compile` | 생성한 MLIR, 값 표현(태그, 클로저 헤더), 클로저 변환(`Lower`), 컴파일한 실행 파일의 출력, **차등 테스트**(컴파일할 수 있는 `EvalTests` 예제를 인터프리터와 비교). LLVM/GC가 없으면 건너뜀(Skipped) |
-| `EvalTests.fs` | `Eval` | 식 계산 표(정수, 불리언, 함수, 재귀, 리스트, 문자열, 내장 함수, 튜플, 패턴 매칭, option, 사용자 정의 타입), `let`과 섀도잉, 클로저, 단락 평가, 타입 오류, 리스트·문자열·내장 함수·패턴 매칭·ADT 오류와 출력, 정의되지 않은 변수, 0으로 나누기, FsCheck 속성 테스트 |
-| `Main.fs` | — | 진입점 (`runTestsInAssemblyWithCLIArgs`) |
+| `ParserTests.fs` | `Parser` | 우선순위, associativity, 괄호, 단항 마이너스, `let`/`if`/`fun`의 범위와 중첩, 함수 호출, 함수 정의 syntactic sugar, 리스트와 `::`, 튜플, 패턴과 `match`(가드, 중첩), 튜플 분해 `let`, 생성자와 `type` 선언, 타입 식, 문자열 리터럴, 파서 오류 |
+| `InferTests.fs` | `Infer` | 추론한 타입 표(polymorphism, 재귀, 패턴, 내장 함수, ADT), 타입 오류 메시지, soundness(타입 검사를 통과한 `EvalTests` 예제는 실행 중 오류 없이 그 타입의 값이 됨), 타입 검사가 거부하는 동적 예제 목록, FsCheck property |
+| `DiagnosticTests.fs` | `Diagnostics` | 타입 오류의 위치(문제가 된 식을 가리킴), 빠진 `match` 분기 경고와 값의 예, 가드, 경고가 없는 경우, soundness(실행 중 `Match failure`가 나는 평가 예제는 모두 경고를 받음) |
+| `CompileTests.fs` | `Compile` | 생성한 MLIR, value representation(태그, 클로저 헤더), closure conversion(`Lower`), 컴파일한 실행 파일의 출력, **differential testing**(컴파일할 수 있는 `EvalTests` 예제를 인터프리터와 비교). LLVM/GC가 없으면 건너뜀(Skipped) |
+| `EvalTests.fs` | `Eval` | 식 계산 표(정수, 불리언, 함수, 재귀, 리스트, 문자열, 내장 함수, 튜플, 패턴 매칭, option, 사용자 정의 타입), `let`과 섀도잉, 클로저, short-circuit evaluation, 타입 오류, 리스트·문자열·내장 함수·패턴 매칭·ADT 오류와 출력, 정의되지 않은 변수, 0으로 나누기, FsCheck property-based testing |
+| `Main.fs` | — | entry point (`runTestsInAssemblyWithCLIArgs`) |
 
-`[<Tests>]` 속성이 붙은 값은 Expecto가 자동으로 찾아서 실행합니다.
+`[<Tests>]` attribute가 붙은 값은 Expecto가 자동으로 찾아서 실행합니다.
 
 ### 테스트 추가하기
 
@@ -51,7 +51,7 @@ let cases =
       "새 식", 기대값 ]
 ```
 
-**속성 기반 테스트**: FsCheck가 무작위 입력을 만들어서 기본 100번 확인합니다.
+**property-based testing**: FsCheck가 무작위 입력을 만들어서 기본 100번 확인합니다.
 
 ```fsharp
 testProperty "a - b" <| fun (NonNegativeInt a) (NonNegativeInt b) ->
@@ -70,7 +70,7 @@ expectError "1 + true" "Type error: expected int but got bool"
 
 ### 테스트가 Calc 코드를 사용하는 방식
 
-테스트 프로젝트는 `ProjectReference`로 `src/Calc`를 참조합니다. 그래서 다음을 직접 호출할 수 있습니다.
+테스트 프로젝트는 `ProjectReference`로 `src/Calc`를 참조합니다. 그래서 다음을 direct call할 수 있습니다.
 - `Program.parse`
 - `Eval.eval`, `Eval.evalIn`, `Eval.formatValue`, `Eval.Value`(`VInt`, `VBool`)
 - 생성된 `Lexer.tokenize`, `Parser.token`
@@ -90,7 +90,7 @@ Type:   int
 Result: 11
 ```
 
-- `AST:` 줄은 파서가 만든 트리입니다. 우선순위와 결합 방향이 올바른지 여기서 확인합니다.
+- `AST:` 줄은 파서가 만든 트리입니다. 우선순위와 associativity가 올바른지 여기서 확인합니다.
 - `Type:` 줄은 타입 추론 결과입니다. 타입이 맞지 않으면 이 줄 대신 `Error: Type mismatch: ...`가 나오고 평가하지 않습니다. `--no-typecheck`를 주면 이 줄이 없습니다.
 - `Result:` 줄은 평가 결과입니다.
 - 오류가 나면 표준 에러로 `Error: ...`를 출력하고 종료 코드 `1`을 반환합니다. 성공하면 `0`입니다.
@@ -102,7 +102,7 @@ Result: 11
 | `1 + 2` | 기본 동작 | `Add (Number 1, Number 2)` | `3` |
 | `2 + 3 * 4` | `*`가 `+`보다 먼저 계산됨 | `Add (Number 2, Multiply (Number 3, Number 4))` | `14` |
 | `(2 + 3) * 4` | 괄호 | `Multiply (Add (Number 2, Number 3), Number 4)` | `20` |
-| `10 - 3 - 2` | 왼쪽 결합 | `Subtract (Subtract (Number 10, Number 3), Number 2)` | `5` |
+| `10 - 3 - 2` | left-associative | `Subtract (Subtract (Number 10, Number 3), Number 2)` | `5` |
 | `-5 + 2` | 단항 마이너스 | `Add (Negate (Number 5), Number 2)` | `-3` |
 | `7 / 2` | 정수 나눗셈 | `Divide (Number 7, Number 2)` | `3` |
 | `let x = 5 in x * 2` | `let` 바인딩 | `Let ("x", Number 5, Multiply (Var "x", Number 2))` | `10` |
@@ -114,12 +114,12 @@ Result: 11
 | `not true = false` | `not`이 비교보다 먼저 계산됨 | `Equal (Not (Bool true), Bool false)` | `true` |
 | `if 1 < 2 then 10 else 20` | `if-then-else` | `If (Less (Number 1, Number 2), Number 10, Number 20)` | `10` |
 | `if false then 1 else 2 + 3` | `else` 분기는 오른쪽 끝까지 이어짐 | `If (Bool false, Number 1, Add (Number 2, Number 3))` | `5` |
-| `false && 1 / 0 = 0` | 단락 평가 (오른쪽은 평가하지 않음) | `And (Bool false, Equal (Divide (Number 1, Number 0), Number 0))` | `false` |
+| `false && 1 / 0 = 0` | short-circuit evaluation (오른쪽은 평가하지 않음) | `And (Bool false, Equal (Divide (Number 1, Number 0), Number 0))` | `false` |
 | `let f x = x + 1 in f 41` | 함수 정의와 호출 | `Let ("f", Lambda ("x", Add (Var "x", Number 1)), App (Var "f", Number 41))` | `42` |
 | `(fun x -> x * 2) 21` | 람다 즉시 호출 | `App (Lambda ("x", Multiply (Var "x", Number 2)), Number 21)` | `42` |
-| `let add x y = x + y in let inc = add 1 in inc 41` | 커링과 부분 적용 | | `42` |
+| `let add x y = x + y in let inc = add 1 in inc 41` | 커링과 partial application | | `42` |
 | `let rec fact n = if n <= 1 then 1 else n * fact (n - 1) in fact 10` | 재귀 | | `3628800` |
-| `let x = 1 in let f y = x + y in let x = 100 in f 1` | 클로저 (정적 범위) | | `2` |
+| `let x = 1 in let f y = x + y in let x = 100 in f 1` | 클로저 (lexical scope) | | `2` |
 | `fun x -> x` | 함수 값 출력 | `Lambda ("x", Var "x")` | `<fun>` |
 | `[1; 2; 3]` | 리스트 리터럴 | `Cons (Number 1, Cons (Number 2, Cons (Number 3, Nil)))` | `[1; 2; 3]` |
 | `1 + 2 :: [3]` | `::`는 `+`보다 약함 | `Cons (Add (Number 1, Number 2), Cons (Number 3, Nil))` | `[3; 3]` |
@@ -127,7 +127,7 @@ Result: 11
 | `"a" + "b"` | 문자열 연결 | `Add (Str "a", Str "b")` | `"ab"` |
 | `"B" < "a"` | 문자열 비교 (문자 코드 순서) | `Less (Str "B", Str "a")` | `true` |
 | `join "-" (split "2026-10-28" "-")` | 내장 함수 | | `"2026-10-28"` |
-| `let first = substr "hello" 0 in first 2` | 내장 함수 부분 적용 | | `"he"` |
+| `let first = substr "hello" 0 in first 2` | 내장 함수 partial application | | `"he"` |
 | `sum (map (fun x -> x * x) (range 1 10))` | 리스트 내장 함수 | | `385` |
 | `fold (fun acc x -> x :: acc) [] [1; 2; 3]` | `fold` (왼쪽부터) | | `[3; 2; 1]` |
 | `let (a, b) = (1, 2) in (b, a)` | 튜플과 튜플 분해 | | `(2, 1)` |
@@ -145,11 +145,11 @@ dotnet run --project tests/Calc.Tests -- --filter "Compile"
 ```
 
 - `brew install llvm bdw-gc`가 되어 있지 않으면 이 테스트들은 실패가 아니라 **Skipped**로 표시됩니다.
-- 차등 테스트는 기대값을 따로 적지 않습니다. 같은 식을 `Eval.eval`로 실행한 결과(`Eval.formatValue`)와 실행 파일의 출력을 비교합니다. 컴파일러가 지원하는 기능이 늘어나면 비교하는 예제도 자동으로 늘어납니다.
+- differential testing은 기대값을 따로 적지 않습니다. 같은 식을 `Eval.eval`로 실행한 결과(`Eval.formatValue`)와 실행 파일의 출력을 비교합니다. 컴파일러가 지원하는 기능이 늘어나면 비교하는 예제도 자동으로 늘어납니다.
 - 실행 중 오류가 나는 예제(`1 / 0` 등)는 표준 에러(`Error: <인터프리터와 같은 메시지>`)와 종료 코드 1까지 비교합니다.
-- 단계 7에서 차등 테스트는 286개를 비교합니다. 타입 검사를 통과하는 평가 예제 263개 전부와 실행 중 오류 예제입니다.
-- `Unicode 표` 테스트는 `runtime/unicode.h`의 대소문자 변환이 모든 코드 포인트에서, 공백 목록이 `Char.IsWhiteSpace`와 같은지 확인합니다. 다르면 `dotnet fsi src/Calc/runtime/gen-unicode.fsx`로 다시 만듭니다.
-- **묶음 빌드:** 실행 테스트와 차등 테스트의 입력 약 220개를 실행 파일 하나로 빌드합니다(`Codegen.emitEntries`, `Toolchain.buildMany`).
+- 단계 7에서 differential testing은 286개를 비교합니다. 타입 검사를 통과하는 평가 예제 263개 전부와 실행 중 오류 예제입니다.
+- `Unicode 표` 테스트는 `runtime/unicode.h`의 대소문자 변환이 모든 code point에서, 공백 목록이 `Char.IsWhiteSpace`와 같은지 확인합니다. 다르면 `dotnet fsi src/Calc/runtime/gen-unicode.fsx`로 다시 만듭니다.
+- **묶음 빌드:** 실행 테스트와 differential testing의 입력 약 220개를 실행 파일 하나로 빌드합니다(`Codegen.emitEntries`, `Toolchain.buildMany`).
   - 입력을 코어 수만큼의 MLIR 모듈로 나눠 병렬로 컴파일합니다.
   - 실행 파일 안의 드라이버가 입력마다 `fork`한 자식 프로세스에서 실행하고, 표준 출력·표준 에러·종료 코드를 파일로 남깁니다.
   - 그래서 입력마다 따로 실행한 것과 같은 결과를 비교합니다.

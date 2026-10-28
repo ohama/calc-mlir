@@ -1,11 +1,11 @@
 ---
 created: 2026-10-28
-description: 함수 포인터가 필요한 언어는 MLIR 함수를 처음부터 llvm.func로 만든다. llvm.mlir.addressof는 func.func를 가리킬 수 없고, 본문의 scf/cf/arith는 정해진 순서의 패스로 내려야 mlir-translate가 받아 준다
+description: 함수 포인터가 필요한 언어는 MLIR 함수를 처음부터 llvm.func로 만든다. llvm.mlir.addressof는 func.func를 가리킬 수 없고, 본문의 scf/cf/arith는 정해진 순서의 패스로 lowering해야 mlir-translate가 받아 준다
 ---
 
 # MLIR을 llvm.func로 생성하고 LLVM IR까지 내리기
 
-언어 구현을 MLIR 텍스트로 컴파일할 때 함수는 **처음부터 `llvm.func`로** 만든다. 본문에는 `arith`과 `scf` 같은 고수준 방언을 섞어 쓰고, `mlir-opt` 패스 네 개로 모두 `llvm` 방언까지 내린다. 그다음 `mlir-translate`로 LLVM IR(`.ll`)을 만들고 `clang`으로 링크한다.
+언어 구현을 MLIR 텍스트로 컴파일할 때 함수는 **처음부터 `llvm.func`로** 만든다. 본문에는 `arith`과 `scf` 같은 고수준 dialect를 섞어 쓰고, `mlir-opt` 패스 네 개로 모두 `llvm` dialect까지 내린다. 그다음 `mlir-translate`로 LLVM IR(`.ll`)을 만들고 `clang`으로 링크한다.
 
 ```
 prog.mlir ─mlir-opt─▶ prog.llvm.mlir ─mlir-translate─▶ prog.ll ─clang─▶ 실행 파일
@@ -15,7 +15,7 @@ prog.mlir ─mlir-opt─▶ prog.llvm.mlir ─mlir-translate─▶ prog.ll ─cl
 
 ## The Insight
 
-MLIR 튜토리얼은 대부분 `func.func`로 시작해서 `--convert-func-to-llvm`으로 내린다. 하지만 **함수를 값으로 다루는 순간**(클로저, 콜백) 함수의 주소가 필요하다. 주소를 얻는 연산 `llvm.mlir.addressof`는 `llvm` 방언 심볼만 가리킬 수 있다.
+MLIR 튜토리얼은 대부분 `func.func`로 시작해서 `--convert-func-to-llvm`으로 내린다. 하지만 **함수를 값으로 다루는 순간**(클로저, 콜백) 함수의 주소가 필요하다. 주소를 얻는 연산 `llvm.mlir.addressof`는 `llvm` dialect 심볼만 가리킬 수 있다.
 
 ```
 error: 'llvm.mlir.addressof' op must reference a global defined by
@@ -24,7 +24,7 @@ error: 'llvm.mlir.addressof' op must reference a global defined by
 
 이 오류는 **파일을 읽을 때의 검증(verifier)** 에서 난다. 따라서 `--convert-func-to-llvm` 패스를 추가해도 소용없다. 패스가 돌기 전에 이미 실패한다(직접 확인함). 그러니 `func.func`와 `llvm.func`를 섞지 말고, 처음부터 모든 함수를 `llvm.func`로 만든다.
 
-이렇게 해도 함수 **본문**에는 `arith.addi`, `arith.cmpi`, `scf.if`를 그대로 쓸 수 있다. 방언은 연산 단위로 섞을 수 있고, 함수를 감싸는 연산만 `llvm.func`면 된다.
+이렇게 해도 함수 **본문**에는 `arith.addi`, `arith.cmpi`, `scf.if`를 그대로 쓸 수 있다. dialect는 연산 단위로 섞을 수 있고, 함수를 감싸는 연산만 `llvm.func`면 된다.
 
 ## Why This Matters
 
@@ -33,15 +33,15 @@ error: 'llvm.mlir.addressof' op must reference a global defined by
 
 ## Recognition Pattern
 
-- 클로저, 고차 함수, 함수 포인터 테이블이 있는 언어를 MLIR로 컴파일하려 할 때
-- `mlir-translate`가 `Dialect 'X' not found for custom op`를 낼 때. X 방언을 내리는 패스가 빠진 것이다.
+- 클로저, higher-order function, 함수 포인터 테이블이 있는 언어를 MLIR로 컴파일하려 할 때
+- `mlir-translate`가 `Dialect 'X' not found for custom op`를 낼 때. X dialect를 내리는 패스가 빠진 것이다.
 - `llvm.mlir.addressof`에서 "must reference a global" 오류가 날 때
 
 ## The Approach
 
-**방언마다 "누가 이것을 llvm으로 내리나"를 확인한다.** `mlir-translate --mlir-to-llvmir`는 `llvm` 방언(과 `builtin`)만 받는다. 생성하는 방언 하나하나에 대응하는 변환 패스가 필요하다.
+**dialect마다 "누가 이것을 llvm으로 내리나"를 확인한다.** `mlir-translate --mlir-to-llvmir`는 `llvm` dialect(과 `builtin`)만 받는다. 생성하는 dialect 하나하나에 대응하는 변환 패스가 필요하다.
 
-| 생성하는 연산 | 내려가는 경로 | 필요한 패스 |
+| 생성하는 연산 | lowering 경로 | 필요한 패스 |
 |---|---|---|
 | `scf.if`, `scf.while` | scf → cf → llvm | `--convert-scf-to-cf`, `--convert-cf-to-llvm` |
 | `arith.*` | arith → llvm | `--convert-arith-to-llvm` |
@@ -130,12 +130,12 @@ llvm.func @main() -> i32 {
 
 - [ ] 모든 함수가 `llvm.func`인가? (`func.func`를 섞지 않음)
 - [ ] 반환과 호출이 `llvm.return`, `llvm.call`인가?
-- [ ] 생성하는 방언마다 내리는 패스가 있는가? (scf → cf → llvm, arith → llvm)
+- [ ] 생성하는 dialect마다 내리는 패스가 있는가? (scf → cf → llvm, arith → llvm)
 - [ ] 마지막에 `--reconcile-unrealized-casts`가 있는가?
 - [ ] Homebrew LLVM 경로(`/opt/homebrew/opt/llvm/bin`)를 직접 지정했는가? (PATH에 없음)
 
 ## 관련 문서
 
-- `represent-values-as-tagged-words.md` - 생성한 코드가 다루는 값 표현
+- `represent-values-as-tagged-words.md` - 생성한 코드가 다루는 value representation
 - `run-external-toolchain-from-dotnet.md` - 이 파이프라인을 .NET에서 실행하기
 - 이 프로젝트: `docs/compiler-design.md`, `src/Calc/Codegen.fs`, `src/Calc/Toolchain.fs`

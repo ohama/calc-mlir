@@ -1,6 +1,6 @@
 ---
 created: 2026-10-28
-description: 빠진 match 분기는 Maranget의 "유용성" 검사 하나로 판정한다. 패턴 행렬의 첫 열을 타입의 생성자 목록으로 펼치고, 생성자가 다 나오지 않았으면 기본 행렬로 넘긴다. 같은 재귀가 덮지 못하는 값의 예까지 만든다. 가드가 있는 분기는 세지 않고, 실행 중 Match failure가 나는 예제는 모두 경고받는지로 건전성을 테스트한다
+description: 빠진 match 분기는 Maranget의 "usefulness" 검사 하나로 판정한다. 패턴 행렬의 첫 열을 타입의 생성자 목록으로 펼치고, 생성자가 다 나오지 않았으면 기본 행렬로 넘긴다. 같은 재귀가 덮지 못하는 값의 예까지 만든다. 가드가 있는 분기는 세지 않고, 실행 중 Match failure가 나는 예제는 모두 경고받는지로 soundness를 테스트한다
 ---
 
 # Maranget 알고리즘으로 빠진 match 분기와 값의 예 찾기
@@ -12,7 +12,7 @@ Warning 8 [partial-match]: this pattern-matching is not exhaustive.
 Here is an example of a case that is not matched: None
 ```
 
-이것은 Luc Maranget의 "Warnings for pattern matching"(JFP 2007)에 나온 **유용성(usefulness)** 검사로 만든다. "패턴 행렬 P가 덮지 못하는 값이 있는가"를 재귀로 묻고, 있으면 그 값을 돌려준다.
+이것은 Luc Maranget의 "Warnings for pattern matching"(JFP 2007)에 나온 **usefulness** 검사로 만든다. "패턴 행렬 P가 덮지 못하는 값이 있는가"를 재귀로 묻고, 있으면 그 값을 돌려준다.
 
 ## The Insight
 
@@ -57,7 +57,7 @@ type private Pat =
 
 ### Step 1: 타입 추론이 끝난 뒤에 검사한다
 
-`match`를 추론하는 동안에는 대상의 타입이 아직 다 정해지지 않았을 수 있다(`fun x -> match x with ...`). 추론 중에는 (대상 타입, 패턴과 가드 여부, 위치)만 모아 두고, 모든 단일화와 기본 타입 결정이 끝난 뒤 한꺼번에 검사한다. 사용자 타입의 생성자 목록도 `type` 선언을 추론할 때 모아 둔다.
+`match`를 추론하는 동안에는 대상의 타입이 아직 다 정해지지 않았을 수 있다(`fun x -> match x with ...`). 추론 중에는 (대상 타입, 패턴과 가드 여부, 위치)만 모아 두고, 모든 unification과 기본 타입 결정이 끝난 뒤 한꺼번에 검사한다. 사용자 타입의 생성자 목록도 `type` 선언을 추론할 때 모아 둔다.
 
 ```fsharp
 st.Matches.Add((ts, cases |> List.map (fun (p, g, _) -> p, Option.isSome g), Errors.positionOf expr, "match"))
@@ -68,7 +68,7 @@ let typecheckWithWarnings expr =
     t, checkMatches st
 ```
 
-### Step 2: 유용성 검사
+### Step 2: usefulness 검사
 
 ```fsharp
 let rec private missing st (rows: Pat list list) (types: Type list) : Pat list option =
@@ -111,7 +111,7 @@ let rec private missing st (rows: Pat list list) (types: Type list) : Pat list o
 
 가드는 실행해 봐야 안다. OCaml과 F#처럼 가드가 있는 분기는 덮는 데 세지 않는다. `match 1 with | x when x > 0 -> 1`은 `_`를 예로 경고한다.
 
-### Step 5: 건전성을 테스트한다
+### Step 5: soundness를 테스트한다
 
 경고가 없는 프로그램은 실행 중에 `Match failure`가 나면 안 된다. 평가기 예제를 모두 돌려서, Match failure가 나는 예제는 모두 경고를 받았는지 확인한다.
 
@@ -146,11 +146,11 @@ Result: 1
 - [ ] `int`, `string`처럼 무한한 타입은 기본 행렬로만 판정하는가?
 - [ ] 가드가 있는 분기를 행렬에서 뺐는가?
 - [ ] 값의 예가 읽기 좋은가? (빈 열은 `_`, 리스트 문법, 괄호)
-- [ ] 건전성 테스트가 있는가? (Match failure가 나면 반드시 경고)
+- [ ] soundness 테스트가 있는가? (Match failure가 나면 반드시 경고)
 
 ## 관련 문서
 
 - `implement-pattern-matching-evaluator.md` - 인터프리터의 패턴 매칭
 - `compile-match-with-scf-if-conditions.md` - 컴파일러의 패턴 매칭과 Match failure 경로
 - `track-source-positions-without-changing-ast.md` - 경고의 위치
-- `write-soundness-test-for-type-checker.md` - 같은 방식의 건전성 테스트
+- `write-soundness-test-for-type-checker.md` - 같은 방식의 soundness 테스트

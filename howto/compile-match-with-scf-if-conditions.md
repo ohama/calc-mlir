@@ -5,7 +5,7 @@ description: 가드가 있는 match를 scf.if로 그대로 펼치면 "나머지 
 
 # scf.if만으로 match 컴파일하기: 조건을 i1로 먼저
 
-`match`를 컴파일하는 교과서적인 방법은 분기마다 기본 블록을 만들고 실패하면 다음 블록으로 점프하는 것이다(MLIR의 `cf` 방언). 이미 `if`를 값을 내는 `scf.if`로 만들고 있다면 `match`도 `scf.if`만으로 만들 수 있다. 다만 **가드** 때문에 순진하게 펼치면 코드가 폭발한다.
+`match`를 컴파일하는 교과서적인 방법은 분기마다 basic block을 만들고 실패하면 다음 블록으로 점프하는 것이다(MLIR의 `cf` dialect). 이미 `if`를 값을 내는 `scf.if`로 만들고 있다면 `match`도 `scf.if`만으로 만들 수 있다. 다만 **가드** 때문에 순진하게 펼치면 코드가 폭발한다.
 
 ## The Insight
 
@@ -43,11 +43,11 @@ scf.if (패턴) {
 ## Why This Matters
 
 - **나머지 분기를 두 곳에 생성하면:** 가드가 몇 개만 있어도 MLIR이 수천 줄이 되고, `mlir-opt`와 `clang`이 느려집니다. 결과는 맞으므로 테스트로는 알아채기 어렵습니다.
-- **`cf` 블록으로 바꾸면:** 이 문제는 없어지지만, `scf`와 `cf`를 한 함수에 섞어야 합니다. 그러면 영역 안에서 블록으로 점프할 수 없다는 제약을 따로 다뤄야 합니다. 이미 영역 기반으로 짠 코드 생성기라면 조건을 먼저 만드는 쪽이 훨씬 작게 바뀝니다.
+- **`cf` 블록으로 바꾸면:** 이 문제는 없어지지만, `scf`와 `cf`를 한 함수에 섞어야 합니다. 그러면 region 안에서 블록으로 점프할 수 없다는 제약을 따로 다뤄야 합니다. 이미 region 기반으로 짠 코드 생성기라면 조건을 먼저 만드는 쪽이 훨씬 작게 바뀝니다.
 
 ## Recognition Pattern
 
-- 값을 내는 구조적 제어 흐름(`scf.if`, 식 기반 IR)으로 `match`, `switch`, `cond`를 컴파일할 때
+- 값을 내는 structural 제어 흐름(`scf.if`, 식 기반 IR)으로 `match`, `switch`, `cond`를 컴파일할 때
 - "실패하면 다음으로"를 코드 생성기의 재귀로 표현했는데 같은 하위 트리를 두 번 부르고 있을 때
 - 생성한 코드 크기가 입력 크기에 비해 빠르게 커질 때 → 분기 수를 늘려 가며 줄 수를 세 본다
 
@@ -74,11 +74,11 @@ emitBind : Pattern -> v -> env -> env                 // 맞았을 때 이름 �
     emitIf fb cond (fun () -> emitExpr fb (emitBind fb pattern v env) body) (fun () -> emitCases rest)
 ```
 
-`emitCases rest`는 `else` 영역에서 **한 번만** 불린다.
+`emitCases rest`는 `else` region에서 **한 번만** 불린다.
 
 ### Step 3: 하위 패턴은 앞이 맞을 때만, 필드도 그때 읽는다
 
-`x :: rest`는 값이 cons인지 먼저 보고, 그 영역 안에서 head를 읽는다. `[]`(즉시값 5)의 필드를 읽으면 잘못된 주소를 읽는다. 여러 하위 패턴도 같은 방식으로 `scf.if (i1)` 사슬로 잇는다.
+`x :: rest`는 값이 cons인지 먼저 보고, 그 region 안에서 head를 읽는다. `[]`(immediate value 5)의 필드를 읽으면 잘못된 주소를 읽는다. 여러 하위 패턴도 같은 방식으로 `scf.if (i1)` 사슬로 잇는다.
 
 ```mlir
 %isCons = arith.cmpi ne, %v, %nil : i64
@@ -121,12 +121,12 @@ llvm.call @calc_match_failure(%v) : (i64) -> ()     // "Error: Match failure: <�
 - [ ] 나머지 분기를 생성하는 호출이 한 곳뿐인가?
 - [ ] 분기 수를 늘려 가며 생성한 코드의 줄 수가 직선으로 느는지 쟀는가?
 - [ ] 가드는 패턴이 맞을 때만 계산하는가?
-- [ ] 하위 패턴의 필드는 바깥 검사가 통과한 영역 안에서만 읽는가?
+- [ ] 하위 패턴의 필드는 바깥 검사가 통과한 region 안에서만 읽는가?
 - [ ] 항상 맞는 분기 뒤를 생성하지 않는가?
 - [ ] 실패 경로가 인터프리터와 같은 메시지로 끝나는가?
 
 ## 관련 문서
 
-- `emit-short-circuit-with-scf-if-regions.md` - 영역 안에서 분기를 생성하는 기본 방법
+- `emit-short-circuit-with-scf-if-regions.md` - region 안에서 분기를 생성하는 기본 방법
 - `implement-pattern-matching-evaluator.md` - 인터프리터의 `matchPattern` (컴파일러가 펼치는 대상)
 - `compile-immutable-let-to-ssa-environment.md` - 묶기가 쓰는 이름 → SSA 환경

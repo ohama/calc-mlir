@@ -93,7 +93,7 @@ fslex는 **가장 긴 일치**를 먼저 보고, 길이가 같으면 **앞의 �
 - **`"abc\`처럼 `\`로 끝나는 입력**: `'\\' _`는 `eof`와 일치하지 않는다. 그래서 `\`는 `_`로 값에 들어가고, 다음에 `eof` 규칙이 `Unterminated string`을 낸다. `"abc\"`도 마지막 `"`가 이스케이프되므로 같은 오류다.
 - **유니코드**: 이 프로젝트는 `--unicode`로 렉서를 만든다. `_`가 UTF-16 문자 하나씩 일치하므로 한글과 이모지(서로게이트 쌍)가 그대로 값에 들어간다. 테스트로 확인했다.
 
-### Step 4: 출력 함수를 렉서의 역함수로 만들고 왕복을 속성 테스트로 확인한다
+### Step 4: 출력 함수를 렉서의 역함수로 만들고 왕복을 property-based testing으로 확인한다
 
 값을 출력할 때 이스케이프를 되돌리면 "출력을 다시 입력하면 같은 값"이라는 성질을 테스트할 수 있다.
 
@@ -144,10 +144,10 @@ test "문자열 끝의 \\ 는 닫는 \" 를 이스케이프" {
 - [ ] `eof` 규칙이 `Unterminated string`을 낸다
 - [ ] 문자열 안의 줄바꿈에서도 `EndPos.NextLine`을 호출한다
 - [ ] 출력 함수가 `\\`를 가장 먼저 이스케이프한다
-- [ ] 출력 이스케이프 집합과 렉서 이스케이프 집합이 맞고, 왕복 속성 테스트가 있다
+- [ ] 출력 이스케이프 집합과 렉서 이스케이프 집합이 맞고, 왕복 property-based testing이 있다
 
 ## 관련 문서
 
 - `escape-quotes-and-braces-in-fslex-actions.md` - 액션 코드에서 `'"'`를 쓰면 빌드가 깨지는 문제
 - `order-fslex-keywords-before-identifiers.md` - 가장 긴 일치와 규칙 순서
-- `write-fscheck-properties-for-parser.md` - 문자열을 거치는 속성 테스트
+- `write-fscheck-properties-for-parser.md` - 문자열을 거치는 property-based testing

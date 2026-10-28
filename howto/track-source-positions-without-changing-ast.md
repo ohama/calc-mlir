@@ -24,7 +24,7 @@ let positionOf (node: obj) : (int * int) option =
 
 ## The Insight
 
-**F# 유니온 노드는 참조 타입이라서, 같은 모양의 노드도 서로 다른 객체다.** 노드 객체를 키로 쓰면 구조적 같음(`=`)과 상관없이 "바로 이 노드"의 위치를 찾을 수 있다. `ConditionalWeakTable`을 쓰는 이유는 두 가지다.
+**F# 유니온 노드는 참조 타입이라서, 같은 모양의 노드도 서로 다른 객체다.** 노드 객체를 키로 쓰면 structural 같음(`=`)과 상관없이 "바로 이 노드"의 위치를 찾을 수 있다. `ConditionalWeakTable`을 쓰는 이유는 두 가지다.
 
 - **키를 붙잡지 않습니다:** AST가 버려지면 기록도 함께 사라집니다. 파싱을 많이 하는 테스트에서도 메모리가 쌓이지 않습니다.
 - **스레드에 안전합니다:** Expecto가 테스트를 병렬로 돌려도 됩니다.
@@ -43,7 +43,7 @@ PNil, PWildcard                                       → 싱글턴
 
 - **AST에 위치 필드를 넣은 경우:** 파서 테스트의 기대값이 모두 바뀌고, `%A` 출력(사용자에게 보여 주는 `AST:` 줄)에도 위치가 섞입니다.
 - **싱글턴 노드에 기록한 경우:** 오류 위치가 엉뚱한 곳을 가리킵니다. 같은 프로그램 안의 다른 `[]`일 수도 있고, 다른 테스트가 파싱한 소스의 위치일 수도 있습니다.
-- **일반 `Dictionary`를 쓴 경우:** 키가 계속 살아 있어서 메모리가 늘고, 병렬 테스트에서 경쟁 상태가 생깁니다.
+- **일반 `Dictionary`를 쓴 경우:** 키가 계속 살아 있어서 메모리가 늘고, 병렬 테스트에서 race condition이 생깁니다.
 
 ## Recognition Pattern
 
@@ -97,7 +97,7 @@ let private locate (node: obj) (action: unit -> 'a) : 'a =
 let rec private infer st ctx expr = locate expr (fun () -> inferNode st ctx expr)
 ```
 
-단일화가 실패한 자리가 아니라 **문제가 된 식**을 가리키게 하려면, 그 식을 알 때 직접 넘긴다. OCaml도 이렇게 한다.
+unification이 실패한 자리가 아니라 **문제가 된 식**을 가리키게 하려면, 그 식을 알 때 직접 넘긴다. OCaml도 이렇게 한다.
 
 ```fsharp
 let expect (e: obj) expected actual = locate e (fun () -> unifyAt expected actual)

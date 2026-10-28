@@ -1,11 +1,11 @@
 ---
 created: 2026-10-28
-description: if, &&, ||는 값을 내는 scf.if 하나로 만든다. 분기 코드는 영역 안에서 생성해야 단락 평가가 되므로, 코드 생성기는 분기를 "나중에 부를 함수"로 받는다. 값이 있는 scf.if는 else와 scf.yield가 둘 다 있어야 한다
+description: if, &&, ||는 값을 내는 scf.if 하나로 만든다. 분기 코드는 region 안에서 생성해야 short-circuit evaluation이 되므로, 코드 생성기는 분기를 "나중에 부를 함수"로 받는다. 값이 있는 scf.if는 else와 scf.yield가 둘 다 있어야 한다
 ---
 
-# scf.if 영역으로 if와 단락 평가(&&, ||) 컴파일하기
+# scf.if region으로 if와 short-circuit evaluation(&&, ||) 컴파일하기
 
-식 언어의 `if c then a else b`는 값을 내는 식이다. LLVM IR로 직접 만들면 기본 블록 셋과 `phi`가 필요하지만, MLIR에서는 **값을 내는 `scf.if`** 하나로 끝난다. `&&`와 `||`도 같은 연산으로 만든다.
+식 언어의 `if c then a else b`는 값을 내는 식이다. LLVM IR로 직접 만들면 basic block 셋과 `phi`가 필요하지만, MLIR에서는 **값을 내는 `scf.if`** 하나로 끝난다. `&&`와 `||`도 같은 연산으로 만든다.
 
 ```
 a && b   ≡   if a then b else false
@@ -14,9 +14,9 @@ a || b   ≡   if a then true else b
 
 ## The Insight
 
-**분기의 코드는 영역(region) 안에서 생성해야 한다.** `scf.if`의 두 영역 중 실행되는 쪽만 계산된다. 그래서 코드 생성기가 분기 식을 먼저 생성한 다음 `scf.if`에 SSA 이름만 넘기면, 두 분기가 모두 `scf.if` **앞에서** 실행된다. 결과는 맞아 보이지만 단락 평가가 깨진다. `false && 1 / 0 = 0`이 `false` 대신 0으로 나누기 오류를 낸다.
+**분기의 코드는 region 안에서 생성해야 한다.** `scf.if`의 두 region 중 실행되는 쪽만 계산된다. 그래서 코드 생성기가 분기 식을 먼저 생성한 다음 `scf.if`에 SSA 이름만 넘기면, 두 분기가 모두 `scf.if` **앞에서** 실행된다. 결과는 맞아 보이지만 short-circuit evaluation이 깨진다. `false && 1 / 0 = 0`이 `false` 대신 0으로 나누기 오류를 낸다.
 
-그래서 `emitIf`는 분기를 값(SSA 이름)이 아니라 **함수(`unit -> string`)** 로 받는다. 들여쓰기를 한 단계 늘리고, 그 안에서 함수를 불러 코드를 영역 안에 쓴다.
+그래서 `emitIf`는 분기를 값(SSA 이름)이 아니라 **함수(`unit -> string`)** 로 받는다. 들여쓰기를 한 단계 늘리고, 그 안에서 함수를 불러 코드를 region 안에 쓴다.
 
 ```fsharp
 let private emitIf (fb: FunctionBuilder) (cond: string) (thenBranch: unit -> string) (elseBranch: unit -> string) =
@@ -36,7 +36,7 @@ let private emitIf (fb: FunctionBuilder) (cond: string) (thenBranch: unit -> str
 ## Why This Matters
 
 - **분기를 먼저 생성하고 `arith.select`나 `scf.if`로 고르면:**
-  - 단락 평가가 깨집니다.
+  - short-circuit evaluation이 깨집니다.
   - 선택되지 않은 분기의 오류가 실행됩니다. 예: `if true then 1 else 1 / 0`
   - 재귀 함수가 생기면 기저 사례 분기가 무시돼서 끝나지 않습니다.
 - **문법 오류:** `scf.if`의 규칙을 모르면 `mlir-opt`가 오류를 냅니다. 메시지는 정확하지만 원인을 바로 알기 어렵습니다.
@@ -45,13 +45,13 @@ let private emitIf (fb: FunctionBuilder) (cond: string) (thenBranch: unit -> str
 
 - 식 언어(OCaml, F#, Rust 블록)의 `if`/`match`를 MLIR로 컴파일할 때
 - `&&`, `||`, `?:`처럼 피연산자 일부만 계산해야 하는 연산이 있을 때
-- 생성한 코드에서 "선택되지 않은 분기"의 부수 효과가 보일 때
+- 생성한 코드에서 "선택되지 않은 분기"의 side effect가 보일 때
 
 ## The Approach
 
 ### Step 1: 조건은 i1로 바꾼다
 
-값이 태그가 붙은 i64라면 `true`의 표현과 비교해서 i1을 만든다.
+값이 tagged i64라면 `true`의 표현과 비교해서 i1을 만든다.
 
 ```mlir
 %c = arith.cmpi eq, %v, %true : i64      // %true = arith.constant 11 : i64
@@ -63,7 +63,7 @@ let private emitIf (fb: FunctionBuilder) (cond: string) (thenBranch: unit -> str
 
 | 빠뜨린 것 | `mlir-opt` 오류 |
 |---|---|
-| `else` 영역 | `'scf.if' op must have an else block if defining values` |
+| `else` region | `'scf.if' op must have an else block if defining values` |
 | 한 분기의 `scf.yield` | `region branch point has 0 operands, but region successor needs 1 inputs` |
 
 결과가 없는 `scf.if`는 `else`를 생략할 수 있다. 오류 검사처럼 "조건이 참이면 함수만 부르는" 코드에 쓴다.
@@ -74,9 +74,9 @@ scf.if %isZero {
 }
 ```
 
-### Step 3: 영역 안에서 바깥 값을 그대로 쓴다
+### Step 3: region 안에서 바깥 값을 그대로 쓴다
 
-`scf.if`는 `IsolatedFromAbove`가 아니다. 그래서 영역 안에서 바깥에 정의된 SSA 값(`%x`)을 그대로 쓸 수 있다. 반대로 영역 안에서 정의한 값은 밖에서 쓸 수 없고, 꼭 `scf.yield`로 내보내야 한다. 코드 생성기의 반환값(SSA 이름)은 언제나 "현재 위치에서 보이는 값"이어야 한다.
+`scf.if`는 `IsolatedFromAbove`가 아니다. 그래서 region 안에서 바깥에 정의된 SSA 값(`%x`)을 그대로 쓸 수 있다. 반대로 region 안에서 정의한 값은 밖에서 쓸 수 없고, 꼭 `scf.yield`로 내보내야 한다. 코드 생성기의 반환값(SSA 이름)은 언제나 "현재 위치에서 보이는 값"이어야 한다.
 
 ### Step 4: `&&`, `||`, `not`
 
@@ -93,7 +93,7 @@ scf.if %isZero {
 
 ## Example
 
-`false && 1 / 0 = 0`이 만드는 MLIR. 나눗셈과 0 검사가 모두 `scf.if`의 첫 영역 **안에** 있다.
+`false && 1 / 0 = 0`이 만드는 MLIR. 나눗셈과 0 검사가 모두 `scf.if`의 첫 region **안에** 있다.
 
 ```mlir
 %v1 = arith.constant 3 : i64            // false
@@ -122,13 +122,13 @@ emitIf fb c (fun () -> emitExpr fb thenExpr) (fun () -> emitExpr fb elseExpr)
 
 ## 체크리스트
 
-- [ ] 분기 코드를 영역 안에서 생성하는가? (분기를 함수로 넘김)
+- [ ] 분기 코드를 region 안에서 생성하는가? (분기를 함수로 넘김)
 - [ ] 값을 내는 `scf.if`에 `else`와 양쪽 `scf.yield`가 있는가?
-- [ ] 영역 안에서 정의한 값을 밖에서 쓰지 않는가?
-- [ ] 단락 평가 테스트(`false && <오류>`, `true || <오류>`, `if true then 1 else <오류>`)가 있는가?
+- [ ] region 안에서 정의한 값을 밖에서 쓰지 않는가?
+- [ ] short-circuit evaluation 테스트(`false && <오류>`, `true || <오류>`, `if true then 1 else <오류>`)가 있는가?
 
 ## 관련 문서
 
 - `emit-mlir-as-llvm-func-and-lower.md` - `scf`를 llvm까지 내리는 패스
-- `match-interpreter-integer-semantics-in-native-code.md` - 영역 안의 나눗셈 검사
+- `match-interpreter-integer-semantics-in-native-code.md` - region 안의 나눗셈 검사
 - `control-let-if-scope-with-precedence.md` - 파서 쪽 `if`의 범위

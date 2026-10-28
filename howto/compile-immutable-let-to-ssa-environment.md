@@ -1,6 +1,6 @@
 ---
 created: 2026-10-28
-description: 바꿀 수 없는 let은 코드를 만들지 않는다. 이름 → SSA 이름 Map 하나로 섀도잉과 범위가 해결되고, 언어의 정적 범위가 MLIR 영역의 범위와 겹친다. 쓰이지 않는 값도 생성해 두면 LLVM이 순수한 것만 지운다
+description: 바꿀 수 없는 let은 코드를 만들지 않는다. 이름 → SSA 이름 Map 하나로 섀도잉과 범위가 해결되고, 언어의 lexical scope가 MLIR region의 범위와 겹친다. 쓰이지 않는 값도 생성해 두면 LLVM이 순수한 것만 지운다
 ---
 
 # 바꿀 수 없는 let을 SSA 이름 환경으로 컴파일하기
@@ -33,13 +33,13 @@ LLVM Kaleidoscope 튜토리얼처럼 변수마다 `alloca`를 만들고 `load`/`
 |---|---|
 | 섀도잉 `let x = 1 in let x = x + 10 in x` | `Map.add`가 같은 키를 덮어씀. 오른쪽 `x + 10`은 덮어쓰기 **전** 환경으로 생성 |
 | 범위 `let x = 1 in (let x = 2 in x) + x` | `Map`이 불변이라 안쪽 `let`이 끝나면 바깥 `env`가 그대로 남음 |
-| `if` 분기 안의 `let` | 분기 영역 안에서 만든 이름은 그 분기의 `env`에만 있음 |
+| `if` 분기 안의 `let` | 분기 region 안에서 만든 이름은 그 분기의 `env`에만 있음 |
 
 ## Why This Matters
 
-- **환경을 가변 사전(`Dictionary`)으로 만든 경우:** 안쪽 `let`이 끝난 뒤 이름을 되돌리는 코드가 필요하고, 하나라도 빠지면 범위가 샙니다. `let x = 1 in (let x = 2 in x) + x`가 `4`가 됩니다(정답은 `3`).
+- **환경을 mutable `Dictionary`으로 만든 경우:** 안쪽 `let`이 끝난 뒤 이름을 되돌리는 코드가 필요하고, 하나라도 빠지면 범위가 샙니다. `let x = 1 in (let x = 2 in x) + x`가 `4`가 됩니다(정답은 `3`).
 - **`alloca`로 시작한 경우:** 생성한 MLIR이 길어져 읽기 어렵습니다. 최적화 패스 없이는 느립니다.
-- **쓰이지 않는 `let`을 생략한 경우:** `let x = 1 / 0 in 5`가 오류 없이 `5`가 됩니다. 값에 의한 호출(strict) 언어인 인터프리터는 오류를 냅니다.
+- **쓰이지 않는 `let`을 생략한 경우:** `let x = 1 / 0 in 5`가 오류 없이 `5`가 됩니다. call-by-value(strict) 언어인 인터프리터는 오류를 냅니다.
 
 ## Recognition Pattern
 
@@ -58,9 +58,9 @@ LLVM Kaleidoscope 튜토리얼처럼 변수마다 `alloca`를 만들고 `load`/`
     emitIf fb c (fun () -> emitExpr fb env thenExpr) (fun () -> emitExpr fb env elseExpr)
 ```
 
-### Step 2: 정적 범위와 영역 범위가 겹친다는 것을 이용한다
+### Step 2: lexical scope와 region 범위가 겹친다는 것을 이용한다
 
-MLIR에서 `scf.if` 영역 안에서 정의한 값은 영역 밖에서 보이지 않는다. 언어에서도 분기 안의 `let`은 분기 밖에서 보이지 않는다. 그래서 `env`에서 꺼낸 SSA 이름은 **항상 현재 위치에서 쓸 수 있는 값**이다. 영역을 빠져나오는 값은 `scf.yield`의 결과 하나뿐이고, 그것은 새 SSA 이름이 된다.
+MLIR에서 `scf.if` region 안에서 정의한 값은 region 밖에서 보이지 않는다. 언어에서도 분기 안의 `let`은 분기 밖에서 보이지 않는다. 그래서 `env`에서 꺼낸 SSA 이름은 **항상 현재 위치에서 쓸 수 있는 값**이다. region을 빠져나오는 값은 `scf.yield`의 결과 하나뿐이고, 그것은 새 SSA 이름이 된다.
 
 이 대응이 깨지면(코드 생성기 버그) `mlir-opt`가 텍스트를 읽는 단계에서 바로 알려 준다(직접 확인함).
 
@@ -71,7 +71,7 @@ dom.mlir:10:25: error: use of undeclared SSA value name
 
 ### Step 3: 쓰이지 않는 값도 생성하고, 지우는 일은 LLVM에 맡긴다
 
-코드 생성기는 "이 값이 쓰이는가"를 판단하지 않는다. 부수 효과(오류로 종료)가 있는지는 LLVM이 더 정확히 안다. `clang -O2` 뒤의 `calc_main`을 보면 다음과 같다(직접 확인함).
+코드 생성기는 "이 값이 쓰이는가"를 판단하지 않는다. side effect(오류로 종료)가 있는지는 LLVM이 더 정확히 안다. `clang -O2` 뒤의 `calc_main`을 보면 다음과 같다(직접 확인함).
 
 ```llvm
 ; let x = 2 * 3 in 5    → 곱셈은 순수하므로 사라짐
@@ -130,5 +130,5 @@ llvm.func @calc_main() -> i64 {
 
 ## 관련 문서
 
-- `emit-short-circuit-with-scf-if-regions.md` - 영역 안에서 분기 코드를 만드는 법
-- `implement-closures-and-let-rec.md` - 인터프리터 쪽 환경과 클로저 (컴파일러는 다음 단계에서 클로저 변환)
+- `emit-short-circuit-with-scf-if-regions.md` - region 안에서 분기 코드를 만드는 법
+- `implement-closures-and-let-rec.md` - 인터프리터 쪽 환경과 클로저 (컴파일러는 다음 단계에서 closure conversion)

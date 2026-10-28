@@ -95,7 +95,7 @@ dotnet build | grep -i conflict    # 비어 있어야 함
 
 | 입력 | AST | 설명 |
 |---|---|---|
-| `f x y` | `App (App (f, x), y)` | 왼쪽 결합 |
+| `f x y` | `App (App (f, x), y)` | left-associative |
 | `f x + g y` | `Add (App (f, x), App (g, y))` | 호출이 `+`보다 먼저 |
 | `-f x` | `Negate (App (f, x))` | 호출이 단항 `-`보다 먼저 |
 | `f (g x)` | `App (f, App (g, x))` | 괄호식은 Atom |

@@ -20,7 +20,7 @@ Result: 10
 | 정수 사칙연산 (32비트, 정수 나눗셈) | `2 + 3 * (4 - 1)`, `7 / 2`, `-5` |
 | 불리언 | `true`, `false` |
 | 비교 | `=` `<>` `<` `>` `<=` `>=` |
-| 논리 연산 (단락 평가) | `&&`, `\|\|`, `not` |
+| 논리 연산 (short-circuit evaluation) | `&&`, `\|\|`, `not` |
 | `let` 바인딩 | `let x = 1 + 2 in x * x` |
 | 조건식 | `if x > 0 then x else -x` |
 | 함수 정의와 호출 (커링, 클로저) | `let add x y = x + y in add 1 2`, `(fun x -> x * 2) 21` |
@@ -30,11 +30,11 @@ Result: 10
 | 리스트·튜플·option 내장 함수 | `map`, `filter`, `fold`, `range`, `sum`, `sort`, `head`, `nth`, `fst`, `snd`, `tryHead`, `defaultValue` 등 19개 |
 | 리스트 | `[1; 2; 3]`, `0 :: xs` |
 | 튜플 | `(1, "a")`, `let (a, b) = p in a + b` |
-| 대수적 데이터 타입, `option` | `type shape = Circle of int \| Rect of int * int in ...`, `Some 1`, `None` |
+| algebraic data type, `option` | `type shape = Circle of int \| Rect of int * int in ...`, `Some 1`, `None` |
 | 패턴 매칭 (중첩 패턴, `when` 가드) | `match xs with [] -> 0 \| [x] -> x \| x :: _ when x > 0 -> x \| _ -> -1` |
 
 - 우선순위 (낮은 것부터): `let`/`if`/`fun`/`match` < `||` < `&&` < 비교 < `::` < `+ -` < `* /` < 단항 `-`, `not` < 함수 호출
-- **타입 추론** (Hindley–Milner, let 다형성): 실행 전에 타입을 추론하고, 맞지 않으면 평가하지 않습니다. 타입 오류는 문제가 된 식의 위치(줄, 열, `^`)를 가리킵니다.
+- **타입 추론** (Hindley–Milner, let-polymorphism): 실행 전에 타입을 추론하고, 맞지 않으면 평가하지 않습니다. 타입 오류는 문제가 된 식의 위치(줄, 열, `^`)를 가리킵니다.
   - `fun f x -> f (f x)`는 `('a -> 'a) -> 'a -> 'a`, `[1; true]`는 `Type mismatch: expected int list but got bool list`
   - `--no-typecheck`를 주면 추론을 건너뛰고 평가 중에 동적으로 검사합니다.
 - **빠진 `match` 분기 경고**: 모든 값을 덮지 못하는 `match`와 `let` 패턴에 대해, 덮지 못하는 값의 예와 위치를 경고합니다(OCaml Warning 8, F# FS0025와 같음).
@@ -123,7 +123,7 @@ Error: parse error: unexpected '+' (line 1, column 5)
 | [docs/testing.md](docs/testing.md) | 자동 테스트(Expecto) 실행과 추가 방법, 수동 테스트 표 |
 | [docs/grammar.md](docs/grammar.md) | 토큰, EBNF, 우선순위, AST 대응, 평가 규칙, 오류 |
 | [docs/compiler-design.md](docs/compiler-design.md) | MLIR/LLVM 네이티브 컴파일 설계와 단계별 계획 (단계 7 완료) |
-| [docs/compiler-architecture.md](docs/compiler-architecture.md) | 컴파일러 구조와 흐름: 예제 하나로 따라가는 MLIR → LLVM IR → 실행 파일, 진입점 `main`, 런타임 링크 |
+| [docs/compiler-architecture.md](docs/compiler-architecture.md) | 컴파일러 구조와 흐름: 예제 하나로 따라가는 MLIR → LLVM IR → 실행 파일, entry point `main`, 런타임 링크 |
 | [howto/](howto/README.md) | 개발하면서 부딪힌 문제와 해결 방법 |
 | [CHANGELOG.md](CHANGELOG.md) | 버전별 변경 사항 |
 

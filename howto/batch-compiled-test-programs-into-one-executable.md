@@ -5,7 +5,7 @@ description: 컴파일러 테스트가 예제마다 실행 파일을 만들면 m
 
 # 컴파일러 테스트 예제를 실행 파일 하나로 묶기
 
-차등 테스트는 예제마다 "컴파일 → 링크 → 실행"을 한다. 예제가 200개를 넘자 `dotnet test`가 1분 30초 걸렸다. 그런데 CPU는 거의 놀고 있었다. 컴파일러가 느린 것이 아니라 **새 실행 파일을 만드는 일 자체**가 비쌌다. 예제를 실행 파일 하나로 묶고, 그 안에서 예제마다 `fork`하도록 바꾸니 5초가 되었다.
+differential testing은 예제마다 "컴파일 → 링크 → 실행"을 한다. 예제가 200개를 넘자 `dotnet test`가 1분 30초 걸렸다. 그런데 CPU는 거의 놀고 있었다. 컴파일러가 느린 것이 아니라 **새 실행 파일을 만드는 일 자체**가 비쌌다. 예제를 실행 파일 하나로 묶고, 그 안에서 예제마다 `fork`하도록 바꾸니 5초가 되었다.
 
 ## The Insight
 
@@ -59,7 +59,7 @@ let emitEntries (programs: (string * Ast.Expr) list) : string =
     sb.ToString()
 ```
 
-람다 함수는 `llvm.func internal`로 만든다. 그러면 모듈 밖에서 보이지 않아서 다른 모듈의 같은 이름과 링크할 때 충돌하지 않고, LLVM이 펼치거나 지우기도 쉬워진다.
+람다 함수는 `llvm.func internal`로 만든다. 그러면 모듈 밖에서 보이지 않아서 다른 모듈의 같은 이름과 링크할 때 충돌하지 않고, LLVM이 inline하거나 지우기도 쉬워진다.
 
 ### Step 3: 모듈을 코어 수만큼으로 나눠 병렬로 컴파일한다
 
@@ -112,7 +112,7 @@ let private batch = lazy (...)       // runCases 의 입력 + 차등 테스트 �
 
 ### Step 6: 테스트가 여전히 실패할 수 있는지 확인한다
 
-빨라진 테스트가 실제로 비교하고 있는지, **일부러 틀린 기대값**을 넣어 확인한다. 실행 테스트 하나와 차등 테스트 하나를 틀리게 바꿨더니 정확히 두 개가 실패했다. 확인한 뒤에는 원래대로 되돌린다.
+빨라진 테스트가 실제로 비교하고 있는지, **일부러 틀린 기대값**을 넣어 확인한다. 실행 테스트 하나와 differential testing 하나를 틀리게 바꿨더니 정확히 두 개가 실패했다. 확인한 뒤에는 원래대로 되돌린다.
 
 ### Step 7: 단독 실행 파일 경로를 따로 지킨다
 
@@ -140,5 +140,5 @@ let private batch = lazy (...)       // runCases 의 입력 + 차등 테스트 �
 ## 관련 문서
 
 - `measure-fresh-binaries-on-macos.md` - 새 실행 파일의 첫 실행 지연
-- `write-differential-tests-for-compiler.md` - 인터프리터와 비교하는 차등 테스트
+- `write-differential-tests-for-compiler.md` - 인터프리터와 비교하는 differential testing
 - `run-external-toolchain-from-dotnet.md` - 외부 도구 실행

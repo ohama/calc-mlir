@@ -1,6 +1,6 @@
 ---
 created: 2026-10-28
-description: 내장 함수를 F# 함수 값으로 Value에 넣으면 구조적 equality가 깨진다. 이름과 모은 인자만 저장하는 데이터로 표현하고 호출 시점에 디스패치한다
+description: 내장 함수를 F# 함수 값으로 Value에 넣으면 structural equality가 깨진다. 이름과 모은 인자만 저장하는 데이터로 표현하고 호출 시점에 디스패치한다
 ---
 
 # 인터프리터 내장 함수를 데이터 값으로 구현하기
@@ -34,7 +34,7 @@ VInt 1 = VInt 1
 | `[<CustomEquality; NoComparison>]` + `VFn of name * (Value -> Value)` | Equals/GetHashCode 직접 구현 | 이름은 보임 | 위와 같음 | 케이스 추가할 때마다 Equals 수정, 비교 연산 잃음 |
 | **`VBuiltin of name * args` (이 문서)** | ✅ 자동 | `VBuiltin ("substr", [VString "abc"; VInt 1])` | 인자를 모으는 일반 규칙 하나 | 이름 → 구현 디스패치 한 곳 |
 
-마지막 방법이면 부분 적용한 값도 테스트에서 그대로 비교할 수 있다.
+마지막 방법이면 partial application을 한 값도 테스트에서 그대로 비교할 수 있다.
 
 ```fsharp
 Expect.equal (calc "substr \"abc\" 1") (VBuiltin ("substr", [ VString "abc"; VInt 1 ])) ""
@@ -95,7 +95,7 @@ and apply fv av =
     | v -> typeError "function" v
 ```
 
-- 커링과 부분 적용이 이 규칙 하나로 모든 내장 함수에 생긴다.
+- 커링과 partial application이 이 규칙 하나로 모든 내장 함수에 생긴다.
 - 인자 타입 검사는 **인자가 다 모였을 때** 일어난다. `let f = substr 1 in f 2 3`의 오류는 `f 2 3`에서 난다. 이 동작을 테스트로 고정한다.
 
 ### Step 4: 내장 함수를 처음 환경에 넣는다
@@ -172,7 +172,7 @@ length = length                                   → Type error: expected int, 
 - [ ] `apply`에서 인자 수가 차면 실행하고, 아니면 인자를 더한 새 값을 반환한다
 - [ ] 내장 함수는 처음 환경의 보통 변수다 (렉서/파서 수정 없음, `let`으로 가릴 수 있음)
 - [ ] 인자 수 표와 디스패치의 이름 목록이 같은지 테스트한다
-- [ ] 부분 적용, 가리기, 인자 타입 오류가 나는 시점을 테스트로 고정한다
+- [ ] partial application, 가리기, 인자 타입 오류가 나는 시점을 테스트로 고정한다
 - [ ] 고차 내장 함수는 `apply`를 인자로 받아 사용자 함수와 내장 함수를 똑같이 호출한다
 
 ## 관련 문서

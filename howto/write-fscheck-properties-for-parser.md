@@ -1,11 +1,11 @@
 ---
 created: 2026-10-27
-description: 문자열을 만들어 파서까지 통과시키는 속성 테스트는 렉서가 표현할 수 있는 값만 생성해야 한다. FsCheck의 기본 정수 범위는 작아서 경계값은 따로 테스트한다
+description: 문자열을 만들어 파서까지 통과시키는 property-based testing은 렉서가 표현할 수 있는 값만 생성해야 한다. FsCheck의 기본 정수 범위는 작아서 경계값은 따로 테스트한다
 ---
 
-# 파서와 평가기를 FsCheck 속성 테스트로 검증하기
+# 파서와 평가기를 FsCheck property-based testing으로 검증하기
 
-언어 구현의 속성 테스트는 두 종류다. **AST를 직접 만드는 테스트**와 **소스 문자열을 만들어 렉서·파서를 거치는 테스트**다. 두 번째는 생성한 값이 소스 코드로 표현 가능한지를 따져야 한다.
+언어 구현의 property-based testing은 두 종류다. **AST를 직접 만드는 테스트**와 **소스 문자열을 만들어 렉서·파서를 거치는 테스트**다. 두 번째는 생성한 값이 소스 코드로 표현 가능한지를 따져야 한다.
 
 ## The Insight
 
@@ -36,12 +36,12 @@ Value was either too large or too small for an Int32.
 
 그래서 다음 두 가지를 기억해야 한다.
 
-1. 평범한 `int`로 속성을 써도 테스트는 **통과한다**. 경계 사례를 실제로 만들어 보지 않았기 때문이다.
-2. 속성 테스트가 통과했다고 해서 **경계값이 안전하다는 뜻은 아니다**. 경계값은 예시 테스트로 따로 확인한다.
+1. 평범한 `int`로 property를 써도 테스트는 **통과한다**. 경계 사례를 실제로 만들어 보지 않았기 때문이다.
+2. property-based testing이 통과했다고 해서 **경계값이 안전하다는 뜻은 아니다**. 경계값은 예시 테스트로 따로 확인한다.
 
 ## Recognition Pattern
 
-- `sprintf`로 소스 코드를 만들어 `parse`에 넘기는 속성 테스트를 쓸 때
+- `sprintf`로 소스 코드를 만들어 `parse`에 넘기는 property-based testing을 쓸 때
 - 언어에 음수 리터럴이 없거나, 리터럴의 범위가 호스트 언어 타입과 다를 때
 - `NonNegativeInt` 같은 패턴을 썼더니 `error FS0039: The pattern discriminator 'NonNegativeInt' is not defined.`가 날 때
 
@@ -79,7 +79,7 @@ testProperty "AST 직접 평가: Add" <| fun (a: int) (b: int) ->
 
 ### Step 4: 경계값은 예시 테스트로 고정한다
 
-속성 테스트가 만들어 내지 않는 값은 직접 적는다.
+property-based testing이 만들어 내지 않는 값은 직접 적는다.
 
 ```fsharp
 test "int 범위를 넘는 리터럴은 렉서 오류" {
@@ -117,7 +117,7 @@ testProperty "if 는 조건에 따라 분기" <| fun (c: bool) (NonNegativeInt a
 ## 체크리스트
 
 - [ ] `open FsCheck`가 있다
-- [ ] 문자열을 거치는 속성은 렉서가 표현할 수 있는 값만 쓴다 (`NonNegativeInt` 등)
+- [ ] 문자열을 거치는 property는 렉서가 표현할 수 있는 값만 쓴다 (`NonNegativeInt` 등)
 - [ ] 평가기만 볼 때는 AST를 직접 만들어 전체 범위의 값을 쓴다
 - [ ] 경계값(최댓값, 최솟값, 오버플로, 0으로 나누기)은 예시 테스트로 따로 확인했다
 - [ ] 정답(oracle)으로 쓴 F# 식이 이 언어의 의미와 정말 같은지 확인했다 (예: 정수 나눗셈의 버림 방향)

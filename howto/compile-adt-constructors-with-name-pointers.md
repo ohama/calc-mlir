@@ -5,7 +5,7 @@ description: 타입 검사를 통과한 프로그램의 생성자 값에는 생�
 
 # ADT 생성자를 이름 포인터로 컴파일하기
 
-`type shape = Circle of int | Rect of int * int | Dot` 같은 대수적 데이터 타입을 네이티브로 컴파일할 때, 흔히 **생성자 설명자**(타입 이름, 생성자 번호, 이름, 인자 수)를 만들어 블록마다 가리키게 한다. 이 프로젝트도 처음에는 그렇게 설계했다. 실제로 구현해 보니 **생성자 이름을 담은 C 문자열의 포인터 하나**로 충분했다.
+`type shape = Circle of int | Rect of int * int | Dot` 같은 algebraic data type를 네이티브로 컴파일할 때, 흔히 **생성자 descriptor**(타입 이름, 생성자 번호, 이름, 인자 수)를 만들어 블록마다 가리키게 한다. 이 프로젝트도 처음에는 그렇게 설계했다. 실제로 구현해 보니 **생성자 이름을 담은 C 문자열의 포인터 하나**로 충분했다.
 
 ```
 Some 2   → [헤더 5 | (2 << 8), → "Some\0", 17]      (GC 할당)
@@ -36,9 +36,9 @@ type a = X of int in let v = X 1 in type b = X of int in (v, X 2)
 
 ## Why This Matters
 
-- **설명자를 만든 경우:** 타입마다 전역 테이블, 생성자 번호 할당, 타입 이름 문자열이 생깁니다. 그런데 쓰는 곳은 위 세 군데뿐이라 대부분 쓰이지 않습니다.
+- **descriptor를 만든 경우:** 타입마다 전역 테이블, 생성자 번호 할당, 타입 이름 문자열이 생깁니다. 그런데 쓰는 곳은 위 세 군데뿐이라 대부분 쓰이지 않습니다.
 - **인자 없는 생성자도 할당한 경우:** `None :: rest`, `Leaf` 같은 흔한 값마다 GC 할당이 생깁니다.
-- **인자 있는 생성자를 항상 함수로 만든 경우:** `Some 1`마다 클로저 생성과 간접 호출이 생깁니다. 그렇다고 함수로 만드는 경로가 아예 없으면 `let f = Some in f 3`이나 `map Some xs`를 컴파일할 수 없습니다.
+- **인자 있는 생성자를 항상 함수로 만든 경우:** `Some 1`마다 클로저 생성과 indirect call이 생깁니다. 그렇다고 함수로 만드는 경로가 아예 없으면 `let f = Some in f 3`이나 `map Some xs`를 컴파일할 수 없습니다.
 
 ## Recognition Pattern
 
@@ -53,7 +53,7 @@ type a = X of int in let v = X 1 in type b = X of int in (v, X 2)
 ```mlir
 llvm.mlir.global internal constant @ctor_1("None\00") {addr_space = 0 : i32}
 
-// 인자 없는 생성자의 값: 8바이트 정렬 전역 블록. 주소가 곧 값 (하위 3비트 000)
+// 인자 없는 생성자의 값: 8-byte aligned 전역 블록. 주소가 곧 값 (하위 3비트 000)
 llvm.mlir.global internal constant @unit_0() {addr_space = 0 : i32, alignment = 8 : i64}
     : !llvm.struct<(i64, ptr)> {
   %0 = llvm.mlir.undef : !llvm.struct<(i64, ptr)>
@@ -65,7 +65,7 @@ llvm.mlir.global internal constant @unit_0() {addr_space = 0 : i32, alignment = 
 }
 ```
 
-LLVM IR에서는 `@unit_0 = internal constant { i64, ptr } { i64 261, ptr @ctor_1 }, align 8`가 된다. 이름 전역은 값이 아니라 블록 칸에 들어가므로 정렬이 필요 없다.
+LLVM IR에서는 `@unit_0 = internal constant { i64, ptr } { i64 261, ptr @ctor_1 }, align 8`가 된다. 이름 전역은 값이 아니라 블록 칸에 들어가므로 alignment이 필요 없다.
 
 `clang -O2` 결과에서 `None :: ...`의 `None`은 할당 없이 상수로 저장된다(직접 확인함).
 
@@ -162,7 +162,7 @@ insert 2 (insert 3 (insert 1 Leaf))
 
 - [ ] 실행 중에 생성자 정보가 필요한 곳을 모두 적었는가? (패턴, `=`, 출력)
 - [ ] 타입 검사기가 보장하는 것을 실행 중에 다시 검사하고 있지 않은가?
-- [ ] 인자 없는 생성자가 할당 없이 전역 블록인가? (8바이트 정렬)
+- [ ] 인자 없는 생성자가 할당 없이 전역 블록인가? (8-byte alignment)
 - [ ] 적용 위치의 생성자는 클로저 없이 바로 블록을 만드는가?
 - [ ] 값 위치의 생성자는 함수 값처럼 행동하는가? (`<fun>`, `=` 오류)
 - [ ] 출력의 괄호 규칙이 기준 구현과 같은가?
@@ -171,6 +171,6 @@ insert 2 (insert 3 (insert 1 Leaf))
 ## 관련 문서
 
 - `represent-adt-values-in-dynamic-interpreter.md` - 인터프리터 쪽 ADT 표현 (`VData`, `VConstructor`)
-- `emit-string-constants-as-aligned-llvm-globals.md` - 전역 상수 블록과 정렬
+- `emit-string-constants-as-aligned-llvm-globals.md` - 전역 상수 블록과 alignment
 - `compile-match-with-scf-if-conditions.md` - 생성자 패턴이 들어가는 `match` 코드 생성
 - `implement-closure-conversion-to-top-level-functions.md` - 값 위치의 생성자가 되는 클로저

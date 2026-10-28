@@ -38,7 +38,7 @@ PCons(PTuple[PVar n; PVar s], PWildcard)  vs  VList [VTuple [1; "a"]; ...]
 ## Recognition Pattern
 
 - `match`를 "리스트 전용", "분기 2개 고정"처럼 특수한 형태로 시작했는데 확장해야 할 때
-- 튜플, 대수적 데이터 타입(ADT), 레코드 같은 구조적 값을 언어에 넣을 때
+- 튜플, algebraic data type(ADT), 레코드 같은 structural 값을 언어에 넣을 때
 - `let` 분해, 함수 인자 패턴처럼 "패턴이 여러 곳에 나타나는" 언어를 만들 때
 
 ## The Approach
@@ -107,7 +107,7 @@ let rec matchPattern pattern value (env: Env) : Env option =
     tryCases cases
 ```
 
-- **대상 식은 한 번만 평가한다.** 분기마다 다시 평가하면 부작용이나 비용이 분기 수만큼 생긴다.
+- **대상 식은 한 번만 평가한다.** 분기마다 다시 평가하면 side effect나 비용이 분기 수만큼 생긴다.
 - **가드는 패턴이 묶은 환경(`caseEnv`)에서 평가한다.** `n when n > 3`의 `n`을 볼 수 있어야 한다.
 - 가드가 `false`면 **다음 분기로 넘어간다.** 오류가 아니다.
 - 일치하는 분기가 없으면 `Match failure: <값>`이다. 어떤 값이었는지 보여 주면 디버깅이 쉽다.

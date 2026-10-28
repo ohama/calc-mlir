@@ -20,7 +20,7 @@ Calc 언어의 어휘 구조, 구문, 의미를 정리한 문서입니다. 구�
 | `STRING` | `"`로 시작해서 `"`로 끝남 (아래 "문자열 리터럴" 참고) | `"hello"`, `""`, `"a\"b"` |
 | `IDENT` | `[a-z_][A-Za-z0-9_]*` (키워드와 `_` 하나는 제외). 변수와 타입 이름 | `x`, `foo_1`, `_tmp`, `fooBar` |
 | `CTOR` | `[A-Z][A-Za-z0-9_]*`. 생성자 (타입 이름으로도 쓸 수 있음) | `Some`, `None`, `Node`, `X2` |
-| `TYVAR` | `'` 다음에 `IDENT` 모양. 타입 변수 | `'a`, `'key` |
+| `TYVAR` | `'` 다음에 `IDENT` 모양. type variable | `'a`, `'key` |
 | `UNDERSCORE` | `_` (와일드카드 패턴, 쓰지 않는 인자) | |
 | 키워드 | `let` `rec` `in` `fun` `if` `then` `else` `true` `false` `not` `match` `with` `when` `type` `of` | |
 | `EQUALS` | `=` | |
@@ -128,13 +128,13 @@ binop   = "+" | "-" | "*" | "/"
         | "&&" | "||" ;
 ```
 
-`expr binop expr` 부분은 그대로 두면 모호합니다. 아래의 우선순위와 결합 방향으로 모호함을 해소합니다. 함수 호출은 우선순위 선언 대신 `app`/`atom` 계층으로 표현했습니다. `Parser.fsy`도 같은 방식으로 작성되어 있으며 shift/reduce 충돌이 없습니다.
+`expr binop expr` 부분은 그대로 두면 모호합니다. 아래의 우선순위와 associativity로 모호함을 해소합니다. 함수 호출은 우선순위 선언 대신 `app`/`atom` 계층으로 표현했습니다. `Parser.fsy`도 같은 방식으로 작성되어 있으며 shift/reduce 충돌이 없습니다.
 
-### 우선순위와 결합 방향
+### 우선순위와 associativity
 
 위에 있을수록 우선순위가 **낮습니다**. `Parser.fsy`의 선언 순서와 같습니다.
 
-| 우선순위 | 연산자 | 결합 방향 | 선언 |
+| 우선순위 | 연산자 | associativity | 선언 |
 |---|---|---|---|
 | 1 (가장 낮음) | `let ... in`, `if ... then ... else`, `fun ... ->`, `match` 분기 `->` | — | `%nonassoc IN ELSE ARROW` |
 | 2 | `\|\|` | 왼쪽 | `%left OR` |
@@ -211,7 +211,7 @@ F#과 같은 순서입니다. 함수 호출은 어떤 연산자보다 먼저 묶
 
 ### 리스트와 튜플
 
-- 리스트 리터럴 `[a; b; c]`는 `a :: b :: c :: []`의 문법 설탕입니다. 원소 구분자는 `;`이고, 끝에 `;`를 붙이면(`[1;]`) parse error입니다.
+- 리스트 리터럴 `[a; b; c]`는 `a :: b :: c :: []`의 syntactic sugar입니다. 원소 구분자는 `;`이고, 끝에 `;`를 붙이면(`[1;]`) parse error입니다.
 - 튜플은 **괄호 안에** 원소를 `,`로 구분해서 씁니다. 원소는 2개 이상입니다. `(1, "a", true)`, `((1, 2), [3])`
   - `(e)`는 튜플이 아니라 괄호식입니다.
   - F#과 달리 괄호 없는 튜플(`1, 2`)은 지원하지 않습니다. parse error입니다.
@@ -243,7 +243,7 @@ match e with
 | `Some p`, `Node (l, x, r)` | 같은 생성자로 만든 값이고, 인자가 `p`와 일치 | `p`가 묶는 이름 |
 
 - 패턴은 중첩할 수 있습니다. `(n, s) :: _`, `[[x]]`, `(x :: xt, y :: yt)`
-- `::` 패턴은 오른쪽 결합입니다. `a :: b :: t`는 `a :: (b :: t)`입니다.
+- `::` 패턴은 right-associative입니다. `a :: b :: t`는 `a :: (b :: t)`입니다.
 - 생성자 패턴은 `::`보다 강합니다. `Some x :: t`는 `(Some x) :: t`입니다. 생성자의 인자가 단순한 이름이나 리터럴이 아니면 괄호로 감쌉니다(`Some (a, b)`, `Some (Some x)`, `Some (h :: t)`).
 - **생성자 패턴은 지금 보이는 생성자여야 합니다.** 오타를 조용히 "불일치"로 넘기지 않으려는 것입니다. 이 검사는 그 분기에 도달했을 때 합니다.
   - 모르는 생성자: `Unknown constructor: Nome`
@@ -268,7 +268,7 @@ match e with
 - `fun`과 함수 정의의 인자는 이름이나 `_`만 됩니다. `fun (a, b) -> ...`는 아직 지원하지 않습니다. 대신 `fun p -> let (a, b) = p in ...`으로 씁니다.
 - `_` 인자(`fun _ -> 1`, `let f _ x = x`)는 값을 받아서 버립니다. `_`는 식에 쓸 수 없으므로 참조할 방법이 없습니다.
 
-### 대수적 데이터 타입 (`type`)
+### algebraic data type (`type`)
 
 ```
 type shape = Circle of int | Rect of int * int in
@@ -282,7 +282,7 @@ sum (Node (Node (Leaf, 1, Leaf), 2, Node (Leaf, 3, Leaf)))   (* 6 *)
 
 - 이 언어에는 최상위 선언이 없으므로 `type ... in 식`처럼 **식**입니다. 생성자는 `in` 뒤의 식 안에서만 보입니다. 본문은 `let`처럼 오른쪽 끝까지 이어집니다.
 - 생성자 이름은 대문자로 시작합니다. 타입 이름은 소문자(OCaml 방식)나 대문자로 시작할 수 있습니다.
-- 타입 변수는 OCaml처럼 이름 **앞에** 씁니다. `type 'a tree`, `type ('k, 'v) entry` (F#의 `Tree<'a>` 문법은 지원하지 않음)
+- type variable은 OCaml처럼 이름 **앞에** 씁니다. `type 'a tree`, `type ('k, 'v) entry` (F#의 `Tree<'a>` 문법은 지원하지 않음)
 - 첫 생성자 앞의 `|`는 생략할 수 있습니다. 한 선언 안에서 같은 생성자 이름을 두 번 쓰면 `Duplicate constructor: <이름> (line L, column C)`입니다.
 - **`of` 뒤의 타입은 타입 추론이 사용합니다**("6. 타입 추론"). `--no-typecheck`로 평가만 할 때는 튜플 원소 수만 검사합니다.
   - `of int * int`(원소 2개) 생성자는 원소 2개짜리 튜플을 받아야 합니다. `Rect 1`은 `Constructor Rect expects 2 fields but got int`, `Rect (1, 2, 3)`은 `... but got tuple of 3`입니다.
@@ -303,7 +303,7 @@ match tryHead xs with Some x -> x | None -> 0
 defaultValue 0 (tryFind (fun x -> x > 10) xs)
 ```
 
-### 함수 정의의 문법 설탕
+### 함수 정의의 syntactic sugar
 
 `let`으로 함수를 정의하는 문법과 여러 인자 `fun`은 모두 **인자 하나짜리 람다를 중첩한 것**으로 바뀝니다(커링).
 
@@ -398,7 +398,7 @@ type Value =
 | `Negate` | int | int |
 | `Less` `Greater` `LessEqual` `GreaterEqual` | int, int 또는 string, string | bool. 문자열은 문자 코드 순서(ordinal)로 비교 |
 | `Equal` `NotEqual` | 같은 타입끼리 (int, bool, string, list, tuple, 같은 이름의 데이터 타입). 리스트와 튜플은 원소를 차례로 비교하고, 원소 수가 다르면 `false`. 데이터 값은 생성자가 다르면 `false`, 같으면 인자를 비교. 함수는 비교할 수 없음 | bool |
-| `And` `Or` | bool, bool | bool. **단락 평가** |
+| `And` `Or` | bool, bool | bool. **short-circuit evaluation** |
 | `Not` | bool | bool |
 | `Nil` | | `VList []` |
 | `Cons (e1, e2)` | `e1`: 아무 타입, `e2`: list | `e1`, `e2` 순서로 평가하고 `e2` 리스트 앞에 `e1` 값을 붙임 |
@@ -430,23 +430,23 @@ type Value =
   - `"a" + 1`은 `expected string but got int`, `1 + "a"`는 `expected int but got string`입니다.
   - 왼쪽 값이 쓸 수 없는 타입이면 가능한 타입을 모두 적습니다. `true + 1`과 `true < false`는 `expected int or string but got bool`입니다.
 - **if 분기 타입**: 평가기는 두 분기의 타입이 같은지 검사하지 않습니다. 선택된 분기만 평가하기 때문에 `--no-typecheck`로는 `if true then 1 else false`가 `1`입니다. 타입 추론은 이 식을 거부합니다.
-- **단락 평가**:
+- **short-circuit evaluation**:
   - `false && e`는 `e`를 평가하지 않고 `false`입니다. `true || e`는 `e`를 평가하지 않고 `true`입니다.
   - 예를 들어 `false && 1 / 0 = 0`은 0으로 나누기 오류 없이 `false`입니다.
 - **정수 나눗셈**: 0 쪽으로 버립니다. `7 / 2`는 `3`, `-7 / 2`는 `-3`입니다. 오른쪽이 0이면 `Attempted to divide by zero.` 오류가 납니다.
 - **오버플로**: 검사하지 않고 값이 한 바퀴 돕니다. `2147483647 + 1`은 `-2147483648`입니다.
-- **정적 범위**: 변수는 자신을 감싸는 `let`의 본문 안에서만 보입니다.
+- **lexical scope**: 변수는 자신을 감싸는 `let`의 본문 안에서만 보입니다.
   - `(let x = 1 in x) + x`는 `Unbound variable: x` 오류입니다.
 - **섀도잉**: 안쪽 `let`이 같은 이름을 다시 묶으면 본문 안에서는 안쪽 값이 쓰입니다. 본문을 벗어나면 바깥 값이 다시 보입니다.
   - `let x = 1 in (let x = 2 in x) + x`는 `2 + 1`이므로 `3`입니다.
 - **재귀는 `let rec`으로만**: `let`의 바인딩 값 `e1`은 바깥 환경에서 평가합니다. 그래서 `e1` 안에서는 자기 자신을 참조할 수 없습니다.
   - `let f x = f x in f 1`은 `Unbound variable: f`입니다.
   - `let f n = n in let f n = f (n + 1) in f 1`에서 안쪽 `f` 본문의 `f`는 바깥 `f`를 가리킵니다. 결과는 `2`입니다.
-- **클로저와 정적 범위**: 함수는 정의될 때의 환경을 기억합니다.
+- **클로저와 lexical scope**: 함수는 정의될 때의 환경을 기억합니다.
   - `let x = 1 in let f y = x + y in let x = 100 in f 1`은 `2`입니다. `101`이 아닙니다.
-- **커링과 부분 적용**: 모든 함수는 인자를 하나씩 받습니다. 인자를 일부만 주면 나머지를 기다리는 함수가 됩니다.
+- **커링과 partial application**: 모든 함수는 인자를 하나씩 받습니다. 인자를 일부만 주면 나머지를 기다리는 함수가 됩니다.
   - `let add x y = x + y in let inc = add 1 in inc 41`은 `42`입니다.
-- **값에 의한 호출(call-by-value)**: 인자는 함수 본문을 실행하기 전에 평가합니다. 쓰이지 않는 인자도 평가합니다.
+- **call-by-value**: 인자는 함수 본문을 실행하기 전에 평가합니다. 쓰이지 않는 인자도 평가합니다.
   - `let k x = 1 in k (1 / 0)`은 0으로 나누기 오류입니다.
 - **함수는 비교할 수 없음**: `(fun x -> x) = (fun x -> x)`는 `Type error: expected int, bool, string, list, tuple or data but got function`입니다.
 - **문자열 비교는 문자 코드 순서**: 사전 순서나 현재 문화권의 정렬 규칙을 쓰지 않습니다. 그래서 대문자가 소문자보다 앞입니다.
@@ -493,11 +493,11 @@ type Value =
   - `map upper (split "a b" " ")`처럼 다른 함수에 넘길 수 있습니다.
 - **가리기**: `let length = 5 in length`처럼 같은 이름을 `let`으로 다시 묶으면 내장 함수가 가려집니다.
 - **음수 인자는 괄호로**: `toString -5`는 `toString - 5`(뺄셈)입니다. `toString (-5)`로 씁니다.
-- **위치와 길이는 UTF-16 코드 단위**: .NET `string`과 같습니다. 한글 한 글자는 1이지만 이모지(`"😀"`)는 2입니다.
+- **위치와 길이는 UTF-16 code unit**: .NET `string`과 같습니다. 한글 한 글자는 1이지만 이모지(`"😀"`)는 2입니다.
 - **문화권에 영향받지 않음**: `upper`/`lower`는 `ToUpperInvariant`/`ToLowerInvariant`이고, `contains`/`startsWith`/`endsWith`/`indexOf`/`replace`는 문자 코드 그대로(ordinal) 비교합니다.
 - **세부 동작**:
   - `contains s ""`와 `startsWith s ""`는 `true`, `indexOf s ""`는 `0`입니다.
-  - `split s ""`는 한 글자(UTF-16 코드 단위)씩 나눕니다. `split "" ","`는 `[""]`입니다.
+  - `split s ""`는 한 글자(UTF-16 code unit)씩 나눕니다. `split "" ","`는 `[""]`입니다.
   - `toString`은 문자열은 그대로 돌려주고, 나머지 값은 출력 형태로 바꿉니다. 리스트 안의 문자열은 따옴표가 붙습니다(`toString ["a"]`는 `"[\"a\"]"`).
   - `toInt`는 선택적인 `-`/`+` 부호와 숫자만 받습니다. 공백이 있거나(`" 4"`) `int` 범위를 넘으면 오류입니다.
 
@@ -518,7 +518,7 @@ type Value =
 | `fold f acc xs` | 함수 → 초기값 → list → 값 | `fold (fun acc x -> acc + x) 0 [1; 2; 3]` | `6` |
 | `exists f xs`, `forall f xs` | 함수 → list → bool | `exists (fun x -> x = 2) [1; 2]` | `true` |
 
-- **인자 순서**: 고차 함수(`map`, `filter`, `fold`, `exists`, `forall`)는 F#의 `List` 모듈처럼 **함수가 먼저, 리스트가 마지막**입니다. 그래서 `let inc = map (fun x -> x + 1) in inc [1; 2]`처럼 부분 적용하기 좋습니다. 나머지는 문자열 함수처럼 다루는 리스트가 먼저입니다(`nth xs i`, `append xs ys`).
+- **인자 순서**: higher-order function(`map`, `filter`, `fold`, `exists`, `forall`)은 F#의 `List` 모듈처럼 **함수가 먼저, 리스트가 마지막**입니다. 그래서 `let inc = map (fun x -> x + 1) in inc [1; 2]`처럼 partial application을 하기 좋습니다. 나머지는 문자열 함수처럼 다루는 리스트가 먼저입니다(`nth xs i`, `append xs ys`).
 - **`fold`**: F#의 `List.fold`와 같이 왼쪽부터 접고, 함수는 `fun acc x -> ...` 순서로 인자를 받습니다. `fold (fun acc x -> x :: acc) [] [1; 2; 3]`은 `[3; 2; 1]`입니다.
 - **조건 함수**: `filter`, `exists`, `forall`에 넘긴 함수는 bool을 반환해야 합니다. 아니면 `Type error: expected bool but got <타입>`입니다.
 - **`sum`**: 원소는 모두 int여야 합니다. `+`와 같이 오버플로를 검사하지 않고 값이 한 바퀴 돕니다(`sum [2147483647; 1]`은 `-2147483648`).
@@ -607,27 +607,27 @@ Error: parse error: unexpected '+' (line 1, column 5)
 | `t1 -> t2` | `fun x -> x + 1`: `int -> int` |
 | `t option` | `Some 1`: `int option` |
 | 사용자 타입 | `Node (Leaf, 1, Leaf)`: `int tree` |
-| 타입 변수 | `'a`, `'b`, ... |
+| type variable | `'a`, `'b`, ... |
 
-출력할 때 `->`는 오른쪽 결합이고, `*`가 `->`보다, 타입 인자(`int list`)가 `*`보다 강합니다. 필요한 곳에만 괄호를 씁니다. 예: `('a -> 'b) -> 'a list -> 'b list`, `(int * int) list`
+출력할 때 `->`는 right-associative고, `*`가 `->`보다, type argument(`int list`)가 `*`보다 강합니다. 필요한 곳에만 괄호를 씁니다. 예: `('a -> 'b) -> 'a list -> 'b list`, `(int * int) list`
 
 ### 규칙
 
-- **let 다형성**: `let`으로 묶은 값의 타입은 일반화됩니다. `let id x = x in (id 1, id true)`는 `int * bool`입니다.
-  - 일반화는 `let`, `let rec`, `let (a, b) = ...`에서만 합니다. 함수 인자는 단형입니다. `fun f -> (f 1, f true)`는 오류입니다.
+- **let-polymorphism**: `let`으로 묶은 값의 타입은 generalization됩니다. `let id x = x in (id 1, id true)`는 `int * bool`입니다.
+  - generalization은 `let`, `let rec`, `let (a, b) = ...`에서만 합니다. 함수 인자는 monomorphic입니다. `fun f -> (f 1, f true)`는 오류입니다.
 - **`if`**: 조건은 `bool`, 두 분기는 같은 타입입니다.
 - **리스트**: 원소는 모두 같은 타입입니다. `[1; true]`는 오류입니다.
 - **`=`, `<>`**: 같은 타입이면 어떤 타입이든 됩니다(`'a -> 'a -> bool`). OCaml과 같습니다. 함수끼리 비교하면 타입 검사는 통과하지만 실행 중에 오류가 납니다.
 - **`+`, `<`, `>`, `<=`, `>=`**: 두 피연산자가 같은 타입이고, 그 타입은 `int` 또는 `string`이어야 합니다.
-  - 이런 "허용 목록이 있는 타입 변수"는 **일반화하지 않습니다**. 처음 쓰인 곳이 타입을 정합니다.
+  - 이런 "allowed list가 있는 type variable"은 **generalize하지 않습니다**. 처음 쓰인 곳이 타입을 정합니다.
     - `let add x y = x + y in add "a" "b"`는 `string`입니다.
     - `let add x y = x + y in (add 1 2, add "a" "b")`는 오류입니다(F#에서도 `add`는 한 타입).
   - 끝까지 정해지지 않으면 첫 번째 허용 타입으로 정합니다. `fun x y -> x + y`는 `int -> int -> int`입니다(F#과 같음).
-- **내장 함수 `length`**: `string` 또는 리스트, **`sort`**: `int list` 또는 `string list`. 같은 허용 목록 규칙을 따릅니다. 정해지지 않으면 `length`는 `string -> int`입니다.
+- **내장 함수 `length`**: `string` 또는 리스트, **`sort`**: `int list` 또는 `string list`. 같은 allowed list 규칙을 따릅니다. 정해지지 않으면 `length`는 `string -> int`입니다.
 - **패턴**: 패턴의 타입은 대상 식의 타입과 같아야 합니다. `match "1" with 1 -> ...`, 원소 수가 다른 튜플 패턴은 오류입니다.
 - **생성자**: `type` 선언의 `of` 타입으로 생성자 타입을 만듭니다.
   - `type 'a tree = Leaf | Node of 'a tree * 'a * 'a tree`에서 `Leaf : 'a tree`, `Node : 'a tree * 'a * 'a tree -> 'a tree`
-  - 선언에 쓴 타입 이름과 타입 변수는 알려진 것이어야 합니다: `Unknown type: foo`, `Unbound type variable: 'b`, `Type list expects 1 type argument(s) but got 0`
+  - 선언에 쓴 타입 이름과 type variable은 알려진 것이어야 합니다: `Unknown type: foo`, `Unbound type variable: 'b`, `Type list expects 1 type argument(s) but got 0`
   - 같은 이름의 `type`을 다시 선언하면 다른 타입입니다. 오류 메시지에서는 `t/1`, `t/2`처럼 구분합니다.
 
 ### 내장 함수의 타입
@@ -661,7 +661,7 @@ Error: parse error: unexpected '+' (line 1, column 5)
 | 원인 | 메시지 |
 |---|---|
 | 타입이 다름 | `Type mismatch: expected <기대 타입> but got <실제 타입>` (예: `[1; true]`는 `expected int list but got bool list`) |
-| 허용 목록에 없는 타입 | `Type mismatch: expected int or string but got bool` |
+| allowed list에 없는 타입 | `Type mismatch: expected int or string but got bool` |
 | 함수가 아닌 값을 호출 | `Type mismatch: expected function but got int` |
 | 자기 자신을 포함하는 타입 (`fun x -> x x`) | `Type mismatch: cannot construct infinite type 'a = 'a -> 'b` |
 | 정의되지 않은 변수, 생성자 | `Unbound variable: x`, `Unknown constructor: X` |
@@ -680,7 +680,7 @@ Error: parse error: unexpected '+' (line 1, column 5)
   - 연산자 피연산자, `::`의 오른쪽, 리스트 리터럴의 원소(`[1; true]`의 `true`), 패턴, 가드, 분기 본문도 그 자체를 가리킵니다.
   - 정의되지 않은 이름은 그 이름을 가리킵니다.
 - **위치 기록 방식:** 위치는 AST에 넣지 않습니다. 파서가 노드마다 시작 위치를 따로 기록합니다(`Errors.positionOf`). 그래서 AST 모양과 `%A` 출력은 그대로입니다. `TypeError`의 `Message`에는 위치가 없고, 위치는 `position` 필드에 있습니다.
-- 메시지의 두 타입은 단일화가 실패한 시점의 **전체 타입**입니다. 일부가 이미 단일화된 상태로 보일 수 있습니다.
+- 메시지의 두 타입은 unification이 실패한 시점의 **전체 타입**입니다. 일부가 이미 unify된 상태로 보일 수 있습니다.
 
 ### 빠진 match 분기 경고
 
@@ -704,13 +704,13 @@ Warning: this match is not exhaustive. Example of a value not matched: None (lin
 
 - **생성자 목록:** `bool`, 리스트, `option`, 튜플, 사용자 타입은 생성자를 모두 압니다. `int`와 `string`은 값이 무한히 많으므로 `_`나 변수가 있어야 덮습니다.
 - **가드:** 가드가 있는 분기는 실패할 수 있으므로 덮는 데 세지 않습니다(OCaml, F#과 같음).
-- **알고리즘:** Maranget, "Warnings for pattern matching"(2007)의 유용성(usefulness) 검사입니다. 값의 예도 같은 계산에서 나옵니다(`Infer.typecheckWithWarnings`).
+- **알고리즘:** Maranget, "Warnings for pattern matching"(2007)의 usefulness 검사입니다. 값의 예도 같은 계산에서 나옵니다(`Infer.typecheckWithWarnings`).
 - **같은 결과:** 경고가 없는 프로그램은 실행 중에 `Match failure`가 나지 않습니다. 평가 예제로 이것을 테스트합니다(`DiagnosticTests`).
 - **아직 하지 않는 것:** 쓰이지 않는 분기 경고(OCaml Warning 11)는 아직 없습니다.
 
-### 건전성과 남은 실행 중 오류
+### soundness와 남은 실행 중 오류
 
-타입 검사를 통과한 프로그램은 실행 중에 `Type error`가 나지 않습니다. 함수끼리 `=` 비교만 예외입니다(테스트: `InferTests`의 건전성 테스트). 다음 오류는 여전히 실행 중에 납니다.
+타입 검사를 통과한 프로그램은 실행 중에 `Type error`가 나지 않습니다. 함수끼리 `=` 비교만 예외입니다(테스트: `InferTests`의 soundness 테스트). 다음 오류는 여전히 실행 중에 납니다.
 
 - `Match failure` (빠진 분기가 있으면 실행 전에 경고함, 아래), `head []`, `nth`/`substr` 범위, `toInt` 변환 실패
 - 0으로 나누기, 재귀가 너무 깊음

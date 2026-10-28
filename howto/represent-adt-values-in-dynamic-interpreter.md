@@ -3,7 +3,7 @@ created: 2026-10-28
 description: ADT 값은 (타입 이름, 생성자 이름, 인자) 데이터로, 생성자는 환경에 든 보통 값으로 표현한다. 생성자를 함수처럼 넘길 수 있고, 선언 문법이나 내장 option에 특별한 경로가 필요 없다
 ---
 
-# 동적 인터프리터에서 ADT 값 표현하기
+# 동적 인터프리터에서 ADT value representation하기
 
 `type shape = Circle of int | Rect of int * int`를 지원하려면 새 값 종류 두 개면 된다. **생성자로 만든 값** `VData (typeName, ctor, payload)`와 **인자를 기다리는 생성자** `VConstructor (typeName, ctor, fields)`이다. 둘 다 환경에 넣는 보통 값이다. 그래서 `Some 1`은 기존의 함수 호출 `App (Ctor "Some", 1)`로 처리되고, `map Some xs`도 따로 처리할 것 없이 동작한다.
 
@@ -17,7 +17,7 @@ description: ADT 값은 (타입 이름, 생성자 이름, 인자) 데이터로, 
 | `Some`, `Node` (인자 있음) | 인자를 받으면 값이 되는 **함수** | `VConstructor ("option", "Some", 1)` |
 | `Some 1` | 값 | `VData ("option", "Some", Some (VInt 1))` |
 
-`VConstructor`를 함수 값으로 취급하면, 함수 호출(`apply`)에 케이스 하나만 추가하면 된다. 고차 함수, 부분 적용, 내장 함수 인자로 넘기기 같은 기존 기능을 생성자가 그대로 물려받는다.
+`VConstructor`를 함수 값으로 취급하면, 함수 호출(`apply`)에 케이스 하나만 추가하면 된다. higher-order function, partial application, 내장 함수 인자로 넘기기 같은 기존 기능을 생성자가 그대로 물려받는다.
 
 **타입 이름을 값에 넣는 이유:** 이 언어에는 정적 타입이 없다. 그래서 "어느 타입의 생성자인가"를 값이 직접 들고 있어야 한다. 이 정보는 세 곳에서 쓰인다.
 - 오류 메시지: `expected option but got int`
@@ -29,10 +29,10 @@ description: ADT 값은 (타입 이름, 생성자 이름, 인자) 데이터로, 
 생성자를 특별한 AST 노드로만 처리하면(`CtorApp of string * Expr`) 이런 것들이 안 된다.
 
 - `map Some [1; 2]`: 생성자가 값이 아니라서 넘길 수 없다
-- `let mk = Node (Leaf, 1) in ...`: 부분 적용이 안 된다
+- `let mk = Node (Leaf, 1) in ...`: partial application이 안 된다
 - 내장 `option`: 선언 경로와 별도로 하드코딩해야 한다
 
-반대로 F# 함수(`Value -> Value`)를 값에 넣으면 `Value`의 구조적 equality가 깨진다(`implement-builtins-as-data-values.md`). 그래서 데이터로 표현한다.
+반대로 F# 함수(`Value -> Value`)를 값에 넣으면 `Value`의 structural equality가 깨진다(`implement-builtins-as-data-values.md`). 그래서 데이터로 표현한다.
 
 ## Recognition Pattern
 
@@ -146,9 +146,9 @@ type t = A in let v = A in type u = A in match v with A -> 1 | _ -> 2   → 2
 ## 체크리스트
 
 - [ ] 생성자 값은 `(타입 이름, 생성자 이름, 인자)` 데이터이고 F# 함수를 담지 않는다
-- [ ] 인자 있는 생성자는 함수처럼 호출되는 값이라 넘기기와 부분 적용이 된다
+- [ ] 인자 있는 생성자는 함수처럼 호출되는 값이라 넘기기와 partial application이 된다
 - [ ] 인자가 여럿인 생성자의 payload는 튜플 하나라서 기존 튜플 패턴을 그대로 쓴다
-- [ ] `type` 선언과 내장 `option`이 같은 값 표현을 쓴다
+- [ ] `type` 선언과 내장 `option`이 같은 value representation을 쓴다
 - [ ] `=`는 같은 타입끼리만 비교하고, 출력은 다시 입력하면 같은 값이 된다
 
 ## 관련 문서

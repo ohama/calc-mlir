@@ -5,7 +5,7 @@ description: Expecto 테스트 프로젝트를 dotnet test로도 돌리려면 Ge
 
 # Expecto 테스트 프로젝트를 `dotnet test`와 함께 쓰기
 
-Expecto 테스트 프로젝트는 그 자체로 콘솔 앱이다. 여기에 `dotnet test` 지원을 붙이면 **진입점 충돌**과 **테스트를 하나도 찾지 못하는데도 성공하는 문제**가 생길 수 있다.
+Expecto 테스트 프로젝트는 그 자체로 콘솔 앱이다. 여기에 `dotnet test` 지원을 붙이면 **entry point 충돌**과 **테스트를 하나도 찾지 못하는데도 성공하는 문제**가 생길 수 있다.
 
 ## The Insight
 
@@ -18,7 +18,7 @@ Expecto 프로젝트를 실행하는 방법은 두 가지이고, 쓰는 장치�
 
 두 방법을 함께 쓰려면 두 장치가 충돌하지 않게 맞춰야 한다.
 
-1. `Microsoft.NET.Test.Sdk`는 테스트 프로젝트에 **진입점(main)을 자동으로 생성**한다. Expecto의 `main`과 겹치므로 자동 생성을 꺼야 한다.
+1. `Microsoft.NET.Test.Sdk`는 테스트 프로젝트에 **entry point(main)를 자동으로 생성**한다. Expecto의 `main`과 겹치므로 자동 생성을 꺼야 한다.
 2. VSTest는 어댑터가 없으면 Expecto 테스트를 알아보지 못한다. 이때 **실패가 아니라 "테스트 없음"으로 끝나고 종료 코드는 0**이다.
 
 ## Why This Matters
@@ -32,7 +32,7 @@ Main.fs(6,5): error FS0433: A function labeled with the 'EntryPointAttribute' at
 must be the last declaration in the last file in the compilation sequence.
 ```
 
-메시지만 보면 파일 순서 문제처럼 보인다. 실제 원인은 SDK가 몰래 추가한 진입점 파일이 내 `Main.fs` **뒤에** 컴파일되는 것이다.
+메시지만 보면 파일 순서 문제처럼 보인다. 실제 원인은 SDK가 몰래 추가한 entry point 파일이 내 `Main.fs` **뒤에** 컴파일되는 것이다.
 
 **증상 2: CI가 거짓으로 성공 (더 위험함)**
 
@@ -68,7 +68,7 @@ dotnet add package Microsoft.NET.Test.Sdk     # dotnet test 호스트
 dotnet add package YoloDev.Expecto.TestSdk    # dotnet test ↔ Expecto 어댑터
 ```
 
-### Step 2: 진입점 자동 생성을 끈다
+### Step 2: entry point 자동 생성을 끈다
 
 ```xml
 <PropertyGroup>
@@ -99,7 +99,7 @@ open Expecto
 let main argv = runTestsInAssemblyWithCLIArgs [] argv
 ```
 
-테스트 파일에서는 `[<Tests>]`를 붙인 값만 쓰면 된다. 두 실행 방법 모두 이 속성으로 테스트를 찾는다.
+테스트 파일에서는 `[<Tests>]`를 붙인 값만 쓰면 된다. 두 실행 방법 모두 이 attribute로 테스트를 찾는다.
 
 ```fsharp
 [<Tests>]
@@ -147,4 +147,4 @@ dotnet run --project tests/Calc.Tests -- --list-tests      # 목록만
 
 ## 관련 문서
 
-- `write-fscheck-properties-for-parser.md` - Expecto.FsCheck로 속성 테스트 작성하기
+- `write-fscheck-properties-for-parser.md` - Expecto.FsCheck로 property-based testing 작성하기

@@ -33,10 +33,10 @@
 |---|---|---|
 | 파싱 | `Lexer.fsl`, `Parser.fsy` | 소스 → `Ast.Expr` (인터프리터와 같음) |
 | 타입 검사 | `Infer.fs` | 통과한 프로그램만 컴파일 (`--no-typecheck`와 함께 쓸 수 없음) |
-| 낮추기 | `Core.fs`, `Lower.fs` | `Ast.Expr` → Core IR. 연산을 `Prim`으로, `&&`/`||`를 `if`로, 클로저 변환(함수를 최상위로). 지원하지 않는 기능은 `NotSupported` |
+| lowering | `Core.fs`, `Lower.fs` | `Ast.Expr` → Core IR. 연산을 `Prim`으로, `&&`/`||`를 `if`로, closure conversion(함수를 최상위로). 지원하지 않는 기능은 `NotSupported` |
 | 코드 생성 | `Codegen.fs` | Core IR → MLIR 텍스트 |
 | 빌드 | `Toolchain.fs` | 도구 찾기, 임시 폴더에서 외부 도구(`mlir-opt`, `mlir-translate`, `clang`)를 차례로 실행, C 런타임 오브젝트 캐시 |
-| 런타임 | `runtime/runtime.c`, `builtins.c`, `runtime.h`, `unicode.h` | 초기화, 결과 출력, 오류 종료, 다형 연산(`calc_add`, `calc_eq`, `calc_compare`), 내장 함수 33개, `calc_apply` |
+| 런타임 | `runtime/runtime.c`, `builtins.c`, `runtime.h`, `unicode.h` | 초기화, 결과 출력, 오류 종료, polymorphic 연산(`calc_add`, `calc_eq`, `calc_compare`), 내장 함수 33개, `calc_apply` |
 | 진입 | `Program.fs`의 `compile` | 위 단계를 잇고, 오류를 인터프리터와 같은 형식(`Error: ...`)으로 출력 |
 
 F#으로 하는 일은 MLIR **텍스트**를 만드는 데까지입니다. LLVM을 라이브러리로 링크하지 않고, 텍스트 파일을 외부 도구에 넘깁니다(설계 D1).
@@ -116,18 +116,18 @@ llvm.func @main() -> i32 {
 }
 ```
 
-- **값 표현:** 모든 값은 `i64` 하나입니다. 하위 3비트가 종류를 나타내고, int `n`은 `(n << 3) | 1`, bool은 `3`(false)과 `11`(true)입니다(설계 D3).
+- **value representation:** 모든 값은 `i64` 하나입니다. 하위 3비트가 종류를 나타내고, int `n`은 `(n << 3) | 1`, bool은 `3`(false)과 `11`(true)입니다(설계 D3).
 - **함수 형태:** 함수는 모두 `llvm.func`이고, 본문에는 `arith`과 `scf`를 섞어 씁니다(설계 D2).
 - **`let`:** 코드를 만들지 않습니다. `Codegen`의 환경(`Map<string, string>`, 이름 → SSA 이름)에 넣을 뿐입니다.
 
-### ③ `mlir-opt`가 만드는 `prog.llvm.mlir`: 모두 `llvm` 방언으로
+### ③ `mlir-opt`가 만드는 `prog.llvm.mlir`: 모두 `llvm` dialect로
 
 ```
 mlir-opt prog.mlir --convert-scf-to-cf --convert-cf-to-llvm \
          --convert-arith-to-llvm --reconcile-unrealized-casts -o prog.llvm.mlir
 ```
 
-`scf.if`는 기본 블록과 분기(`llvm.cond_br %22, ^bb1, ^bb6`)로 바뀌고, `arith.*`는 `llvm.*`로 바뀝니다. 이 과정에서 상수 계산의 상당 부분이 접힙니다.
+`scf.if`는 basic block과 분기(`llvm.cond_br %22, ^bb1, ^bb6`)로 바뀌고, `arith.*`는 `llvm.*`로 바뀝니다. 이 과정에서 상수 계산의 상당 부분이 접힙니다.
 
 ### ④ `mlir-translate`가 만드는 `prog.ll`: LLVM IR
 
@@ -179,15 +179,15 @@ csel x0, x8, x19, gt
 ret
 ```
 
-## 3. 진입점 `main`
+## 3. entry point `main`
 
-실행 파일의 진입점은 **컴파일러가 프로그램마다 만들어 넣는** `@main`입니다. C 런타임에는 `main`이 없습니다.
+실행 파일의 entry point는 **컴파일러가 프로그램마다 만들어 넣는** `@main`입니다. C 런타임에는 `main`이 없습니다.
 
 | 함수 | 만드는 곳 | 하는 일 |
 |---|---|---|
 | `main` | `Codegen.emitProgram` (프로그램마다 같은 모양) | 런타임 초기화 → `calc_main` → 결과 출력 → `return 0` |
 | `calc_main` | `Codegen.emitExpr` (프로그램마다 다름) | Calc 식 전체를 계산해서 값 하나(`i64`)를 돌려줌 |
-| `calc_*` | `runtime.c` | 초기화, 출력, 오류, 다형 연산 |
+| `calc_*` | `runtime.c` | 초기화, 출력, 오류, polymorphic 연산 |
 
 - **실행 순서:** OS 로더(dyld)가 C 시작 코드를 거쳐 `main` 심볼을 부릅니다. `runtime.c`에는 `main`이 없으므로 이름이 충돌하지 않습니다.
 - **`main`과 `calc_main`을 나눈 이유:** 실행 틀(초기화, 출력, 종료 코드)과 프로그램 계산을 분리하려는 것입니다. 단계 3에서 최상위 함수가 늘어나도 `main`은 그대로입니다.
@@ -232,9 +232,9 @@ U _GC_init  U _GC_malloc  U _printf  U _fprintf  U _exit ← 실행할 때 동�
 /usr/lib/libSystem.B.dylib
 ```
 
-### 호출: 보통의 C 호출 규약
+### 호출: 보통의 C calling convention
 
-- **타입 대응:** MLIR의 `i64`는 C의 `int64_t`(`value`), `i32`는 `int32_t`, 인자 없는 함수는 `void f(void)`입니다. 플랫폼의 C 호출 규약 그대로 레지스터로 넘깁니다.
+- **타입 대응:** MLIR의 `i64`는 C의 `int64_t`(`value`), `i32`는 `int32_t`, 인자 없는 함수는 `void f(void)`입니다. 플랫폼의 C calling convention 그대로 레지스터로 넘깁니다.
 - **약속을 적은 곳:** 생성 코드와 런타임 사이의 약속은 `runtime.h`에 적습니다(태그 상수, 함수 목록). 런타임 함수 이름은 모두 `calc_`로 시작합니다.
 - **런타임 함수가 필요한 연산:** 타입이 여럿일 수 있는 연산(`+`, `=`, `<`)과 바깥 세계와 닿는 일(출력, 오류 종료, GC)을 런타임이 맡습니다. 정수 사칙연산처럼 타입이 하나뿐인 연산은 인라인 `arith`로 만듭니다(설계 D6).
 
@@ -243,8 +243,8 @@ U _GC_init  U _GC_malloc  U _printf  U _fprintf  U _exit ← 실행할 때 동�
 | 한계 | 결과 | 생각해 볼 해결책 |
 |---|---|---|
 | 실행 파일이 Homebrew의 `libgc.1.dylib`에 동적으로 의존 | `bdw-gc`가 없는 기기에서는 실행되지 않음 | `libgc.a` 정적 링크 |
-| MLIR 선언(`Codegen.fs`의 문자열)과 `runtime.h`를 맞추는 검사가 없음 | 인자 타입이 어긋나도 링크는 성공하고, 실행 중 값이 틀림. 지금은 차등 테스트만 잡음 | 선언을 한 곳에서 만들기, 또는 헤더와 비교하는 테스트 |
-| 런타임 호출은 최적화를 막음 | 위 어셈블리에서 `calc_compare` 호출이 남음 | 타입별 특수화(설계 단계 9) |
+| MLIR 선언(`Codegen.fs`의 문자열)과 `runtime.h`를 맞추는 검사가 없음 | 인자 타입이 어긋나도 링크는 성공하고, 실행 중 값이 틀림. 지금은 differential testing만 잡음 | 선언을 한 곳에서 만들기, 또는 헤더와 비교하는 테스트 |
+| 런타임 호출은 최적화를 막음 | 위 어셈블리에서 `calc_compare` 호출이 남음 | 타입별 specialization(설계 단계 9) |
 
 ## 6. 함수와 클로저 (단계 3)
 
@@ -252,9 +252,9 @@ U _GC_init  U _GC_malloc  U _printf  U _fprintf  U _exit ← 실행할 때 동�
 let k = 10 in let add = fun x -> x + k in add 32
 ```
 
-### Lower: 클로저 변환
+### Lower: closure conversion
 
-`fun x -> x + k`를 최상위 함수로 옮깁니다. 본문의 자유 변수 중 인자를 뺀 `k`가 캡처할 변수입니다.
+`fun x -> x + k`를 최상위 함수로 옮깁니다. 본문의 free variable 중 인자를 뺀 `k`가 캡처할 변수입니다.
 
 ```
 Functions = [ { Name = "lambda_0"; Param = "x"; Self = None; Captured = ["k"];
@@ -266,7 +266,7 @@ Main      = CLet ("k", CInt 10,
 
 ### Codegen: 함수 하나와 클로저 블록
 
-모든 함수 값은 클로저이고, 호출 규약은 `(클로저, 인자) -> 결과` 하나입니다.
+모든 함수 값은 클로저이고, calling convention은 `(클로저, 인자) -> 결과` 하나입니다.
 
 ```mlir
 llvm.func internal @lambda_0(%closure: !llvm.ptr, %arg: i64) -> i64 {   // internal: 모듈 밖에서 보이지 않음
@@ -295,11 +295,11 @@ llvm.func @calc_main() -> i64 {
 ```
 
 - **클로저 블록:** `[헤더, 코드 포인터, 캡처한 값...]`이고 `calc_alloc`(Boehm GC)으로 할당합니다. 해제 코드는 없습니다.
-- **값으로서의 클로저:** 블록 주소를 그대로 `i64`로 씁니다. 8바이트 정렬이라 하위 3비트가 `000`이고, 런타임은 이것으로 정수·불리언과 구분합니다.
+- **값으로서의 클로저:** 블록 주소를 그대로 `i64`로 씁니다. 8-byte aligned라 하위 3비트가 `000`이고, 런타임은 이것으로 정수·불리언과 구분합니다.
 - **헤더:** 런타임이 헤더의 종류(1)를 보고 함수 값을 `<fun>`으로 출력합니다. 함수끼리 `=`로 비교하면 인터프리터와 같은 타입 오류로 끝냅니다.
 - **`let rec f x = ...`:** 본문의 `f`는 `%closure` 자신(`llvm.ptrtoint %closure`)입니다. 자기 자신을 캡처하지 않으므로 순환 참조를 만들 필요가 없습니다.
 
-`clang -O2`는 클로저를 만든 직후의 호출을 알아봅니다. 저장한 코드 포인터와 `k`를 다시 읽지 않고 그대로 쓰고, `lambda_0`을 펼쳐 넣습니다.
+`clang -O2`는 클로저를 만든 직후의 호출을 알아봅니다. 저장한 코드 포인터와 `k`를 다시 읽지 않고 그대로 쓰고, `lambda_0`을 inline합니다.
 
 ```llvm
 define i64 @calc_main() {
@@ -333,7 +333,7 @@ llvm.mlir.global internal constant @str_0() {addr_space = 0 : i32, alignment = 8
 
 llvm.func @calc_main() -> i64 {
   %v1 = llvm.mlir.addressof @str_0 : !llvm.ptr
-  %v2 = llvm.ptrtoint %v1 : !llvm.ptr to i64           // 값 = 전역의 주소 (8바이트 정렬)
+  %v2 = llvm.ptrtoint %v1 : !llvm.ptr to i64           // 값 = 전역의 주소 (8-byte alignment)
   %v3 = llvm.mlir.addressof @str_1 : !llvm.ptr
   %v4 = llvm.ptrtoint %v3 : !llvm.ptr to i64
   %v5 = llvm.call @calc_add(%v2, %v4) : (i64, i64) -> i64   // 런타임이 태그와 헤더로 연결을 고름
@@ -341,8 +341,8 @@ llvm.func @calc_main() -> i64 {
 }
 ```
 
-- **저장:** 코드 단위는 .NET `string`과 같은 UTF-16입니다. 그래서 비교(`String.CompareOrdinal`)가 코드 단위 순서로 인터프리터와 같습니다. 예를 들어 `"😀" < "\uFFFF"`는 `true`입니다.
-- **출력:** 런타임이 UTF-8로 바꿉니다. 짝이 없는 대리 코드 단위는 U+FFFD가 됩니다.
+- **저장:** code unit은 .NET `string`과 같은 UTF-16입니다. 그래서 비교(`String.CompareOrdinal`)가 code unit 순서로 인터프리터와 같습니다. 예를 들어 `"😀" < "\uFFFF"`는 `true`입니다.
+- **출력:** 런타임이 UTF-8로 바꿉니다. 짝이 없는 surrogate code unit은 U+FFFD가 됩니다.
 - **상수:** 전역이라 GC가 관리하지 않습니다.
 - **`+`의 결과:** `GC_MALLOC_ATOMIC`으로 할당합니다. 블록 안에 포인터가 없으므로 GC가 내용을 훑지 않습니다.
 - **출력 형식:** `Eval.formatValue`와 같습니다. 따옴표로 감싸고 `\\ \" \n \t \r`만 이스케이프합니다.
@@ -383,7 +383,7 @@ match [7] with | x :: _ when x > 5 -> x | _ -> 0
 - **분기 하나:** "조건(`i1`)을 만드는 `scf.if`"와 "본문 또는 나머지를 고르는 `scf.if`" 두 개가 됩니다. 나머지 분기는 한 번만 생성됩니다.
 - **실패:** 마지막 분기까지 실패하면 `calc_match_failure(v)`가 `Error: Match failure: <값>`을 출력하고 종료 코드 1로 끝냅니다.
 - **`let (a, b) = e in body`:** 분기 하나짜리 `match`로 바뀝니다. 튜플 분해는 실패할 수 없으므로 검사 코드 없이 필드만 읽습니다.
-- **런타임:** `format_value`(출력과 Match failure 메시지)와 `equals`(구조적 `=`)가 cons와 튜플 블록을 따라갑니다. 리스트는 재귀가 아니라 반복문으로 돌아서 긴 리스트도 C 스택을 쓰지 않습니다. `equals`는 인터프리터처럼 길이를 먼저 비교합니다. 그래서 `[fun x -> x] = []`는 오류 없이 `false`입니다.
+- **런타임:** `format_value`(출력과 Match failure 메시지)와 `equals`(structural `=`)가 cons와 튜플 블록을 따라갑니다. 리스트는 재귀가 아니라 반복문으로 돌아서 긴 리스트도 C 스택을 쓰지 않습니다. `equals`는 인터프리터처럼 길이를 먼저 비교합니다. 그래서 `[fun x -> x] = []`는 오류 없이 `false`입니다.
 
 ## 9. ADT와 option (단계 6)
 
@@ -408,7 +408,7 @@ llvm.mlir.global internal constant @ctor_1("None\00") {addr_space = 0 : i32}
 } else { ... }                                         // | None -> 0, 그다음 Match failure
 ```
 
-- **인자 없는 생성자(`None`, `Leaf`):** 8바이트 정렬 전역 상수 블록 `[헤더 261, 이름]`의 주소가 값입니다. 할당이 없습니다.
+- **인자 없는 생성자(`None`, `Leaf`):** 8-byte aligned 전역 상수 블록 `[헤더 261, 이름]`의 주소가 값입니다. 할당이 없습니다.
 - **생성자 검사:** 블록의 이름 포인터를 이름 전역의 주소와 비교합니다. 이름 전역은 모듈에 이름마다 하나라서 포인터 비교로 충분합니다. 런타임의 `=`는 다른 모듈의 값도 비교할 수 있게 `strcmp`를 씁니다.
 - **`type` 선언:** 코드를 만들지 않습니다. `Lower`가 생성자 범위(이름 → 인자 유무)를 넓히는 데만 씁니다. `Some`과 `None`은 처음부터 범위에 있습니다.
 - **인자 있는 생성자를 값으로 쓸 때(`let f = Some in f 3`):** `Lower`가 클로저 `fun x -> Some x`로 바꿉니다. 그래서 `<fun>`으로 출력되고, `=`로 비교하면 인터프리터와 같은 타입 오류가 납니다.
@@ -425,17 +425,17 @@ let f = substr "hello" in (f 1 3, map length ["a"; "bb"], tryHead [7])
 | 쓰는 모양 | Core | 생성 코드 |
 |---|---|---|
 | 인자가 다 모임: `tryHead [7]` | `CBuiltin ("tryHead", [...])` | `llvm.call @calc_builtin_tryHead(%xs) : (i64) -> i64` |
-| 부분 적용: `substr "hello"` | 클로저 `fun $b0 -> fun $b1 -> fun $b2 -> CBuiltin (...)`에 차례로 적용 | 클로저 3개, 마지막 함수가 `@calc_builtin_substr` 호출 |
+| partial application: `substr "hello"` | 클로저 `fun $b0 -> fun $b1 -> fun $b2 -> CBuiltin (...)`에 차례로 적용 | 클로저 3개, 마지막 함수가 `@calc_builtin_substr` 호출 |
 | 값으로: `map length xs` | `CBuiltin ("map", [<length 클로저>; xs])` | 런타임의 `map`이 `calc_apply`로 `length` 클로저를 부름 |
 | 가린 이름: `let length = ... in length x` | 보통 변수 `CVar` | 클로저 호출 |
 
 - **선언:** 모듈은 33개 내장 함수를 모두 `llvm.func @calc_builtin_<이름>(i64, ...) -> i64`로 선언합니다. 링커가 `builtins.o`와 이름으로 연결합니다.
-- **`calc_apply(f, x)`:** 클로저 1번 칸의 코드 포인터를 `(value *, value) -> value` 함수로 부릅니다. 생성한 코드의 호출 규약과 같으므로 C와 MLIR이 서로의 함수를 그대로 부를 수 있습니다.
+- **`calc_apply(f, x)`:** 클로저 1번 칸의 코드 포인터를 `(value *, value) -> value` 함수로 부릅니다. 생성한 코드의 calling convention과 같으므로 C와 MLIR이 서로의 함수를 그대로 부를 수 있습니다.
 - **option:** 런타임이 `Some`/`None`을 만들므로(`tryHead`, `tryFind`), 생성 코드는 `Some`/`None`의 이름 전역을 따로 만들지 않습니다. 대신 런타임의 `calc_name_some`, `calc_none`을 외부 전역으로 선언해서 씁니다(`llvm.mlir.global external constant`). 그래야 패턴 검사의 포인터 비교가 런타임이 만든 값에도 맞습니다.
 - **`upper`, `lower`, `trim`:** C 표준 라이브러리 대신 .NET에서 만든 표(`unicode.h`)를 씁니다. `ß`와 `İ`처럼 invariant 변환이 그대로 두는 문자까지 인터프리터와 같습니다.
 
 ## 관련 문서
 
-- [compiler-design.md](compiler-design.md): 설계 결정(D1–D10), 값 표현, 단계별 계획
+- [compiler-design.md](compiler-design.md): 설계 결정(D1–D10), value representation, 단계별 계획
 - [build.md](build.md): 도구 설치(`brew install llvm bdw-gc`), `CALC_LLVM_BIN`과 `CALC_GC_PREFIX`, 옵션
-- [testing.md](testing.md): 컴파일러 차등 테스트
+- [testing.md](testing.md): 컴파일러 differential testing

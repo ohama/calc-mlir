@@ -5,11 +5,11 @@ description: 버전은 fsproj <Version> 한 곳에서 관리하고 실행 중에
 
 # fsproj `<Version>` 하나로 버전 관리하기
 
-버전 번호를 코드, 문서, 태그에 따로 적으면 반드시 어긋난다. `.fsproj`의 `<Version>`을 **유일한 원본**으로 두고, 프로그램은 실행 중에 어셈블리 속성에서 버전을 읽는다.
+버전 번호를 코드, 문서, 태그에 따로 적으면 반드시 어긋난다. `.fsproj`의 `<Version>`을 **유일한 원본**으로 두고, 프로그램은 실행 중에 assembly attribute에서 버전을 읽는다.
 
 ## The Insight
 
-`<Version>0.4.0</Version>` 한 줄을 쓰면 SDK가 빌드할 때 어셈블리 속성 세 개를 만든다(`obj/.../Calc.AssemblyInfo.fs`).
+`<Version>0.4.0</Version>` 한 줄을 쓰면 SDK가 빌드할 때 assembly attribute 세 개를 만든다(`obj/.../Calc.AssemblyInfo.fs`).
 
 ```fsharp
 [<assembly: AssemblyVersionAttribute("0.4.0.0")>]

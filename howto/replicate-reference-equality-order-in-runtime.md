@@ -1,9 +1,9 @@
 ---
 created: 2026-10-28
-description: 구조적 =는 결과뿐 아니라 "어디서 멈추는가"도 기준 구현과 같아야 한다. 비교할 수 없는 값(함수)이 섞이면 검사 순서에 따라 false가 되기도 하고 오류가 나기도 한다. 인터프리터의 패턴 매칭 순서와 F# 라이브러리 함수의 단락 동작을 그대로 옮긴다
+description: structural =는 결과뿐 아니라 "어디서 멈추는가"도 기준 구현과 같아야 한다. 비교할 수 없는 값(함수)이 섞이면 검사 순서에 따라 false가 되기도 하고 오류가 나기도 한다. 인터프리터의 패턴 매칭 순서와 F# 라이브러리 함수의 단락 동작을 그대로 옮긴다
 ---
 
-# 런타임의 구조적 비교를 기준 구현과 같은 순서로 만들기
+# 런타임의 structural equality를 기준 구현과 같은 순서로 만들기
 
 리스트와 튜플의 `=`는 원소를 차례로 비교하는 간단한 재귀다. 그런데 언어에 **비교할 수 없는 값**(이 언어에서는 함수)이 있으면, 비교 순서가 결과를 바꾼다. 먼저 다른 곳을 만나면 `false`로 끝나고, 먼저 함수를 만나면 오류로 끝난다. 그래서 C 런타임의 `equals`는 인터프리터의 `valueEquals`와 **같은 순서로** 멈춰야 한다.
 
@@ -74,7 +74,7 @@ static int equals(value a, value b) {
 
 리스트를 따라가는 부분은 재귀가 아니라 반복문이다. 그래서 긴 리스트에서도 C 스택을 쓰지 않는다(원소 안으로 들어가는 재귀만 남는다).
 
-### Step 3: 순서가 드러나는 예제를 차등 테스트에 넣는다
+### Step 3: 순서가 드러나는 예제를 differential testing에 넣는다
 
 같지 않으면서 함수를 품은 값, 같으면서 함수를 품은 값을 짝으로 넣는다.
 
@@ -88,7 +88,7 @@ Expect.equal
 
 ### Step 4: 오류 메시지는 기준 구현의 문장을 그대로 쓴다
 
-인터프리터는 `typeError "int, bool, string, list, tuple or data" v`로 메시지를 만든다. 런타임은 그 결과 문장을 상수로 쓴다. 문장이 바뀌면 차등 테스트가 바로 알려 준다.
+인터프리터는 `typeError "int, bool, string, list, tuple or data" v`로 메시지를 만든다. 런타임은 그 결과 문장을 상수로 쓴다. 문장이 바뀌면 differential testing이 바로 알려 준다.
 
 ## Example
 
@@ -112,5 +112,5 @@ return equals(a, b);
 ## 관련 문서
 
 - `guard-fsharp-core-semantics-in-builtins.md` - FSharp.Core 함수의 동작이 언어 의미가 되는 문제
-- `write-differential-tests-for-compiler.md` - 오류 예제까지 비교하는 차등 테스트
+- `write-differential-tests-for-compiler.md` - 오류 예제까지 비교하는 differential testing
 - `match-interpreter-integer-semantics-in-native-code.md` - 정수 연산의 경계 의미 맞추기

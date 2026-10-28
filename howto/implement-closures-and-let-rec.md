@@ -9,7 +9,7 @@ description: 함수 값은 정의 시점의 환경을 함께 저장한 클로저
 
 ## The Insight
 
-**1. 함수 본문은 "어디서 정의됐나"의 환경에서 평가한다 (정적 범위).**
+**1. 함수 본문은 "어디서 정의됐나"의 환경에서 평가한다 (lexical scope).**
 
 ```
 let x = 1 in
@@ -34,13 +34,13 @@ f 1                     ← 호출할 때 x = 100 이지만, 결과는 1 + 1 = 2
 
 ## Why This Matters
 
-- **클로저 없이** 함수 본문만 저장하면 동적 범위가 된다. 부분 적용(`add 1`)이 반환한 함수가 `x`를 잃어버린다.
+- **클로저 없이** 함수 본문만 저장하면 동적 범위가 된다. partial application(`add 1`)이 반환한 함수가 `x`를 잃어버린다.
 - **`let`과 `let rec`을 구분하지 않으면** 섀도잉 의미가 깨진다. ML 계열에서 `let f n = f (n + 1)`의 본문에 있는 `f`는 **바깥** `f`를 가리킨다. 예전 정의를 감싸서 새 정의를 만드는 흔한 패턴이다.
 - **반대로 착각하기도 쉽다.** 이 프로젝트에서 "`let rec f n = n in let rec f n = f (n + 1) in f 1`은 2"라는 테스트를 썼다. 실제로는 안쪽 `f`가 `rec`이라서 자기 자신을 끝없이 호출했다. 결국 테스트 호스트가 `Stack overflow.`로 죽었다.
 
 ## Recognition Pattern
 
-- 언어에 `fun`/람다, 고차 함수, 부분 적용을 넣을 때
+- 언어에 `fun`/람다, higher-order function, partial application을 넣을 때
 - 함수가 반환한 함수가 바깥 변수를 못 찾는다(`Unbound variable`) → 클로저에 환경을 저장하지 않은 것
 - 함수 결과가 호출 위치의 변수 값에 따라 달라진다 → 호출자 환경을 쓰고 있는 것 (동적 범위)
 - 재귀 함수가 `Unbound variable: <자기 이름>`을 낸다 → `let rec` 처리가 없는 것
@@ -109,8 +109,8 @@ and apply fv av =
 
 | 테스트 | 기대값 | 확인하는 것 |
 |---|---|---|
-| `let x = 1 in let f y = x + y in let x = 100 in f 1` | `2` | 정적 범위 |
-| `let add x y = x + y in let inc = add 1 in inc 41` | `42` | 부분 적용이 `x`를 기억함 |
+| `let x = 1 in let f y = x + y in let x = 100 in f 1` | `2` | lexical scope |
+| `let add x y = x + y in let inc = add 1 in inc 41` | `42` | partial application이 `x`를 기억함 |
 | `let rec fact n = if n <= 1 then 1 else n * fact (n - 1) in fact 10` | `3628800` | 재귀 |
 | `let f x = f x in f 1` | `Unbound variable: f` | `rec` 없이는 재귀 안 됨 |
 | `let f n = n in let f n = f (n + 1) in f 1` | `2` | `let`의 본문은 바깥 `f`를 봄 |
@@ -131,8 +131,8 @@ test "클로저는 정의 시점의 환경을 저장" {
 
 | 방법 | 장점 | 단점 |
 |---|---|---|
-| 호출할 때 자기 자신 삽입 (이 문서) | 불변 환경 유지, 구현 간단 | 직접 재귀 하나만 지원. 상호 재귀(`let rec f ... and g ...`)는 확장이 필요 |
-| 가변 참조로 나중에 연결 (`ref`로 환경을 만든 뒤 채우기) | 상호 재귀로 확장하기 쉬움 | 가변 상태가 생김 |
+| 호출할 때 자기 자신 삽입 (이 문서) | 불변 환경 유지, 구현 간단 | 직접 재귀 하나만 지원. mutual recursion(`let rec f ... and g ...`)은 확장이 필요 |
+| mutable 참조로 나중에 연결 (`ref`로 환경을 만든 뒤 채우기) | mutual recursion으로 확장하기 쉬움 | mutable state가 생김 |
 | 지연 값 (`Lazy`) 환경 | 순환 구조를 자연스럽게 표현 | 평가 시점을 추적하기 어려움 |
 
 ## 체크리스트
@@ -141,7 +141,7 @@ test "클로저는 정의 시점의 환경을 저장" {
 - [ ] 호출할 때 **호출자 환경이 아니라 클로저 환경**을 쓴다
 - [ ] `let`은 바인딩 값을 바깥 환경에서 평가한다 (`rec` 없으면 자기 자신을 못 봄)
 - [ ] `let rec`은 호출 시점에 자기 자신을 환경에 넣는다
-- [ ] 정적 범위, 부분 적용, 재귀, `rec` 없는 재귀 실패, 섀도잉을 테스트로 고정했다
+- [ ] lexical scope, partial application, 재귀, `rec` 없는 재귀 실패, 섀도잉을 테스트로 고정했다
 - [ ] 재귀 테스트를 추가하기 전에 종료 조건을 CLI로 먼저 확인했다
 
 ## 관련 문서

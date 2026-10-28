@@ -1,9 +1,9 @@
 ---
 created: 2026-10-28
-description: 태그가 붙은 값 표현에서 문자열 상수의 주소를 그대로 값으로 쓰려면 전역을 8바이트로 정렬해야 한다. 바이트 배열 전역은 주소 하위 비트가 0이 아니다. 헤더·길이·코드 단위를 담은 struct 전역을 초기화 영역으로 만든다
+description: tagged value representation에서 문자열 상수의 주소를 그대로 값으로 쓰려면 전역을 8-byte alignment으로 맞춰야 한다. 바이트 배열 전역은 주소 하위 비트가 0이 아니다. 헤더·길이·code unit을 담은 struct 전역을 initializer region으로 만든다
 ---
 
-# 문자열 상수를 정렬된 LLVM 전역으로 만들기
+# 문자열 상수를 aligned LLVM 전역으로 만들기
 
 컴파일한 코드에서 문자열 리터럴 `"hi"`는 실행 중에 만들지 않는다. **프로그램에 박힌 상수 블록**으로 두고 그 주소를 값으로 쓴다. 블록 모양은 힙에서 만드는 문자열(`calc_add`의 결과)과 똑같아서, 런타임은 상수와 힙 문자열을 구분하지 않는다.
 
@@ -27,7 +27,7 @@ llvm.mlir.global internal constant @str_0() {addr_space = 0 : i32, alignment = 8
 
 ## The Insight
 
-**전역의 주소도 값 표현의 규칙을 지켜야 한다.** 값의 하위 3비트가 종류라면, 포인터 값은 하위 3비트가 `000`이어야 한다. 힙 블록은 GC가 8바이트로 정렬해 주지만, 전역은 그 **타입의 정렬**을 따른다. 바이트 배열 전역은 정렬이 1이라 주소가 아무 데나 놓인다(직접 확인함).
+**전역의 주소도 value representation의 규칙을 지켜야 한다.** 값의 하위 3비트가 종류라면, 포인터 값은 하위 3비트가 `000`이어야 한다. 힙 블록은 GC가 8-byte alignment을 지켜 주지만, 전역은 그 **타입의 alignment**을 따른다. 바이트 배열 전역은 alignment이 1이라 주소가 아무 데나 놓인다(직접 확인함).
 
 ```
 @a = internal constant [2 x i8] c"x\00"         주소 & 7 = 4
@@ -35,10 +35,10 @@ llvm.mlir.global internal constant @str_0() {addr_space = 0 : i32, alignment = 8
 @c = internal constant [3 x i16] [...]          주소 & 7 = 0   (우연)
 ```
 
-주소 하위 비트가 `5`가 되면 이 표현에서는 `[]`(nil)로 읽힌다. 그래서 정렬을 운에 맡기지 않는다.
+주소 하위 비트가 `5`가 되면 이 표현에서는 `[]`(nil)로 읽힌다. 그래서 alignment을 운에 맡기지 않는다.
 
 - **`alignment = 8 : i64`:** 전역에 붙여서 명시합니다.
-- **struct의 첫 칸을 `i64`(헤더)로:** 타입의 정렬도 8이 됩니다.
+- **struct의 첫 칸을 `i64`(헤더)로:** 타입의 alignment도 8이 됩니다.
 
 ## Why This Matters
 
@@ -48,7 +48,7 @@ llvm.mlir.global internal constant @str_0() {addr_space = 0 : i32, alignment = 8
 
 ## Recognition Pattern
 
-- 태그가 붙은 포인터(하위 비트로 종류 표시)를 쓰는 언어에 상수 데이터를 넣을 때
+- tagged 포인터(하위 비트로 종류 표시)를 쓰는 언어에 상수 데이터를 넣을 때
 - 전역 상수의 주소를 `ptrtoint`해서 값으로 쓸 때
 - 런타임이 상수와 힙 객체를 같은 코드로 다뤄야 할 때
 
@@ -67,15 +67,15 @@ C 런타임에는 같은 모양의 struct가 있다.
 typedef struct { int64_t header; int64_t length; uint16_t units[]; } calc_string;
 ```
 
-### Step 2: 값이 있는 전역은 초기화 영역으로 만든다
+### Step 2: 값이 있는 전역은 initializer region으로 만든다
 
-`llvm.mlir.global ... @name("문자열")`나 `@name(dense<[...]> : tensor<Nxi16>)` 같은 한 줄 형식은 속성 하나로 표현되는 값(바이트 문자열, 같은 타입의 배열)만 받는다. struct는 영역(`{ ... llvm.return }`) 안에서 `llvm.mlir.undef`부터 `llvm.insertvalue`로 칸을 채우고 돌려준다. 결과 LLVM IR은 다음과 같다.
+`llvm.mlir.global ... @name("문자열")`나 `@name(dense<[...]> : tensor<Nxi16>)` 같은 한 줄 형식은 attribute 하나로 표현되는 값(바이트 문자열, 같은 타입의 배열)만 받는다. struct는 region(`{ ... llvm.return }`) 안에서 `llvm.mlir.undef`부터 `llvm.insertvalue`로 칸을 채우고 돌려준다. 결과 LLVM IR은 다음과 같다.
 
 ```llvm
 @str_0 = internal constant { i64, i64, [2 x i16] } { i64 514, i64 2, [2 x i16] [i16 104, i16 105] }, align 8
 ```
 
-### Step 3: 코드 단위는 `dense` 상수로
+### Step 3: code unit은 `dense` 상수로
 
 `dense<[...]> : tensor<Nxi16>`는 `65535`처럼 부호 없는 값도 받아서 같은 비트로 저장한다(`i16 -1`). 생성할 때 `int16`으로 바꿔서 쓰면 출력이 일정해진다.
 
@@ -111,13 +111,13 @@ line (sprintf "llvm.mlir.global internal constant @%s() {addr_space = 0 : i32, a
 
 ## 체크리스트
 
-- [ ] 전역에 `alignment = 8`(또는 태그 비트 수에 맞는 정렬)이 있는가?
+- [ ] 전역에 `alignment = 8`(또는 태그 비트 수에 맞는 alignment)가 있는가?
 - [ ] 상수 블록 모양이 힙 블록과 같은가? (헤더, 길이, 내용)
 - [ ] 함수 본문을 모두 만든 뒤에 전역을 출력하는가?
 - [ ] 런타임이 상수 블록에 쓰지 않는가? (읽기 전용)
 
 ## 관련 문서
 
-- `represent-values-as-tagged-words.md` - 하위 3비트 태그와 포인터 정렬
-- `store-strings-as-utf16-for-dotnet-compatibility.md` - 코드 단위를 UTF-16으로 둔 이유
-- `emit-mlir-as-llvm-func-and-lower.md` - `llvm.mlir.addressof`와 `llvm` 방언
+- `represent-values-as-tagged-words.md` - 하위 3비트 태그와 포인터 alignment
+- `store-strings-as-utf16-for-dotnet-compatibility.md` - code unit을 UTF-16으로 둔 이유
+- `emit-mlir-as-llvm-func-and-lower.md` - `llvm.mlir.addressof`와 `llvm` dialect
