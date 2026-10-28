@@ -146,7 +146,7 @@ dotnet run --project tests/Calc.Tests -- --filter "Compile"
 - `brew install llvm bdw-gc`가 되어 있지 않으면 이 테스트들은 실패가 아니라 **Skipped**로 표시됩니다.
 - 차등 테스트는 기대값을 따로 적지 않습니다. 같은 식을 `Eval.eval`로 실행한 결과(`Eval.formatValue`)와 실행 파일의 출력을 비교합니다. 컴파일러가 지원하는 기능이 늘어나면 비교하는 예제도 자동으로 늘어납니다.
 - 실행 중 오류가 나는 예제(`1 / 0` 등)는 표준 에러(`Error: <인터프리터와 같은 메시지>`)와 종료 코드 1까지 비교합니다.
-- 차등 테스트는 예제를 병렬로 컴파일합니다. 단계 1에서는 43개를 비교하고, 전체 `dotnet test`는 약 20초 걸립니다.
+- 차등 테스트는 예제를 병렬로 컴파일합니다. 단계 2에서는 56개를 비교하고, 전체 `dotnet test`는 약 20~30초 걸립니다.
 
 ## 오류 처리 확인
 
@@ -188,7 +188,7 @@ dotnet run --project tests/Calc.Tests -- --filter "Compile"
 | 명령 | 기대 출력 | 종료 코드 |
 |---|---|---|
 | `--help`, `-h` | `USAGE: calc [--help] [--expr=<expr>] [--version] [--no-typecheck]`로 시작하는 사용법 | 0 |
-| `--version`, `-v` | `calc 0.16.0` (`Calc.fsproj`의 `<Version>`) | 0 |
+| `--version`, `-v` | `calc 0.17.0` (`Calc.fsproj`의 `<Version>`) | 0 |
 | `-e "(2+3)*4"` | `Result: 20` | 0 |
 | `--expr=7/2` | `Result: 3` | 0 |
 | `--expr "-5 + 2"` | `Result: -3` (`-`로 시작하는 식도 값으로 처리됨) | 0 |

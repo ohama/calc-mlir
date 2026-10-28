@@ -64,7 +64,9 @@ let private runtimeErrorCases =
       "(-2147483647 - 1) / -1"
       "true && 1 / 0 = 0"
       "if 1 / 0 = 0 then 1 else 2"
-      "1 + 2 / 0" ]
+      "1 + 2 / 0"
+      "let x = 1 / 0 in 5"
+      "let d = 5 - 5 in if d = 0 then 10 / d else 1" ]
 
 [<Tests>]
 let tests =
@@ -85,8 +87,18 @@ let tests =
             }
             test "지원하지 않는 기능은 NotSupported" {
                 Expect.throwsC
-                    (fun () -> Codegen.emitProgram (Program.parse "let x = 1 in x") |> ignore)
-                    (fun ex -> Expect.equal ex.Message "Not supported by the compiler yet: Let" "")
+                    (fun () -> Codegen.emitProgram (Program.parse "fun x -> x") |> ignore)
+                    (fun ex -> Expect.equal ex.Message "Not supported by the compiler yet: Lambda" "")
+            }
+            test "내장 함수는 아직 NotSupported" {
+                Expect.throwsC
+                    (fun () -> Codegen.emitProgram (Program.parse "let n = length in 1") |> ignore)
+                    (fun ex -> Expect.equal ex.Message "Not supported by the compiler yet: built-in function length" "")
+            }
+            test "let 은 새 코드 없이 SSA 이름을 재사용" {
+                let mlir = Codegen.emitProgram (Program.parse "let x = 5 in x")
+                Expect.stringContains mlir "%v1 = arith.constant 41 : i64" ""
+                Expect.stringContains mlir "llvm.return %v1 : i64" "x 는 %v1 그 자체"
             }
             test "if 는 scf.if, + 는 런타임 호출" {
                 let mlir = Codegen.emitProgram (Program.parse "if true then 1 + 2 else 0")
@@ -147,6 +159,20 @@ let tests =
                     ""
                 Expect.equal (compileAndRun "(-2147483647 - 1) / 1") ("-2147483648\n", "", 0) "-1 이 아니면 정상"
             }
+            test "let 과 섀도잉" {
+                Expect.equal (compileAndRun "let x = 5 in if x > 3 then x * 2 else 0") ("10\n", "", 0) ""
+                Expect.equal (compileAndRun "let x = 1 in let x = x + 10 in x") ("11\n", "", 0) "섀도잉"
+                Expect.equal (compileAndRun "let x = 1 in (let x = 2 in x) + x") ("3\n", "", 0) "안쪽 let 이 끝나면 바깥 x"
+            }
+            test "if 분기 안의 let" {
+                Expect.equal
+                    (compileAndRun "let a = 3 in let b = if a > 2 then (let c = a * a in c + 1) else 0 in a + b")
+                    ("13\n", "", 0)
+                    ""
+            }
+            test "let 의 값은 쓰이지 않아도 계산 (인터프리터와 같음)" {
+                Expect.equal (compileAndRun "let x = 1 / 0 in 5") ("", "Error: Attempted to divide by zero.\n", 1) ""
+            }
             test "단락 평가: 오른쪽은 계산하지 않음" {
                 Expect.equal (compileAndRun "false && 1 / 0 = 0") ("false\n", "", 0) ""
                 Expect.equal (compileAndRun "true || 1 / 0 = 0") ("true\n", "", 0) ""
@@ -162,7 +188,7 @@ let tests =
             let actual = inputs |> Array.ofList |> Array.Parallel.map compileAndRun
             for input, result in Array.zip (Array.ofList inputs) actual do
                 Expect.equal result (interpret input) input
-            // 단계가 올라갈수록 늘어남 (단계 1: 정수, 불리언, if)
-            Expect.isGreaterThanOrEqual inputs.Length 43 "컴파일한 예제 수"
+            // 단계가 올라갈수록 늘어남 (단계 2: 정수, 불리언, if, let)
+            Expect.isGreaterThanOrEqual inputs.Length 56 "컴파일한 예제 수"
         }
     ]

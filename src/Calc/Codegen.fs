@@ -105,34 +105,43 @@ let private emitCall (fb: FunctionBuilder) (name: string) (args: string list) (r
     fb.Emit(sprintf "%s = llvm.call @%s(%s) : (%s) -> %s" r name (String.concat ", " args) argTypes resultType)
     r
 
-/// 식의 값을 담은 SSA 이름을 반환
-let rec private emitExpr (fb: FunctionBuilder) expr : string =
+/// 식의 값을 담은 SSA 이름을 반환. env 는 변수 이름 → 그 값을 담은 SSA 이름
+let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr : string =
     // 정수 연산: 태그를 떼고 32비트에서 계산(한 바퀴 돎, 인터프리터와 같음)한 뒤 다시 태그
     let intOp op a b =
-        let x = untagInt fb (emitExpr fb a)
-        let y = untagInt fb (emitExpr fb b)
+        let x = untagInt fb (emitExpr fb env a)
+        let y = untagInt fb (emitExpr fb env b)
         retagInt fb (emitOp fb op x y "i32")
     // 비교: 런타임이 int 와 (나중에) string 을 고름. 결과는 -1, 0, 1
     let compare predicate a b =
-        let x = emitExpr fb a
-        let y = emitExpr fb b
+        let x = emitExpr fb env a
+        let y = emitExpr fb env b
         let c = emitCall fb "calc_compare" [ x; y ] "i32"
         let cmp = fb.Fresh()
         fb.Emit(sprintf "%s = arith.cmpi %s, %s, %s : i32" cmp predicate c (emitConst fb "i32" 0L))
         retagBool fb cmp
     match expr with
     | Number n -> emitConst fb "i64" (tagInt n)
+    // let 은 새 코드가 없음: 값의 SSA 이름을 환경에 넣을 뿐. 섀도잉은 Map.add 가 덮어씀
+    | Let (name, value, body) ->
+        let v = emitExpr fb env value
+        emitExpr fb (Map.add name v env) body
+    | Var name ->
+        match Map.tryFind name env with
+        | Some v -> v
+        // 타입 검사를 통과했으므로 환경에 없는 이름은 내장 함수 (단계 7)
+        | None -> raise (NotSupported ("built-in function " + name))
     | Bool b -> emitConst fb "i64" (tagBool b)
     // + 는 int 덧셈 또는 string 연결이라 런타임이 태그로 고름 (D6)
     | Add (a, b) ->
-        let x = emitExpr fb a
-        let y = emitExpr fb b
+        let x = emitExpr fb env a
+        let y = emitExpr fb env b
         emitCall fb "calc_add" [ x; y ] "i64"
     | Subtract (a, b) -> intOp "arith.subi" a b
     | Multiply (a, b) -> intOp "arith.muli" a b
     | Divide (a, b) ->
-        let x = untagInt fb (emitExpr fb a)
-        let y = untagInt fb (emitExpr fb b)
+        let x = untagInt fb (emitExpr fb env a)
+        let y = untagInt fb (emitExpr fb env b)
         let isZero = fb.Fresh()
         fb.Emit(sprintf "%s = arith.cmpi eq, %s, %s : i32" isZero y (emitConst fb "i32" 0L))
         emitErrorIf fb isZero "calc_error_divide_by_zero"
@@ -144,36 +153,36 @@ let rec private emitExpr (fb: FunctionBuilder) expr : string =
         emitErrorIf fb (emitOp fb "arith.andi" isMin isMinusOne "i1") "calc_error_overflow"
         retagInt fb (emitOp fb "arith.divsi" x y "i32")
     | Negate e ->
-        let x = untagInt fb (emitExpr fb e)
+        let x = untagInt fb (emitExpr fb env e)
         retagInt fb (emitOp fb "arith.subi" (emitConst fb "i32" 0L) x "i32")
     // = 은 구조적 비교라 런타임이 함 (결과는 태그가 붙은 bool)
     | Equal (a, b) ->
-        let x = emitExpr fb a
-        let y = emitExpr fb b
+        let x = emitExpr fb env a
+        let y = emitExpr fb env b
         emitCall fb "calc_eq" [ x; y ] "i64"
-    | NotEqual (a, b) -> emitExpr fb (Not (Equal (a, b)))
+    | NotEqual (a, b) -> emitExpr fb env (Not (Equal (a, b)))
     | Less (a, b) -> compare "slt" a b
     | Greater (a, b) -> compare "sgt" a b
     | LessEqual (a, b) -> compare "sle" a b
     | GreaterEqual (a, b) -> compare "sge" a b
     // 단락 평가: 오른쪽은 scf.if 영역 안에서만 계산
     | And (a, b) ->
-        let c = untagBool fb (emitExpr fb a)
-        emitIf fb c (fun () -> emitExpr fb b) (fun () -> emitConst fb "i64" (tagBool false))
+        let c = untagBool fb (emitExpr fb env a)
+        emitIf fb c (fun () -> emitExpr fb env b) (fun () -> emitConst fb "i64" (tagBool false))
     | Or (a, b) ->
-        let c = untagBool fb (emitExpr fb a)
-        emitIf fb c (fun () -> emitConst fb "i64" (tagBool true)) (fun () -> emitExpr fb b)
+        let c = untagBool fb (emitExpr fb env a)
+        emitIf fb c (fun () -> emitConst fb "i64" (tagBool true)) (fun () -> emitExpr fb env b)
     // true(11) 와 false(3) 는 3번 비트만 다름
-    | Not e -> emitOp fb "arith.xori" (emitExpr fb e) (emitConst fb "i64" 8L) "i64"
+    | Not e -> emitOp fb "arith.xori" (emitExpr fb env e) (emitConst fb "i64" 8L) "i64"
     | If (cond, thenExpr, elseExpr) ->
-        let c = untagBool fb (emitExpr fb cond)
-        emitIf fb c (fun () -> emitExpr fb thenExpr) (fun () -> emitExpr fb elseExpr)
+        let c = untagBool fb (emitExpr fb env cond)
+        emitIf fb c (fun () -> emitExpr fb env thenExpr) (fun () -> emitExpr fb env elseExpr)
     | other -> raise (NotSupported (caseName other))
 
 /// 프로그램 전체: 식 하나를 계산하는 @calc_main 과, 결과를 출력하는 @main
 let emitProgram (expr: Expr) : string =
     let fb = FunctionBuilder()
-    let result = emitExpr fb expr
+    let result = emitExpr fb Map.empty expr
     let sb = StringBuilder()
     let line (s: string) = sb.AppendLine(s) |> ignore
     line "// Calc 컴파일러가 만든 MLIR. 값은 i64 하나 (docs/compiler-design.md D3)"
