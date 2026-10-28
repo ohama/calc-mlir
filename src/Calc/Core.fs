@@ -42,7 +42,9 @@ type CExpr =
     | CCons of CExpr * CExpr
     /// (a, b, ...) (블록 [헤더, 원소...])
     | CTuple of CExpr list
-    /// 위에서부터 패턴과 가드가 모두 맞는 첫 분기. 없으면 Match failure. 패턴은 Ast 그대로 (생성자 패턴은 단계 6)
+    /// 생성자로 만든 값 (블록 [헤더, 생성자 이름, 인자]). 인자 없는 생성자는 전역 상수 블록
+    | CData of ctor: string * payload: CExpr option
+    /// 위에서부터 패턴과 가드가 모두 맞는 첫 분기. 없으면 Match failure. 패턴은 Ast 그대로
     | CMatch of scrutinee: CExpr * cases: (Pattern * CExpr option * CExpr) list
 
 /// fun param -> body 를 최상위로 옮긴 것. 호출 규약은 (클로저, 인자) -> 결과 (D4)
@@ -81,6 +83,7 @@ let rec freeVars (expr: CExpr) : Set<string> =
     | CNil -> Set.empty
     | CCons (h, t) -> Set.union (freeVars h) (freeVars t)
     | CTuple items -> items |> List.map freeVars |> Set.unionMany
+    | CData (_, payload) -> payload |> Option.map freeVars |> Option.defaultValue Set.empty
     | CMatch (scrutinee, cases) ->
         let caseVars (pattern, guard, body) =
             let used = Set.union (guard |> Option.map freeVars |> Option.defaultValue Set.empty) (freeVars body)

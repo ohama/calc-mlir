@@ -18,6 +18,7 @@ let kindString = 2L
 
 let kindCons = 3L
 let kindTuple = 4L
+let kindData = 5L
 
 /// [] 는 즉시값 5
 let nilValue = 5L
@@ -30,6 +31,9 @@ let consHeader = kindCons ||| (2L <<< 8)
 /// 튜플 블록 = [헤더, 원소...]
 let tupleHeader (count: int) = kindTuple ||| (int64 count <<< 8)
 
+/// 생성자 값 블록 = [헤더, 생성자 이름(C 문자열 포인터), 인자(있으면)]
+let dataHeader (hasPayload: bool) = kindData ||| ((if hasPayload then 2L else 1L) <<< 8)
+
 /// 문자열 블록 = [헤더, 길이, UTF-16 코드 단위...]. 뒤따르는 단어 수는 길이 칸 + 코드 단위를 담는 단어
 let stringHeader (length: int) = kindString ||| (int64 (1 + (2 * length + 7) / 8) <<< 8)
 
@@ -37,6 +41,10 @@ let stringHeader (length: int) = kindString ||| (int64 (1 + (2 * length + 7) / 8
 type private StringTable(prefix: string) =
     let names = System.Collections.Generic.Dictionary<string, string>()
     let order = ResizeArray<string>()
+    let ctorNames = System.Collections.Generic.Dictionary<string, string>()
+    let ctorOrder = ResizeArray<string>()
+    let units = System.Collections.Generic.Dictionary<string, string>()
+    let unitOrder = ResizeArray<string>()
 
     member _.NameOf(s: string) =
         match names.TryGetValue s with
@@ -49,8 +57,49 @@ type private StringTable(prefix: string) =
 
     member _.Entries = order |> Seq.map (fun s -> names[s], s) |> List.ofSeq
 
+    /// 생성자 이름 → 이름을 담은 C 문자열 전역. 같은 이름은 하나 (런타임은 이름으로 비교하고 출력함)
+    member _.CtorName(ctor: string) =
+        match ctorNames.TryGetValue ctor with
+        | true, name -> name
+        | _ ->
+            let name = sprintf "%sctor_%d" prefix ctorNames.Count
+            ctorNames[ctor] <- name
+            ctorOrder.Add ctor
+            name
+
+    /// 인자 없는 생성자의 값: 전역 상수 블록 [헤더, 이름]
+    member this.CtorUnit(ctor: string) =
+        this.CtorName ctor |> ignore
+        match units.TryGetValue ctor with
+        | true, name -> name
+        | _ ->
+            let name = sprintf "%sunit_%d" prefix units.Count
+            units[ctor] <- name
+            unitOrder.Add ctor
+            name
+
+    member _.CtorEntries = ctorOrder |> Seq.map (fun c -> ctorNames[c], c) |> List.ofSeq
+    member _.UnitEntries = unitOrder |> Seq.map (fun c -> units[c], ctorNames[c]) |> List.ofSeq
+
     /// 이 프로그램의 심볼(함수, 문자열 상수) 이름 앞에 붙임. 여러 프로그램을 한 모듈에 넣을 때 이름이 겹치지 않게
     member _.Prefix = prefix
+
+/// 생성자 이름 전역 (C 문자열). 값이 아니라 블록의 칸에 들어가므로 정렬이 필요 없음
+let private emitCtorNameGlobal (sb: StringBuilder) (name: string, ctor: string) =
+    sb.AppendLine(sprintf "llvm.mlir.global internal constant @%s(\"%s\\00\") {addr_space = 0 : i32}" name ctor) |> ignore
+
+/// 인자 없는 생성자의 값: 8바이트 정렬 전역 블록 [헤더, 이름 포인터]. 주소가 곧 값
+let private emitCtorUnitGlobal (sb: StringBuilder) (name: string, nameGlobal: string) =
+    let ty = "!llvm.struct<(i64, ptr)>"
+    let line (text: string) = sb.AppendLine(text) |> ignore
+    line (sprintf "llvm.mlir.global internal constant @%s() {addr_space = 0 : i32, alignment = 8 : i64} : %s {" name ty)
+    line (sprintf "  %%0 = llvm.mlir.undef : %s" ty)
+    line (sprintf "  %%h = llvm.mlir.constant(%d : i64) : i64" (dataHeader false))
+    line (sprintf "  %%1 = llvm.insertvalue %%h, %%0[0] : %s" ty)
+    line (sprintf "  %%n = llvm.mlir.addressof @%s : !llvm.ptr" nameGlobal)
+    line (sprintf "  %%2 = llvm.insertvalue %%n, %%1[1] : %s" ty)
+    line (sprintf "  llvm.return %%2 : %s" ty)
+    line "}"
 
 /// 문자열 상수 전역: 8바이트 정렬이라 주소가 곧 값 (하위 3비트 000). 상수라 GC 대상이 아님
 let private emitStringGlobal (sb: StringBuilder) (name: string, s: string) =
@@ -166,6 +215,14 @@ let private emitSlot (fb: FunctionBuilder) (block: string) (index: int) =
     fb.Emit(sprintf "%s = llvm.getelementptr %s[%d] : (!llvm.ptr) -> !llvm.ptr, i64" r block index)
     r
 
+/// 전역의 주소를 i64 로
+let private emitGlobalAddress (fb: FunctionBuilder) (name: string) =
+    let address = fb.Fresh()
+    fb.Emit(sprintf "%s = llvm.mlir.addressof @%s : !llvm.ptr" address name)
+    let r = fb.Fresh()
+    fb.Emit(sprintf "%s = llvm.ptrtoint %s : !llvm.ptr to i64" r address)
+    r
+
 /// 블록 값 v 의 index 번째 단어 (0: 헤더)
 let private emitField (fb: FunctionBuilder) (v: string) (index: int) =
     let block = fb.Fresh()
@@ -210,12 +267,7 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
     match expr with
     | CInt n -> emitConst fb "i64" (tagInt n)
     | CBool b -> emitConst fb "i64" (tagBool b)
-    | CString s ->
-        let address = fb.Fresh()
-        fb.Emit(sprintf "%s = llvm.mlir.addressof @%s : !llvm.ptr" address (fb.Strings.NameOf s))
-        let r = fb.Fresh()
-        fb.Emit(sprintf "%s = llvm.ptrtoint %s : !llvm.ptr to i64" r address)
-        r
+    | CString s -> emitGlobalAddress fb (fb.Strings.NameOf s)
     // let 은 새 코드가 없음: 값의 SSA 이름을 환경에 넣을 뿐. 섀도잉은 Map.add 가 덮어씀
     | CLet (name, value, body) ->
         let v = emitExpr fb env value
@@ -297,6 +349,10 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
     | CTuple items ->
         let values = items |> List.map (emitExpr fb env)
         emitBlock fb (tupleHeader values.Length) values
+    | CData (ctor, None) -> emitGlobalAddress fb (fb.Strings.CtorUnit ctor)
+    | CData (ctor, Some payload) ->
+        let pv = emitExpr fb env payload
+        emitBlock fb (dataHeader true) [ emitGlobalAddress fb (fb.Strings.CtorName ctor); pv ]
     | CMatch (scrutinee, cases) ->
         let v = emitExpr fb env scrutinee
         // 분기마다 "조건(패턴 검사, 가드) → 본문, 아니면 나머지 분기". 조건을 i1 로 먼저 만들어서 나머지 분기는 한 번만 생성
@@ -348,7 +404,14 @@ and private emitTest (fb: FunctionBuilder) (pattern: Ast.Pattern) (v: string) : 
         else emitIfOf fb "i1" isCons (fun () -> fields [ h, 1; t, 2 ]) (fun () -> emitConst fb "i1" 0L)
     // 타입 검사를 통과했으므로 원소 수는 항상 같음
     | Ast.PTuple items -> fields (items |> List.mapi (fun i p -> p, 1 + i))
-    | Ast.PCtor _ -> raise (NotSupported "constructor pattern")
+    // 타입 검사를 통과했으므로 v 는 같은 타입의 생성자 값. 이름 포인터가 같으면 같은 생성자 (이름은 모듈에 하나)
+    | Ast.PCtor (ctor, argPattern) ->
+        let isCtor = fb.Fresh()
+        fb.Emit(sprintf "%s = arith.cmpi eq, %s, %s : i64" isCtor (emitField fb v 1) (emitGlobalAddress fb (fb.Strings.CtorName ctor)))
+        match argPattern with
+        | Some p when not (irrefutable p) ->
+            emitIfOf fb "i1" isCtor (fun () -> emitTest fb p (emitField fb v 2)) (fun () -> emitConst fb "i1" 0L)
+        | _ -> isCtor
 
 /// 일치한 패턴이 묶는 이름을 환경에 넣음. 이름을 묶는 하위 패턴의 필드만 읽음 (인터프리터처럼 앞에서부터, 같은 이름은 뒤가 이김)
 and private emitBind (fb: FunctionBuilder) (pattern: Ast.Pattern) (v: string) (env: Map<string, string>) =
@@ -358,6 +421,7 @@ and private emitBind (fb: FunctionBuilder) (pattern: Ast.Pattern) (v: string) (e
     | Ast.PVar name -> Map.add name v env
     | Ast.PCons (h, t) -> List.fold field env [ h, 1; t, 2 ]
     | Ast.PTuple items -> List.fold field env (items |> List.mapi (fun i p -> p, 1 + i))
+    | Ast.PCtor (_, Some p) -> field env (p, 2)
     | _ -> env
 
 /// 최상위 함수 하나: 입구에서 캡처한 값을 꺼내 환경을 만들고 본문을 생성
@@ -408,7 +472,9 @@ let private emitBody (sb: StringBuilder) (prefix: string) (entry: string) (expr:
     program.Functions |> List.iter (emitFunction strings functions)
     let line (s: string) = sb.AppendLine(s) |> ignore
     strings.Entries |> List.iter (emitStringGlobal sb)
-    if not strings.Entries.IsEmpty then line ""
+    strings.CtorEntries |> List.iter (emitCtorNameGlobal sb)
+    strings.UnitEntries |> List.iter (emitCtorUnitGlobal sb)
+    if not (strings.Entries.IsEmpty && strings.CtorEntries.IsEmpty) then line ""
     sb.Append(functions) |> ignore
     line (sprintf "llvm.func @%s() -> i64 {" entry)
     sb.Append(fb.Text) |> ignore

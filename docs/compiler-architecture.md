@@ -2,7 +2,7 @@
 
 `calc --compile`이 소스 코드에서 실행 파일을 만드는 과정을 예제 하나로 따라갑니다. 설계의 이유와 단계별 계획은 [compiler-design.md](compiler-design.md)에 있습니다. 이 문서는 **지금 코드가 실제로 하는 일**을 설명합니다.
 
-이 문서의 출력은 모두 직접 실행해서 얻었습니다. 2장의 예제는 단계 2(0.17.0), 6장의 클로저는 단계 3, 7장의 문자열은 단계 4, 8장의 패턴 매칭은 단계 5 기준입니다. 환경은 macOS arm64, Homebrew LLVM 22.1.7, bdw-gc 8.2.12입니다.
+이 문서의 출력은 모두 직접 실행해서 얻었습니다. 2장의 예제는 단계 2(0.17.0), 6장의 클로저는 단계 3, 7장의 문자열은 단계 4, 8장의 패턴 매칭은 단계 5, 9장의 ADT는 단계 6 기준입니다. 환경은 macOS arm64, Homebrew LLVM 22.1.7, bdw-gc 8.2.12입니다.
 
 ## 1. 큰 그림
 
@@ -384,6 +384,35 @@ match [7] with | x :: _ when x > 5 -> x | _ -> 0
 - **실패:** 마지막 분기까지 실패하면 `calc_match_failure(v)`가 `Error: Match failure: <값>`을 출력하고 종료 코드 1로 끝냅니다.
 - **`let (a, b) = e in body`:** 분기 하나짜리 `match`로 바뀝니다. 튜플 분해는 실패할 수 없으므로 검사 코드 없이 필드만 읽습니다.
 - **런타임:** `format_value`(출력과 Match failure 메시지)와 `equals`(구조적 `=`)가 cons와 튜플 블록을 따라갑니다. 리스트는 재귀가 아니라 반복문으로 돌아서 긴 리스트도 C 스택을 쓰지 않습니다. `equals`는 인터프리터처럼 길이를 먼저 비교합니다. 그래서 `[fun x -> x] = []`는 오류 없이 `false`입니다.
+
+## 9. ADT와 option (단계 6)
+
+```
+match Some 2 with | Some x -> x | None -> 0
+```
+
+```mlir
+llvm.mlir.global internal constant @ctor_0("Some\00") {addr_space = 0 : i32}   // 생성자 이름 (C 문자열)
+llvm.mlir.global internal constant @ctor_1("None\00") {addr_space = 0 : i32}
+
+// Some 2 → DATA 블록 [헤더 517 = 5 | (2 << 8), 이름 @ctor_0, 인자 17]
+%v5 = llvm.call @calc_alloc(%v4) : (i64) -> !llvm.ptr
+...
+// | Some x : 블록의 이름 칸이 @ctor_0 인가?
+%v12 = llvm.load %v13 : !llvm.ptr -> i64
+%v15 = llvm.ptrtoint %v14 : !llvm.ptr to i64           // @ctor_0 의 주소
+%v10 = arith.cmpi eq, %v12, %v15 : i64
+%v16 = scf.if %v10 -> (i64) {
+  %v18 = llvm.load %v19 : !llvm.ptr -> i64             // x = 인자 칸
+  scf.yield %v18 : i64
+} else { ... }                                         // | None -> 0, 그다음 Match failure
+```
+
+- **인자 없는 생성자(`None`, `Leaf`):** 8바이트 정렬 전역 상수 블록 `[헤더 261, 이름]`의 주소가 값입니다. 할당이 없습니다.
+- **생성자 검사:** 블록의 이름 포인터를 이름 전역의 주소와 비교합니다. 이름 전역은 모듈에 이름마다 하나라서 포인터 비교로 충분합니다. 런타임의 `=`는 다른 모듈의 값도 비교할 수 있게 `strcmp`를 씁니다.
+- **`type` 선언:** 코드를 만들지 않습니다. `Lower`가 생성자 범위(이름 → 인자 유무)를 넓히는 데만 씁니다. `Some`과 `None`은 처음부터 범위에 있습니다.
+- **인자 있는 생성자를 값으로 쓸 때(`let f = Some in f 3`):** `Lower`가 클로저 `fun x -> Some x`로 바꿉니다. 그래서 `<fun>`으로 출력되고, `=`로 비교하면 인터프리터와 같은 타입 오류가 납니다.
+- **출력:** 인터프리터와 같은 괄호 규칙을 씁니다. `Some (Some 1)`, `Some (-1)`, `Some None`, `Rect (2, 3)`입니다.
 
 ## 관련 문서
 

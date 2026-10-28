@@ -72,7 +72,10 @@ let private runtimeErrorCases =
       "(fun x -> x) = (fun x -> x)"
       "match [1; 2] with | [] -> 0"
       "match [] with | x :: _ -> x"
-      "match (1, \"a\") with | (2, _) -> 0 | (_, \"b\") -> 1" ]
+      "match (1, \"a\") with | (2, _) -> 0 | (_, \"b\") -> 1"
+      "match None with | Some x -> x"
+      "Some (fun x -> x) = Some (fun x -> x)"
+      "type t = A of int | B in match B with | A n -> n" ]
 
 /// 실행 테스트: 이름, [입력, (표준 출력, 표준 에러, 종료 코드), 메시지]. 차등 테스트 예제와 함께 실행 파일 하나로 묶어 빌드함 (batch)
 let private runCases =
@@ -221,6 +224,26 @@ let private runCases =
           "match [1; 2; 3] with | x :: y :: _ when x < y -> (x, y) | _ -> (0, 0)", ("(1, 2)\n", "", 0), ""
           "match 2 with | n when n > 3 -> \"big\" | _ -> \"small\"", ("\"small\"\n", "", 0), "가드가 거짓이면 다음 분기"
         ]
+      "ADT 와 option: 출력",
+        [
+          "None", ("None\n", "", 0), ""
+          "[Some 1; None; Some (-1)]", ("[Some 1; None; Some (-1)]\n", "", 0), "음수는 괄호"
+          "Some (Some 1)", ("Some (Some 1)\n", "", 0), "인자 있는 생성자 값은 괄호"
+          "Some None", ("Some None\n", "", 0), "인자 없는 생성자는 괄호 없음"
+          "type shape = Circle of int | Rect of int * int | Dot in [Rect (2, 3); Circle 1; Dot]", ("[Rect (2, 3); Circle 1; Dot]\n", "", 0), ""
+          "Some", ("<fun>\n", "", 0), "인자 있는 생성자는 함수 값"
+        ]
+      "ADT 와 option: 패턴과 비교",
+        [
+          "type shape = Circle of int | Rect of int * int | Dot in let area s = match s with | Circle r -> 3 * r * r | Rect (w, h) -> w * h | Dot -> 0 in area (Rect (2, 3)) + area (Circle 2) + area Dot", ("18\n", "", 0), ""
+          "match Some 5 with | Some x when x > 3 -> x | Some _ -> 0 | None -> -1", ("5\n", "", 0), ""
+          "let f = Some in f 3", ("Some 3\n", "", 0), "생성자를 값으로 넘김"
+          "Some 1 = Some 1 && Some 1 <> Some 2 && Some 1 <> None && None = None", ("true\n", "", 0), ""
+          "Some (fun x -> x) = None", ("false\n", "", 0), "생성자가 다르면 인자를 보지 않음"
+          "type t = A in (type t = B in B)", ("B\n", "", 0), "안쪽 선언"
+          "type 'a tree = Leaf | Node of 'a tree * 'a * 'a tree in let rec insert x t = match t with | Leaf -> Node (Leaf, x, Leaf) | Node (l, v, r) -> if x < v then Node (insert x l, v, r) else Node (l, v, insert x r) in insert 2 (insert 3 (insert 1 Leaf))", ("Node (Leaf, 1, Node (Node (Leaf, 2, Leaf), 3, Leaf))\n", "", 0), "재귀 타입"
+          "match Some 1 with | None -> 0", ("", "Error: Match failure: Some 1\n", 1), ""
+        ]
       "Match failure",
         [
           "match [1] with | [] -> 0", ("", "Error: Match failure: [1]\n", 1), ""
@@ -297,15 +320,15 @@ let tests =
                 Expect.equal (Codegen.tagBool false) 3L ""
                 Expect.equal (Codegen.tagBool true) 11L ""
             }
-            test "지원하지 않는 기능은 NotSupported" {
-                Expect.throwsC
-                    (fun () -> Codegen.emitProgram (Program.parse "None") |> ignore)
-                    (fun ex -> Expect.equal ex.Message "Not supported by the compiler yet: Ctor" "")
+            test "인자 없는 생성자는 전역 상수 블록, 이름은 C 문자열 전역" {
+                let mlir = Codegen.emitProgram (Program.parse "[None; None]")
+                Expect.stringContains mlir "llvm.mlir.global internal constant @ctor_0(\"None\\00\")" ""
+                Expect.stringContains mlir "@unit_0() {addr_space = 0 : i32, alignment = 8 : i64} : !llvm.struct<(i64, ptr)>" ""
+                Expect.isFalse (mlir.Contains "@unit_1") "같은 생성자는 하나"
             }
-            test "생성자 패턴은 아직 NotSupported" {
-                Expect.throwsC
-                    (fun () -> Codegen.emitProgram (Program.parse "match 1 with | Some x -> x | _ -> 0") |> ignore)
-                    (fun ex -> Expect.equal ex.Message "Not supported by the compiler yet: constructor pattern" "")
+            test "생성자 헤더: 종류 5, 이름과 인자" {
+                Expect.equal (Codegen.dataHeader false) 0x105L "이름만"
+                Expect.equal (Codegen.dataHeader true) 0x205L "이름 + 인자"
             }
             test "클로저는 calc_alloc 으로 할당하고 간접 호출" {
                 let mlir = Codegen.emitProgram (Program.parse "let k = 10 in let add = fun x -> x + k in add 32")
@@ -388,6 +411,19 @@ let tests =
                 // 안쪽 함수가 먼저 만들어짐
                 Expect.equal (p.Functions |> List.map (fun f -> f.Name, f.Param, f.Captured)) [ "lambda_0", "b", [ "a" ]; "lambda_1", "a", [] ] ""
             }
+            test "생성자: 바로 적용하면 블록, 값으로 쓰면 함수" {
+                Expect.equal (lowered "Some 1").Main (Core.CData ("Some", Some (Core.CInt 1))) ""
+                Expect.equal (lowered "None").Main (Core.CData ("None", None)) ""
+                let p = lowered "Some"
+                Expect.equal p.Main (Core.CMakeClosure ("lambda_0", [])) "fun x -> Some x"
+                Expect.equal p.Functions.Head.Body (Core.CData ("Some", Some (Core.CVar "x"))) ""
+            }
+            test "type 선언이 생성자 범위를 정함" {
+                Expect.equal
+                    (lowered "type t = A | B of int in B 2").Main
+                    (Core.CData ("B", Some (Core.CInt 2)))
+                    "선언 자체는 코드가 없음"
+            }
             test "&& 와 || 는 if 로" {
                 Expect.equal (lowered "true && false").Main (Core.CIf (Core.CBool true, Core.CBool false, Core.CBool false)) ""
                 Expect.equal (lowered "true || false").Main (Core.CIf (Core.CBool true, Core.CBool true, Core.CBool false)) ""
@@ -434,7 +470,7 @@ let tests =
             let inputs = differentialInputs.Value
             for input in inputs do
                 Expect.equal (batchRun input) (interpret input) input
-            // 단계가 올라갈수록 늘어남 (단계 5: + 리스트, 튜플, 패턴 매칭)
-            Expect.isGreaterThanOrEqual inputs.Length 155 "컴파일한 예제 수"
+            // 단계가 올라갈수록 늘어남 (단계 6: + ADT 와 option)
+            Expect.isGreaterThanOrEqual inputs.Length 185 "컴파일한 예제 수"
         }
     ]

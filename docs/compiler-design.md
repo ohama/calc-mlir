@@ -2,7 +2,7 @@
 
 Calc 언어를 인터프리터(`Eval`) 대신 **네이티브 실행 파일로 컴파일**하기 위한 설계 문서입니다. 구현은 간단한 것부터 단계별로 진행합니다(8장). 각 단계는 그 자체로 동작하고 테스트되는 상태로 끝납니다.
 
-**진행 상황**: 단계 5 완료 (정수·불리언 연산, 비교, 단락 평가, `if`, `let`, 함수와 클로저, `let rec`, 문자열, 리스트, 튜플, `match`와 가드, `let` 패턴). 다음은 단계 6(ADT와 option).
+**진행 상황**: 단계 6 완료 (정수·불리언 연산, 비교, 단락 평가, `if`, `let`, 함수와 클로저, `let rec`, 문자열, 리스트, 튜플, `match`와 가드, `let` 패턴, `type` 선언과 생성자, `option`). AST의 모든 식을 컴파일하고, 남은 것은 내장 함수입니다. 다음은 단계 7(내장 함수).
 
 지금 코드가 실제로 하는 일(예제 하나로 따라가는 흐름, 진입점, 런타임 링크)은 [compiler-architecture.md](compiler-architecture.md)에 있습니다.
 
@@ -131,7 +131,7 @@ clang prog.o runtime.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack_size,0x200
 | `STRING` | 길이, UTF-16 코드 단위 배열. 헤더는 `2 \| (뒤따르는 단어 수 << 8)`. 상수는 8바이트 정렬 전역(`llvm.mlir.global`, GC 대상 아님), 연결 결과는 `GC_MALLOC_ATOMIC`(안에 포인터가 없어 GC가 내용을 훑지 않음) |
 | `CONS` | head, tail. 헤더 `3 \| (2 << 8)`. `[]`는 블록이 아니라 즉시값 `5` |
 | `TUPLE` | 원소 n개. 헤더 `4 \| (n << 8)` |
-| `DATA` | 생성자 설명자 포인터(이름, 타입 이름, 번호), 인자(있으면) |
+| `DATA` | 생성자 이름(C 문자열 전역의 포인터), 인자(있으면). 헤더 `5 \| (1 또는 2 << 8)`. 인자 없는 생성자는 8바이트 정렬 전역 상수 블록. 처음 설계한 설명자(이름, 타입 이름, 번호) 대신 이름만 둡니다. 타입 검사를 통과했으므로 같은 타입끼리만 비교하고, 인터프리터도 생성자를 이름으로 비교하기 때문입니다 |
 | `CLOSURE` | 코드 포인터, 캡처한 값들 |
 
 **이 표현을 고른 이유**
@@ -185,7 +185,7 @@ clang prog.o runtime.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack_size,0x200
 - 내장 함수 33개는 `runtime.c`의 C 함수로 구현합니다.
 - 각 내장 함수는 **정적 클로저 객체**로도 존재합니다. 그래서 `map upper xs`처럼 값으로 넘길 수 있습니다. 인자가 여럿인 내장 함수는 인자를 모으는 클로저를 만듭니다(인터프리터의 `VBuiltin`과 같음).
 - `map`, `filter`, `fold` 같은 고차 함수는 C에서 `calc_apply(closure, arg)`로 사용자 클로저를 부릅니다.
-- `Some`과 `None`, 사용자 생성자도 같은 방식입니다. 생성자 설명자는 `llvm.mlir.global` 상수로 만듭니다.
+- `Some`과 `None`, 사용자 생성자는 단계 6에서 정적 클로저가 아니라 `Lower`가 처리합니다. 바로 적용한 `Some 1`은 그 자리에서 `DATA` 블록을 만들고, 값으로 쓴 `Some`은 클로저 `fun x -> Some x`가 됩니다. 생성자 이름은 `llvm.mlir.global` C 문자열 상수입니다.
 
 ### D9. 오류, 정수 의미, 스택
 
@@ -206,7 +206,7 @@ clang prog.o runtime.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack_size,0x200
 
 ## 5. Core IR
 
-`Lower`가 만드는 중간 표현입니다(`src/Calc/Core.fs`). 클로저 변환이 끝나서 **모든 함수가 최상위**에 있습니다. 아래는 단계 5까지 구현한 모양이고, 생성자는 단계 6에서 경우를 더합니다. 패턴은 `Ast.Pattern`을 그대로 씁니다.
+`Lower`가 만드는 중간 표현입니다(`src/Calc/Core.fs`). 클로저 변환이 끝나서 **모든 함수가 최상위**에 있습니다. 아래는 단계 6까지 구현한 모양입니다. 패턴은 `Ast.Pattern`을 그대로 씁니다. `type` 선언은 Core에 남지 않고, `Lower`가 생성자 범위(이름 → 인자 유무)를 정하는 데만 씁니다.
 
 ```fsharp
 type CExpr =
@@ -222,6 +222,7 @@ type CExpr =
     | CNil                            // 즉시값 5
     | CCons of CExpr * CExpr
     | CTuple of CExpr list
+    | CData of ctor: string * payload: CExpr option                   // 생성자 값
     | CMatch of CExpr * (Ast.Pattern * CExpr option * CExpr) list   // let 패턴도 분기 하나짜리 match
 
 type CFunction =

@@ -95,6 +95,16 @@ static void format_value(FILE *out, value v) {
             format_value(out, CALC_FIELD(p, 1));
         }
         fputc(']', out);
+    } else if (CALC_IS_KIND(v, CALC_KIND_DATA)) {
+        fputs((const char *)CALC_FIELD(v, 1), out);
+        if (CALC_SIZE(v) == 2) {
+            /* 다시 입력했을 때 같은 값이 되도록 괄호: Some (Some 1), Some (-1). 튜플은 이미 괄호가 있음 */
+            value p = CALC_FIELD(v, 2);
+            int paren = (CALC_IS_KIND(p, CALC_KIND_DATA) && CALC_SIZE(p) == 2) || (CALC_IS_INT(p) && CALC_INT_VAL(p) < 0);
+            fputs(paren ? " (" : " ", out);
+            format_value(out, p);
+            if (paren) fputc(')', out);
+        }
     } else if (CALC_IS_KIND(v, CALC_KIND_TUPLE)) {
         fputc('(', out);
         for (int64_t i = 0; i < CALC_SIZE(v); i++) {
@@ -175,6 +185,11 @@ static int equals(value a, value b) {
             if (!equals(CALC_FIELD(a, 1), CALC_FIELD(b, 1))) return 0;
         }
         return 1;
+    }
+    /* 타입 검사를 통과했으므로 같은 타입: 생성자가 다르면 false, 같으면 인자를 비교 */
+    if (CALC_IS_KIND(a, CALC_KIND_DATA)) {
+        if (strcmp((const char *)CALC_FIELD(a, 1), (const char *)CALC_FIELD(b, 1)) != 0) return 0;
+        return CALC_SIZE(a) == 2 && CALC_SIZE(b) == 2 ? equals(CALC_FIELD(a, 2), CALC_FIELD(b, 2)) : 1;
     }
     if (CALC_IS_KIND(a, CALC_KIND_TUPLE)) {
         for (int64_t i = 0; i < CALC_SIZE(a); i++) {
