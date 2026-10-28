@@ -66,6 +66,11 @@ void calc_match_failure(value v);
 /* 클로저 f 를 인자 하나로 호출. 생성한 코드의 호출 규약 (클로저, 인자) -> 결과 와 같음 */
 value calc_apply(value f, value arg);
 
+/* 예외. try e with ... 는 calc_try(fun () -> e, fun $exn -> match $exn with ... | _ -> raise $exn) (Lower).
+   calc_raise 는 가장 안쪽 calc_try 로 돌아감 (_longjmp). 받는 try 가 없으면 Eval.CalcException 의 Message 처럼 출력하고 종료 */
+value calc_try(value body, value handler);
+void calc_raise(value exn) __attribute__((noreturn));
+
 /* option: Some 과 None 의 이름과 None 값은 런타임에 하나. 생성한 코드도 이 전역을 가리킴 (패턴 검사가 이름 포인터를 비교) */
 extern const char calc_name_some[];
 extern const char calc_name_none[];
@@ -112,11 +117,9 @@ value calc_builtin_split(value s, value sep);
 value calc_builtin_join(value sep, value items);
 value calc_builtin_toString(value v);
 value calc_builtin_toInt(value s);
-value calc_builtin_head(value xs);
-value calc_builtin_tail(value xs);
-value calc_builtin_nth(value xs, value i);
 value calc_builtin_sort(value xs);
 value calc_builtin_print(value v);
 value calc_builtin_println(value v);
+value calc_builtin_raise(value exn);
 
 #endif

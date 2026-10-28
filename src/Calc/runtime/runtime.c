@@ -2,6 +2,7 @@
 #include "runtime.h"
 
 #include <gc.h>
+#include <setjmp.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -213,6 +214,49 @@ void calc_print_result(value v) {
 }
 
 void calc_match_failure(value v) { calc_errorf("Match failure: %s", format_utf8(v)); }
+
+/* ---- 예외 ---- */
+
+/* 실행 중인 try 마다 하나. calc_try 의 스택 프레임에 있고, 안쪽 try 가 앞 */
+typedef struct calc_handler {
+    jmp_buf jump;
+    struct calc_handler *outer;
+} calc_handler;
+
+static calc_handler *calc_handlers = NULL;
+static value calc_raised; /* raise 한 예외 값. _longjmp 한 뒤 calc_try 가 읽음 */
+
+/* setjmp 를 부른 함수가 살아 있는 동안만 longjmp 할 수 있으므로, 본문은 이 함수 안에서 부름.
+   _setjmp 와 _longjmp 는 시그널 마스크를 저장하지 않아서 setjmp 보다 빠름. setjmp 뒤에 바꾸는 지역 변수가 없음 */
+value calc_try(value body, value handler) {
+    calc_handler h;
+    h.outer = calc_handlers;
+    calc_handlers = &h;
+    if (_setjmp(h.jump) == 0) {
+        value result = calc_apply(body, CALC_UNIT);
+        calc_handlers = h.outer;
+        return result;
+    }
+    /* handler 안에서 raise 하면 바깥 try 로 가야 하므로 먼저 이 try 를 뺌 */
+    calc_handlers = h.outer;
+    return calc_apply(handler, calc_raised);
+}
+
+void calc_raise(value exn) {
+    if (calc_handlers != NULL) {
+        calc_raised = exn;
+        _longjmp(calc_handlers->jump, 1);
+    }
+    /* 받는 try 가 없음: Failure s 는 s (failwith 의 메시지), 나머지는 exception <값> */
+    if (strcmp((const char *)CALC_FIELD(exn, 1), "Failure") == 0 && CALC_SIZE(exn) == 2) {
+        calc_buffer b = {0};
+        calc_string *s = CALC_STRING(CALC_FIELD(exn, 2));
+        calc_buffer_units(&b, s->units, s->length);
+        calc_error(calc_buffer_utf8(&b));
+    }
+    calc_errorf("exception %s", format_utf8(exn));
+    abort(); /* calc_errorf 는 돌아오지 않음 */
+}
 
 void calc_error_divide_by_zero(void) { calc_error("Attempted to divide by zero."); }
 

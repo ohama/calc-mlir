@@ -50,6 +50,14 @@ let rec formatValue value =
         | VInt n when n < 0 -> sprintf "%s (%s)" ctor (formatValue payload)
         | _ -> sprintf "%s %s" ctor (formatValue payload)
 
+/// raise 로 던진 Calc 예외 (try ... with 가 받음). 잡히지 않으면 calc 가 Message 를 "Error: ..." 로 출력:
+/// Failure s 는 s (failwith 의 메시지, 내장 함수의 오류와 같은 모양), 나머지는 "exception <값>"
+exception CalcException of value: Value with
+    override this.Message =
+        match this.value with
+        | VData ("exn", "Failure", Some (VString s)) -> s
+        | v -> "exception " + formatValue v
+
 let typeName value =
     match value with
     | VUnit -> "unit"
@@ -177,14 +185,13 @@ let builtinArity =
         "toString", 1
         "toInt", 1
         // 리스트
-        "head", 1
-        "tail", 1
-        "nth", 2
         "sort", 1
         // 출력: 문자열은 따옴표 없이, 나머지는 formatValue (toString 과 같음)
         "print", 1
         "println", 1
-        // fst, map, fold, range, ignore 같은 함수는 Calc 로 쓴 prelude (prelude.calc)
+        // 예외: exn -> 'a
+        "raise", 1
+        // fst, map, fold, range, head, failwith 같은 함수는 Calc 로 쓴 prelude (prelude.calc)
     ]
 
 let none = VData ("option", "None", None)
@@ -248,19 +255,6 @@ let callBuiltin name args =
         | true, n -> VInt n
         | false, _ -> failwithf "toInt: invalid integer: %s" (quote s)
     // 리스트: 다루는 리스트가 먼저
-    | "head", [ xs ] ->
-        match list' xs with
-        | h :: _ -> h
-        | [] -> failwith "head: empty list"
-    | "tail", [ xs ] ->
-        match list' xs with
-        | _ :: t -> VList t
-        | [] -> failwith "tail: empty list"
-    | "nth", [ xs; i ] ->
-        let xs, i = list' xs, int' i
-        if i < 0 || i >= List.length xs then
-            failwithf "nth: index out of range (length %d, index %d)" (List.length xs) i
-        List.item i xs
     | "sort", [ xs ] ->
         let xs = list' xs
         // 비교 함수 안에서 난 예외는 List.sortWith 가 InvalidOperationException 으로 감싸므로,
@@ -269,6 +263,7 @@ let callBuiltin name args =
         | first :: _ -> xs |> List.iter (fun x -> compareValues first x |> ignore)
         | [] -> ()
         VList (List.sortWith compareValues xs)
+    | "raise", [ v ] -> raise (CalcException v)
     | "print", [ v ] ->
         output().Write(display v)
         VUnit
@@ -284,6 +279,9 @@ let builtins: Env =
     // 'a option = None | Some of 'a 는 선언 없이 쓸 수 있음
     |> Map.add "None" none
     |> Map.add "Some" (VConstructor ("option", "Some", 1))
+    // 처음부터 있는 예외 (OCaml 과 같음): failwith 가 쓰는 Failure, 찾지 못함을 뜻하는 Not_found
+    |> Map.add "Failure" (VConstructor ("exn", "Failure", 1))
+    |> Map.add "Not_found" (VData ("exn", "Not_found", None))
 
 /// type 선언의 생성자를 환경에 추가: 인자 없는 생성자는 값, 인자 있는 생성자는 함수처럼 호출하는 값
 let declareConstructors (env: Env) (typeName: string) (ctors: (string * TypeExpr option) list) =
@@ -376,6 +374,21 @@ let rec evalIn (env: Env) expr =
         | Some (VData _ | VConstructor _ as v) -> v
         | _ -> failwithf "Unknown constructor: %s" name
     | TypeDecl (typeName, _, ctors, body) -> evalIn (declareConstructors env typeName ctors) body
+    | ExceptionDecl (name, argType, body) -> evalIn (declareConstructors env "exn" [ name, argType ]) body
+    // 본문에서 raise 된 예외만 받음 (0으로 나누기 같은 실행 중 오류는 받지 않음). 맞는 분기가 없으면 같은 값을 다시 raise
+    | Try (body, cases) ->
+        try
+            evalIn env body
+        with CalcException exn ->
+            let rec handle cases =
+                match cases with
+                | [] -> raise (CalcException exn)
+                | (pattern, guard, handler) :: rest ->
+                    match matchPattern pattern exn env with
+                    | Some caseEnv when (match guard with None -> true | Some g -> evalBool caseEnv g) ->
+                        evalIn caseEnv handler
+                    | _ -> handle rest
+            handle cases
 
 and evalInt env expr =
     match evalIn env expr with

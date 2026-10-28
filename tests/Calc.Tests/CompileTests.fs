@@ -335,6 +335,17 @@ let private runCases =
           "(fst (1, \"a\"), snd (1, \"a\"), tryHead [7], tryFind (fun x -> x > 5) [1], defaultValue 0 None, append [1] [2], isEmpty [])",
               ("(1, \"a\", Some 7, None, 0, [1; 2], true)\n", "", 0), ""
         ]
+      "예외 (calc_try 의 _setjmp, raise 의 _longjmp)",
+        [
+          "failwith \"fatal\"", ("", "Error: fatal\n", 1), "Failure 는 메시지만"
+          "print \"a\"; raise Not_found", ("a", "Error: exception Not_found\n", 1), "출력을 먼저 비움"
+          "exception E of int * string in raise (E (1, \"x\"))", ("", "Error: exception E (1, \"x\")\n", 1), ""
+          "try raise Not_found with Failure _ -> 1", ("", "Error: exception Not_found\n", 1), "맞는 분기가 없으면 다시 raise"
+          "try 1 / 0 with _ -> 0", ("", "Error: Attempted to divide by zero.\n", 1), "실행 중 오류는 예외가 아님"
+          "exception E in let rec f n = if n = 0 then raise E else 1 + f (n - 1) in try f 100000 with E -> -1", ("-1\n", "", 0), "깊은 재귀에서 _longjmp"
+          "exception E of int in let rec go n = try (if n = 0 then raise (E 0) else go (n - 1)) with E k -> raise (E (k + 1)) in try go 1000 with E k -> k", ("1001\n", "", 0), "try 1000개가 쌓였다가 하나씩 다시 raise"
+          "let f () = try raise Not_found with Not_found -> 1 in (f (), f (), try f () + raise Not_found with Not_found -> 7)", ("(1, 1, 7)\n", "", 0), "끝난 try 는 handler 목록에서 빠짐"
+        ]
       "Match failure",
         [
           "match [1] with | [] -> 0", ("", "Error: Match failure: [1]\n", 1), ""
@@ -563,8 +574,8 @@ let tests =
             test "내장 함수: 인자가 다 모이면 호출, 남는 인자는 결과에 적용" {
                 Expect.equal (lowered "length \"ab\"").Main (Core.CBuiltin ("length", [ Core.CString "ab" ])) ""
                 Expect.equal
-                    (lowered "head [fun x -> x] 2").Main
-                    (Core.CApply (Core.CBuiltin ("head", [ Core.CCons (Core.CMakeClosure ("lambda_0", []), Core.CNil) ]), Core.CInt 2))
+                    (lowered "raise Not_found 2").Main
+                    (Core.CApply (Core.CBuiltin ("raise", [ Core.CData ("Not_found", None) ]), Core.CInt 2))
                     ""
             }
             test "내장 함수를 값으로: 인자를 하나씩 받는 클로저" {

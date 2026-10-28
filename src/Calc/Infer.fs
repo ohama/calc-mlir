@@ -53,7 +53,10 @@ type private State =
       /// 타입 표기의 'a 가 가리키는 변수. let 정의마다 범위 하나 (단계, 이름 → 변수), 안쪽 범위가 앞
       mutable TypeVarScopes: (int * Dictionary<string, Type>) list
       /// 타입 표기에 쓴 'a 와 그 변수, 처음 쓴 위치. 추론이 끝난 뒤 다른 타입으로 정해졌는지 확인
-      NamedVars: List<string * Type * (int * int) option> }
+      NamedVars: List<string * Type * (int * int) option>
+      /// 예외 생성자 → 인자 타입. 프로그램 전체에서 이름이 하나 (실행 중에는 예외를 이름으로 구분하므로).
+      /// 빠진 분기 검사가 exn 패턴의 하위 타입을 찾을 때도 씀 (exn 은 생성자 목록이 열려 있음)
+      Exceptions: Dictionary<string, Type option> }
 
 type private Context =
     { Vars: Map<string, Type>
@@ -66,6 +69,8 @@ let private tString = TyCon ("string", [])
 let private tUnit = TyCon ("unit", [])
 let private listOf t = TyCon ("list", [ t ])
 let private optionOf t = TyCon ("option", [ t ])
+/// 예외 값의 타입. exception 선언마다 생성자가 늘어나는 열린 타입이라 빠진 분기 검사는 int 처럼 _ 가 필요함
+let private tExn = TyCon ("exn", [])
 
 let rec prune t =
     match t with
@@ -260,9 +265,6 @@ let private initialContext (st: State) =
             "toString", a ^-> tString
             "toInt", tString ^-> tInt
             // 리스트
-            "head", listOf a ^-> a
-            "tail", listOf a ^-> listOf a
-            "nth", listOf a ^-> tInt ^-> a
             "sort", listOf intOrString ^-> listOf intOrString
             // option
             "None", optionOf a
@@ -270,10 +272,14 @@ let private initialContext (st: State) =
             // 출력
             "print", a ^-> tUnit
             "println", a ^-> tUnit
-            // map, fold, fst, ignore 같은 함수는 prelude.calc 에서 추론한 타입
+            // 예외: 돌아오지 않으므로 결과는 아무 타입
+            "raise", tExn ^-> a
+            "Failure", tString ^-> tExn
+            "Not_found", tExn
+            // map, fold, head, failwith 같은 함수는 prelude.calc 에서 추론한 타입
         ]
     let types =
-        Map.ofList [ "int", ("int", 0); "bool", ("bool", 0); "string", ("string", 0); "unit", ("unit", 0); "list", ("list", 1); "option", ("option", 1) ]
+        Map.ofList [ "int", ("int", 0); "bool", ("bool", 0); "string", ("string", 0); "unit", ("unit", 0); "list", ("list", 1); "option", ("option", 1); "exn", ("exn", 0) ]
     { Vars = vars; Types = types }
 
 // ---- 추론 ----
@@ -541,6 +547,30 @@ and private inferNode (st: State) (ctx: Context) expr : Type =
                 | None -> ctor, result
                 | Some t -> ctor, TyFun (t, result))
         infer st (withVars ctorTypes declCtx) body
+    | ExceptionDecl (name, argType, body) ->
+        // 같은 이름의 예외는 프로그램에 하나: 실행 중에는 예외를 이름으로 구분하므로, 인자 타입이 다른 두 예외가
+        // (범위가 겹치지 않더라도 값으로 흘러가서) 섞이면 soundness 가 깨짐. OCaml 은 선언마다 다른 예외
+        if st.Exceptions.ContainsKey name then typeError (sprintf "Exception %s is already defined" name)
+        // 예외는 polymorphic 할 수 없음 (OCaml 과 같음): 인자 타입의 'a 는 오류
+        let noTypeVar v = typeError (sprintf "Unbound type variable: '%s" v)
+        let arg = argType |> Option.map (convertType ctx noTypeVar)
+        st.Exceptions[name] <- arg
+        let ctorType =
+            match arg with
+            | None -> tExn
+            | Some t -> TyFun (t, tExn)
+        infer st (withVars [ name, ctorType ] ctx) body
+    // 본문과 handler 가 같은 타입. 패턴은 exn. 맞는 분기가 없으면 다시 raise 하므로 빠진 분기 경고는 없음
+    | Try (body, cases) ->
+        let t = infer' body
+        for pattern, guard, handler in cases do
+            let tp, binds = inferPattern st ctx pattern
+            expect pattern tExn tp
+            let caseCtx = withVars binds ctx
+            guard |> Option.iter (fun g -> expect g tBool (infer st caseCtx g))
+            expect handler t (infer st caseCtx handler)
+        st.Matches.Add((tExn, cases |> List.map (fun ((p, g, _) as case) -> p, Option.isSome g, Errors.positionOf case), Errors.positionOf expr, "try"))
+        t
     | Annot (e, te) ->
         let t = convertType ctx (namedTypeVar st expr) te
         expect e t (infer' e)
@@ -672,9 +702,13 @@ let rec private useful (st: State) (rows: Pat list list) (q: Pat list) (types: T
         | Con (name, args) ->
             // 생성자의 하위 타입: 타입이 생성자를 모두 알면 거기서, 상수(int, string)는 하위 패턴이 없음
             let argTypes =
-                match signature st t with
-                | Some ctors -> ctors |> List.tryFind (fst >> (=) name) |> Option.map snd |> Option.defaultValue []
-                | None -> []
+                match signature st t, prune t with
+                | Some ctors, _ -> ctors |> List.tryFind (fst >> (=) name) |> Option.map snd |> Option.defaultValue []
+                | None, TyCon ("exn", []) ->
+                    match st.Exceptions.TryGetValue name with
+                    | true, arg -> Option.toList arg
+                    | _ -> []
+                | None, _ -> []
             useful st (specialize name args.Length) (args @ qtail) (argTypes @ rest)
         | Any ->
             let heads = rows |> List.choose (function Con (name, _) :: _ -> Some name | _ -> None) |> Set.ofList
@@ -720,7 +754,8 @@ let private checkMatches (st: State) : Warning list =
               if not guarded then before <- before @ [ [ toPat p ] ]
           // 가드가 있는 분기는 실패할 수 있으므로 덮는 데 셈하지 않음 (OCaml, F# 와 같음)
           let rows = cases |> List.filter (fun (_, guarded, _) -> not guarded) |> List.map (fun (p, _, _) -> [ toPat p ])
-          match missing st rows [ t ] with
+          // try 는 맞는 분기가 없으면 다시 raise 하므로 빠진 분기가 정상 (OCaml 도 경고하지 않음)
+          match (if kind = "try" then None else missing st rows [ t ]) with
           | Some [ example ] ->
               let what = if kind = "let" then "this let pattern" else "this match"
               yield
@@ -738,7 +773,8 @@ let typecheckWithWarnings (expr: Expr) : Type * Warning list =
           Matches = List()
           Discarded = List()
           TypeVarScopes = [ 0, Dictionary() ]
-          NamedVars = List() }
+          NamedVars = List()
+          Exceptions = Dictionary(dict [ "Failure", Some tString; "Not_found", None ]) }
     let t = infer st (initialContext st) expr
     applyDefaults st t
     let discarded =

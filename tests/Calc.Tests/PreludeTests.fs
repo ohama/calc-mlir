@@ -41,7 +41,11 @@ let tests =
                   "forall", "('a -> bool) -> 'a list -> bool"
                   "tryHead", "'a list -> 'a option"
                   "tryFind", "('a -> bool) -> 'a list -> 'a option"
-                  "defaultValue", "'a -> 'a option -> 'a" ] do
+                  "defaultValue", "'a -> 'a option -> 'a"
+                  "failwith", "string -> 'a"
+                  "head", "'a list -> 'a"
+                  "tail", "'a list -> 'a list"
+                  "nth", "'a list -> int -> 'a" ] do
                 Expect.equal (InferTests.typeOf name) expected name
         }
 

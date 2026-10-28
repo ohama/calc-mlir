@@ -27,7 +27,7 @@ Result: 10
 | 재귀 함수 | `let rec fact n = if n <= 1 then 1 else n * fact (n - 1) in fact 10` |
 | 문자열 (`+`로 연결, 비교) | `"Hello, " + name`, `"a" < "b"` |
 | 문자열 내장 함수 | `length`, `substr`, `upper`, `split`, `join`, `toInt`, `toString` 등 14개 |
-| 리스트·튜플·option·출력 함수 | `map`, `filter`, `fold`, `range`, `sum`, `sort`, `head`, `nth`, `fst`, `snd`, `tryHead`, `defaultValue`, `print`, `println`, `ignore` 등 22개. 이 중 16개는 Calc로 쓴 표준 라이브러리(`src/Calc/prelude.calc`) |
+| 리스트·튜플·option·출력 함수 | `map`, `filter`, `fold`, `range`, `sum`, `sort`, `head`, `nth`, `fst`, `snd`, `tryHead`, `defaultValue`, `print`, `println`, `ignore` 등 22개. 이 중 19개는 Calc로 쓴 표준 라이브러리(`src/Calc/prelude.calc`) |
 | 리스트 | `[1; 2; 3]`, `0 :: xs` |
 | 튜플 | `(1, "a")`, `let (a, b) = p in a + b` |
 | algebraic data type, `option` | `type shape = Circle of int \| Rect of int * int in ...`, `Some 1`, `None` |
@@ -40,6 +40,7 @@ Result: 10
 | `function`, or 패턴 | `function Some x -> x \| None -> 0`, `\| 1 \| 2 \| 3 -> "small"` |
 | mutual recursion | `let rec even n = ... and odd n = ...` |
 | 타입 표기 | `(xs : int list)`, `let f (x: int) : string = ...`, `fun (x: 'a) -> x` |
+| 예외 | `exception Neg of int`, `raise (Neg 1)`, `failwith "bad"`, `try e with Failure m -> m \| Not_found -> ""` |
 
 - 우선순위 (낮은 것부터): `;` < `let`/`if`/`fun`/`match` < `||` < `&&` < 비교, `|>`, `>>` < `::` < `+ -` < `* / %` < 단항 `-`, `not` < 함수 호출
 - **타입 추론** (Hindley–Milner, let-polymorphism): 실행 전에 타입을 추론하고, 맞지 않으면 평가하지 않습니다. 타입 오류는 문제가 된 식의 위치(줄, 열, `^`)를 가리킵니다.
@@ -79,7 +80,7 @@ dotnet run --project src/Calc
 ```
 
 ```
-calc 0.31.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
+calc 0.32.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
 # let add a b = a + b;;
 val add : int -> int -> int = <fun>
 # add 1 2;;

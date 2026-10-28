@@ -37,6 +37,15 @@ let tests =
                   "let _ = a + 1;;", "- : int = 2\n"
                   "let () = ();;", "" ]
         }
+        test "exception 선언과 잡히지 않은 예외" {
+            expectSession
+                [ "exception E of int;;", "exception E of int\n"
+                  "exception Stop;;", "exception Stop\n"
+                  "try raise (E 3) with E n -> n;;", "- : int = 3\n"
+                  "raise Stop;;", "Error: exception Stop\n"
+                  "failwith \"no\";;", "Error: no\n"
+                  "1;;", "- : int = 1\n" ]
+        }
         test "타입 표기와 'a 경고" {
             expectSession
                 [ "let f (x: int) : string = toString x;;", "val f : int -> string = <fun>\n"

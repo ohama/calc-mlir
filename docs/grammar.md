@@ -22,7 +22,7 @@ Calc 언어의 어휘 구조, 구문, 의미를 정리한 문서입니다. 구�
 | `CTOR` | `[A-Z][A-Za-z0-9_]*`. 생성자 (타입 이름으로도 쓸 수 있음) | `Some`, `None`, `Node`, `X2` |
 | `TYVAR` | `'` 다음에 `IDENT` 모양. type variable | `'a`, `'key` |
 | `UNDERSCORE` | `_` (와일드카드 패턴, 쓰지 않는 인자) | |
-| 키워드 | `let` `rec` `and` `in` `fun` `function` `if` `then` `else` `true` `false` `not` `match` `with` `when` `type` `of` | |
+| 키워드 | `let` `rec` `and` `in` `fun` `function` `if` `then` `else` `true` `false` `not` `match` `with` `when` `type` `of` `try` `exception` | |
 | `EQUALS` | `=` | |
 | `ARROW` | `->` | |
 | `NOTEQUAL` `LESS` `GREATER` `LESSEQUAL` `GREATEREQUAL` | `<>` `<` `>` `<=` `>=` | |
@@ -85,7 +85,8 @@ afterDecl = ε | ";;" items | decl afterDecl ;
 decl    = "let" IDENT [ params ] [ ":" type ] "=" seq
         | "let" letPat "=" seq
         | "let" "rec" recBinding { "and" recBinding }
-        | "type" [ typeParams ] typeName "=" [ "|" ] ctorDecl { "|" ctorDecl } ;
+        | "type" [ typeParams ] typeName "=" [ "|" ] ctorDecl { "|" ctorDecl }
+        | "exception" ctorDecl ;                         (* 예외 선언 *)
 
 seq     = expr [ ";" seq ] ;                             (* e1; e2: 순서 실행 *)
 
@@ -98,6 +99,8 @@ expr    = app
         | "fun" params "->" seq                          (* 람다 *)
         | "if" expr "then" expr "else" expr
         | "match" expr "with" [ "|" ] arm { "|" arm }    (* 패턴 매칭 *)
+        | "try" seq "with" [ "|" ] arm { "|" arm }       (* 예외 받기 *)
+        | "exception" ctorDecl "in" seq                  (* 예외 선언 *)
         | "type" [ typeParams ] typeName "=" [ "|" ] ctorDecl { "|" ctorDecl } "in" seq
         | expr binop expr
         | "-" expr
@@ -387,6 +390,31 @@ type ('a, 'b) pair = P of 'a * 'b in (P (1, "a") : (int, string) pair)
   - **다른 타입으로 정해지면 경고:** `let f (x: 'a) = x + 1`은 `int -> int`가 되고 `Warning: the type variable 'a has been constrained to be type int`를 냅니다(F# FS0064와 같음. OCaml은 경고하지 않음). 아래 "6. 타입 추론"을 참고하세요.
 - **풀어 쓰기:** 인자 표기 `fun (x: t) -> e`는 `fun x -> let x = (x : t) in e`, 반환 타입 표기 `let f x : t = e`는 `let f x = (e : t)`입니다. 컴파일러는 표기를 지우고 같은 코드를 만듭니다.
 
+### 예외
+
+OCaml과 같은 예외입니다. `raise`로 던지고, `try … with`로 받습니다.
+
+```
+exception Neg of int in
+let check n = if n < 0 then raise (Neg n) else n in
+(try check 5 with Neg n -> 0, try check (-3) with Neg n -> n)      (* (5, -3) *)
+
+try head [] with Failure msg -> msg                                  (* "head: empty list" *)
+let safeDiv a b = try Some (a / (if b = 0 then failwith "div" else b)) with Failure _ -> None
+```
+
+- **타입 `exn`:** 예외 값의 타입입니다. 예외는 `exn`의 생성자이고, 보통 값처럼 리스트에 넣거나 `=`로 비교하거나 `match`할 수 있습니다.
+- **선언:** `exception E`, `exception E of t`. 최상위 선언이나 `exception … in 식`으로 씁니다. 인자 타입에 type variable은 쓸 수 없습니다(OCaml과 같음, `Unbound type variable: 'a`).
+- **처음부터 있는 예외:** `Failure of string`, `Not_found`
+- **`raise : exn -> 'a`:** 돌아오지 않으므로 결과는 아무 타입입니다. 내장 함수입니다.
+- **`failwith : string -> 'a`:** `raise (Failure msg)`. prelude에 있습니다. `head`, `tail`, `nth`도 prelude에서 `failwith`로 실패합니다.
+- **`try e with | p -> e | …`:** `e`를 계산하다가 예외가 raise되면, 위에서부터 패턴과 가드가 맞는 첫 분기의 값이 됩니다. 맞는 분기가 없으면 같은 예외를 다시 raise합니다. 그래서 빠진 분기 경고는 하지 않고, 쓰이지 않는 분기 경고는 합니다. `e`와 분기 본문은 같은 타입이어야 합니다. 본문은 `;`까지 이어집니다(`try a; b with …`).
+- **잡히지 않은 예외:** `Failure msg`는 `Error: msg`, 나머지는 `Error: exception <값>`을 출력하고 종료 코드 1로 끝납니다(`Error: exception Not_found`).
+- **실행 중 오류는 예외가 아닙니다:** 0으로 나누기, `Match failure`, `substr` 범위, 깊은 재귀는 `try`로 받을 수 없습니다.
+- **OCaml과 다른 점:**
+  - 같은 이름의 예외는 프로그램에 하나만 선언할 수 있습니다(`Exception E is already defined`). 실행 중에는 예외를 이름으로 구분하기 때문입니다. OCaml은 선언마다 다른 예외입니다.
+  - `try`의 분기 본문은 tail position이 아닙니다.
+
 ### `option`
 
 `'a option = None | Some of 'a`는 선언 없이 쓸 수 있습니다(처음 환경에 들어 있음). 값이 없을 수 있는 결과에 씁니다.
@@ -444,6 +472,8 @@ defaultValue 0 (tryFind (fun x -> x > 10) xs)
 | `[e1; e2]` | `Cons (e1, Cons (e2, Nil))` (리터럴은 AST에 남지 않음) |
 | `(e1, e2)` | `Tuple [e1; e2]` |
 | `match e with p1 -> e1 \| p2 when g -> e2` | `Match (e, [ (p1, None, e1); (p2, Some g, e2) ])` (분기 순서 유지) |
+| `try e with p -> e1` | `Try (e, [ (p, None, e1) ])` |
+| `exception E of t in e` | `ExceptionDecl ("E", Some t, e)` |
 | `let (a, b) = e1 in e2` | `LetPattern (PTuple [PVar "a"; PVar "b"], e1, e2)` |
 | 패턴 `x` / `_` / `1` / `true` / `"s"` | `PVar "x"` / `PWildcard` / `PInt 1` / `PBool true` / `PString "s"` |
 | 패턴 `[]` / `p1 :: p2` / `[p1; p2]` | `PNil` / `PCons (p1, p2)` / `PCons (p1, PCons (p2, PNil))` |
@@ -585,8 +615,8 @@ type Value =
 
 함수는 두 종류로 구현되어 있지만, 쓰는 쪽에서는 구분되지 않습니다.
 
-- **prelude(Calc로 쓴 함수, 16개):** `fst`, `snd`, `ignore`, `isEmpty`, `fold`, `reverse`, `append`, `range`, `sum`, `map`, `filter`, `exists`, `forall`, `tryHead`, `tryFind`, `defaultValue`. 아래 "prelude"를 참고하세요.
-- **내장 함수(F#과 C로 구현, 20개):** 나머지. 문자열 함수, `toString`, `toInt`, 실행 중 오류를 내는 `head`, `tail`, `nth`, 여러 타입을 받는 `length`, `sort`, 출력 함수입니다.
+- **prelude(Calc로 쓴 함수, 20개):** `failwith`, `fst`, `snd`, `ignore`, `isEmpty`, `head`, `tail`, `nth`, `fold`, `reverse`, `append`, `range`, `sum`, `map`, `filter`, `exists`, `forall`, `tryHead`, `tryFind`, `defaultValue`. 아래 "prelude"를 참고하세요.
+- **내장 함수(F#과 C로 구현, 18개):** 나머지. 문자열 함수, `toString`, `toInt`, 여러 타입을 받는 `length`, `sort`, 출력 함수, `raise`입니다.
 
 #### 문자열
 
@@ -668,12 +698,19 @@ type Value =
 | `println v` | 값 → unit | `println [Some "b"]` | `[Some "b"]` 다음 줄바꿈 |
 | `ignore v` | 값 → unit | `ignore (f x)` | `()` (값을 버림) |
 
+#### 예외
+
+| 함수 | 타입 | 예 | 결과 |
+|---|---|---|---|
+| `raise e` | exn → 아무 타입 | `raise Not_found` | 예외를 던짐 |
+| `failwith msg` | string → 아무 타입 | `failwith "bad"` | `raise (Failure "bad")` |
+
 - 문자열은 따옴표 없이 그대로, 나머지 값은 결과와 같은 모양(`formatValue`)으로 출력합니다. `toString`과 같은 규칙입니다.
 - 출력은 표준 출력으로, 호출한 순서대로 나갑니다. 실행 중 오류가 나면 그때까지의 출력은 남습니다.
 
 #### prelude (Calc로 쓴 표준 라이브러리)
 
-위 표의 함수 중 16개는 [`src/Calc/prelude.calc`](../src/Calc/prelude.calc)에 Calc 코드로 있습니다. 인터프리터, 타입 추론, 컴파일러가 모두 이 정의 하나를 씁니다.
+위 표의 함수 중 20개는 [`src/Calc/prelude.calc`](../src/Calc/prelude.calc)에 Calc 코드로 있습니다. 인터프리터, 타입 추론, 컴파일러가 모두 이 정의 하나를 씁니다.
 
 ```
 let rec fold f acc xs = match xs with [] -> acc | x :: rest -> fold f (f acc x) rest
@@ -687,7 +724,8 @@ let sum (xs: int list) : int = fold (fun acc x -> acc + x) 0 xs
 - **긴 리스트:** 모두 tail recursion이라 `sum (range 1 1000000)`도 스택이 자라지 않습니다. `map`과 `filter`는 거꾸로 모은 뒤 `reverse`합니다. 함수는 앞 원소부터 호출합니다.
 - **타입:** prelude의 타입은 추론한 것입니다. `sum`처럼 `+`의 타입을 정해야 하는 곳에는 타입 표기를 씁니다. 타입은 예전의 내장 함수와 같습니다.
 - **`--no-typecheck`의 오류:** 타입이 맞지 않게 쓰면 prelude 안의 `match`나 연산이 실패합니다. `fst 1`은 `Match failure: 1`, `range 1 true`는 `Type error: expected int or string but got bool`입니다.
-- **내장 함수로 남은 것:** Calc에는 아직 예외를 내는 방법이 없어서, 실행 중 오류를 내는 `head`, `tail`, `nth`는 내장 함수입니다. `length`와 `sort`는 여러 타입을 받는데, Calc 함수로 쓰면 allowed list가 있는 type variable이 generalize되지 않아(첫 사용이 타입을 정함) 같은 타입이 될 수 없습니다.
+- **실패하는 함수:** `head`, `tail`, `nth`는 `failwith`로 `Failure`를 raise합니다. 메시지는 내장 함수였을 때와 같고(`head: empty list`), 이제 `try`로 받을 수 있습니다.
+- **내장 함수로 남은 것:** `length`와 `sort`는 여러 타입을 받는데, Calc 함수로 쓰면 allowed list가 있는 type variable이 generalize되지 않아(첫 사용이 타입을 정함) 같은 타입이 될 수 없습니다.
 - **성능:** 인터프리터는 F#의 `List` 함수 대신 Calc 코드를 해석하므로 긴 리스트에서 느립니다. 100만 개 리스트에 `range`, `map`, `filter`, `sum`, `exists`를 쓰는 프로그램이 0.77초에서 5.0초가 되었습니다(Release). 컴파일한 실행 파일은 0.04초에서 0.23초가 되었습니다.
 
 ## 5. 오류
@@ -711,9 +749,9 @@ let sum (xs: int list) : int = fold (fun acc x -> acc + x) 0 xs
 | 평가 | `substr`의 범위가 문자열 밖 | `substr: index out of range (length 5, start 3, count 5)` |
 | 평가 | `replace`의 찾을 문자열이 빈 문자열 | `replace: empty search string` |
 | 평가 | `toInt`가 정수로 읽을 수 없는 문자열 | `toInt: invalid integer: "abc"` |
-| 평가 | 빈 리스트에 `head`/`tail` | `head: empty list`, `tail: empty list` |
-| 평가 | `nth`의 위치가 리스트 밖 | `nth: index out of range (length 1, index 1)` |
-| 평가 | `fst`/`snd`에 원소 2개짜리 튜플이 아닌 값 | `Type error: expected pair but got <타입>` |
+| 평가 | 빈 리스트에 `head`/`tail` (`Failure`, `try`로 받을 수 있음) | `head: empty list`, `tail: empty list` |
+| 평가 | `nth`의 위치가 리스트 밖 (`Failure`) | `nth: index out of range (length 1, index 1)` |
+| 평가 | 잡히지 않은 예외 | `Failure msg`는 `msg`, 나머지는 `exception <값>` (`exception Not_found`) |
 | 평가 | 선언되지 않은(보이지 않는) 생성자 | `Unknown constructor: <이름>` |
 | 평가 | 생성자 인자의 튜플 원소 수가 선언과 다름 | `Constructor Rect expects 2 fields but got int` |
 | 평가 | 패턴에서 생성자 인자 유무가 선언과 다름 | `Constructor Some requires an argument`, `Constructor None takes no argument` |
@@ -754,6 +792,7 @@ Error: parse error: unexpected '+' (line 1, column 5)
 | `t1 * t2 * ...` | `(1, "a")`: `int * string` |
 | `t1 -> t2` | `fun x -> x + 1`: `int -> int` |
 | `t option` | `Some 1`: `int option` |
+| `exn` | `Not_found`, `Failure "x"`: `exn` |
 | 사용자 타입 | `Node (Leaf, 1, Leaf)`: `int tree` |
 | type variable | `'a`, `'b`, ... |
 
@@ -804,6 +843,8 @@ Error: parse error: unexpected '+' (line 1, column 5)
 | `tryHead`, `tryFind` | `'a list -> 'a option`, `('a -> bool) -> 'a list -> 'a option` |
 | `defaultValue` | `'a -> 'a option -> 'a` |
 | `Some`, `None` | `'a -> 'a option`, `'a option` |
+| `raise`, `failwith` | `exn -> 'a`, `string -> 'a` |
+| `Failure`, `Not_found` | `string -> exn`, `exn` |
 
 ### 타입 오류
 
@@ -815,7 +856,8 @@ Error: parse error: unexpected '+' (line 1, column 5)
 | 자기 자신을 포함하는 타입 (`fun x -> x x`) | `Type mismatch: cannot construct infinite type 'a = 'a -> 'b` |
 | 정의되지 않은 변수, 생성자 | `Unbound variable: x`, `Unknown constructor: X` |
 | 생성자 패턴의 인자 유무 | `Constructor Some requires an argument`, `Constructor None takes no argument` |
-| `type` 선언과 타입 표기의 타입 | `Unknown type: foo`, `Unbound type variable: 'b`(`type` 선언만), `Duplicate type variable: 'a`, `Type list expects 1 type argument(s) but got 0` |
+| `type` 선언과 타입 표기의 타입 | `Unknown type: foo`, `Unbound type variable: 'b`(`type`과 `exception` 선언만), `Duplicate type variable: 'a`, `Type list expects 1 type argument(s) but got 0` |
+| 같은 이름의 예외를 다시 선언 | `Exception E is already defined` (범위가 겹치지 않아도, `Failure`와 `Not_found` 포함) |
 
 - **위치:** 오류에는 문제가 된 식이나 패턴의 위치가 붙습니다(OCaml처럼). `calc`는 파서 오류와 같은 형식으로 위치와 `^`를 출력합니다.
 
@@ -905,7 +947,8 @@ Warning: the type variable 'a has been constrained to be type int (line 1, colum
 
 타입 검사를 통과한 프로그램은 실행 중에 `Type error`가 나지 않습니다. 함수끼리 `=` 비교만 예외입니다(테스트: `InferTests`의 soundness 테스트). 다음 오류는 여전히 실행 중에 납니다.
 
-- `Match failure` (빠진 분기가 있으면 실행 전에 경고함, 아래), `head []`, `nth`/`substr` 범위, `toInt` 변환 실패
+- `Match failure` (빠진 분기가 있으면 실행 전에 경고함, 아래), `substr` 범위, `toInt` 변환 실패
+- 잡히지 않은 예외(`head []`, `nth` 범위, `failwith`, `raise`)
 - 0으로 나누기, 재귀가 너무 깊음
 - 함수끼리 `=` 비교: 타입은 `'a -> 'a -> bool`로 통과하고, 실행 중에 `Type error: expected int, bool, string, list, tuple or data but got function`
 

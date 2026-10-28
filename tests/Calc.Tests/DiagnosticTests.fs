@@ -120,6 +120,18 @@ let tests =
             }
         ]
 
+        test "try: 빠진 분기는 경고하지 않음 (다시 raise), 쓰이지 않는 분기는 경고" {
+            Expect.isEmpty (warnings "try 1 with Failure _ -> 2") "다시 raise 하므로"
+            Expect.equal
+                (warnings "try 1 with Failure _ -> 2 | Failure \"x\" -> 3")
+                [ "this match case is unused", Some (1, 29) ]
+                ""
+            Expect.equal
+                (warnings "exception E of bool in try 1 with E true -> 2 | E false -> 3 | E _ -> 4 | _ -> 5")
+                [ "this match case is unused", Some (1, 64) ]
+                "예외의 인자 타입(bool)을 알아서 E true, E false 가 E _ 를 덮음"
+        }
+
         testList "타입 변수가 다른 타입으로 정해짐 (F# FS0064)" [
             let constrained name what = sprintf "the type variable '%s has been constrained to be type %s" name what
             for input, expected in

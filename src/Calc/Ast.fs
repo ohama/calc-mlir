@@ -82,6 +82,11 @@ type Expr =
     /// (e : t): e 의 타입이 t 여야 함. 실행할 때는 e 와 같음.
     /// 매개변수 표기 fun (x: t) -> body 는 fun x -> let x = (x : t) in body, 반환 타입 표기 let f x : t = e 는 let f x = (e : t)
     | Annot of Expr * TypeExpr
+    /// try e with | p -> e | ...: e 에서 raise 된 예외를 위에서부터 패턴과 가드가 맞는 첫 분기가 받음.
+    /// 맞는 분기가 없으면 같은 예외를 다시 raise (OCaml 과 같음)
+    | Try of body: Expr * cases: (Pattern * Expr option * Expr) list
+    /// exception E [of t] in body: exn 타입의 새 생성자 (OCaml 의 exception 선언)
+    | ExceptionDecl of name: string * argType: TypeExpr option * body: Expr
 
 /// 프로그램의 최상위 항목: in 없는 선언 또는 식. 위치는 선언의 시작 (풀어 쓴 let 노드에 기록)
 type TopItem =
@@ -90,4 +95,5 @@ type TopItem =
     | TopLetRecs of (string * string * Expr) list * FSharp.Text.Lexing.Position
     | TopLetPattern of Pattern * Expr * FSharp.Text.Lexing.Position
     | TopType of string * string list * (string * TypeExpr option) list * FSharp.Text.Lexing.Position
+    | TopException of string * TypeExpr option * FSharp.Text.Lexing.Position
     | TopExpr of Expr

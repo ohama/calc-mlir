@@ -1,4 +1,4 @@
-/* 내장 함수 20개 (map, fold 같은 함수는 Calc 로 쓴 prelude.calc). 인자 순서, 결과, 오류 메시지는 Eval.callBuiltin 과 같음.
+/* 내장 함수 18개 (map, fold, head 같은 함수는 Calc 로 쓴 prelude.calc). 인자 순서, 결과, 오류 메시지는 Eval.callBuiltin 과 같음.
    문자열 위치와 길이는 UTF-16 코드 단위 (.NET string 과 같음). 타입 검사를 통과했으므로 인자의 종류는 검사하지 않음 */
 #include "runtime.h"
 #include "unicode.h"
@@ -203,24 +203,6 @@ value calc_builtin_toInt(value s) {
 
 /* ---- 리스트 ---- */
 
-value calc_builtin_head(value xs) {
-    if (xs == CALC_NIL) calc_error("head: empty list");
-    return HEAD(xs);
-}
-
-value calc_builtin_tail(value xs) {
-    if (xs == CALC_NIL) calc_error("tail: empty list");
-    return TAIL(xs);
-}
-
-value calc_builtin_nth(value xs, value i) {
-    int64_t n = calc_list_length(xs);
-    int32_t k = INT(i);
-    if (k < 0 || k >= n) calc_errorf("nth: index out of range (length %d, index %d)", (int)n, k);
-    for (; k > 0; k--) xs = TAIL(xs);
-    return HEAD(xs);
-}
-
 static int compare_for_sort(const void *a, const void *b) { return calc_compare(*(const value *)a, *(const value *)b); }
 
 /* int 끼리 또는 string 끼리 (calc_compare). 같다고 비교되는 원소는 내용도 같으므로 안정 정렬이 아니어도 결과가 같음 */
@@ -256,3 +238,7 @@ value calc_builtin_println(value v) {
     putchar('\n');
     return CALC_UNIT;
 }
+
+/* ---- 예외 ---- */
+
+value calc_builtin_raise(value exn) { calc_raise(exn); }

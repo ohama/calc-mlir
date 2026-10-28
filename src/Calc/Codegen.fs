@@ -365,6 +365,11 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
         fb.Emit(sprintf "%s = llvm.ptrtoint %s : !llvm.ptr to i64" r block)
         r
     | CApply (f, a) -> emitApply fb env "" f a
+    // 런타임의 calc_try 가 _setjmp 한 뒤 본문 클로저를 부름 (setjmp 를 한 함수가 살아 있는 동안만 longjmp 할 수 있으므로 C 에서)
+    | CTry (body, handler) ->
+        let b = emitExpr fb env body
+        let h = emitExpr fb env handler
+        emitCall fb "calc_try" [ b; h ] "i64"
     | CLetRecGroup (closures, body) -> emitExpr fb (emitRecGroup fb env closures) body
     | CNil -> emitConst fb "i64" nilValue
     // 인터프리터처럼 head 를 먼저 계산
@@ -581,6 +586,7 @@ let private declarations =
       "llvm.func @calc_eq(i64, i64) -> i64"
       "llvm.func @calc_compare(i64, i64) -> i32"
       "llvm.func @calc_match_failure(i64)"
+      "llvm.func @calc_try(i64, i64) -> i64"
       // 내장 함수: runtime/builtins.c
       for KeyValue (name, arity) in Eval.builtinArity do
           sprintf "llvm.func @calc_builtin_%s(%s) -> i64" name (List.replicate arity "i64" |> String.concat ", ")

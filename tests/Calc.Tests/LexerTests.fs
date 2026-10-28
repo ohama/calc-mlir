@@ -114,6 +114,12 @@ let tests =
                 [ LBRACKET; NUMBER 1; SEMI; NUMBER 2; RBRACKET; CONS; LBRACKET; RBRACKET; EOF ]
                 ""
         }
+        test "try, exception 키워드 (raise, failwith 는 보통 이름)" {
+            Expect.equal
+                (tokens "exception E try raise failwith")
+                [ EXCEPTION; CTOR "E"; TRY; IDENT "raise"; IDENT "failwith"; EOF ]
+                ""
+        }
         test "match 키워드와 |" {
             Expect.equal
                 (tokens "match xs with | h :: t -> h")

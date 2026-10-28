@@ -27,6 +27,7 @@ let chain (declarations: TopItem list) (body: Expr) =
             | TopLetRecs (bindings, _) -> LetRecs (bindings, rest)
             | TopLetPattern (pattern, value, _) -> LetPattern (pattern, value, rest)
             | TopType (name, typeParams, ctors, _) -> TypeDecl (name, typeParams, ctors, rest)
+            | TopException (name, argType, _) -> ExceptionDecl (name, argType, rest)
             | TopExpr _ -> rest)
         declarations
         body
@@ -36,7 +37,7 @@ let rec private varNames (expr: Expr) : Set<string> =
     match expr with
     | Var name -> Set.singleton name
     | Number _ | Bool _ | Str _ | Unit | Nil | Ctor _ -> Set.empty
-    | Negate e | Not e | Annot (e, _) | Lambda (_, e) | TypeDecl (_, _, _, e) -> varNames e
+    | Negate e | Not e | Annot (e, _) | Lambda (_, e) | TypeDecl (_, _, _, e) | ExceptionDecl (_, _, e) -> varNames e
     | Seq (a, b) | Let (_, a, b) | LetRec (_, _, a, b) | LetPattern (_, a, b) | App (a, b)
     | Add (a, b) | Subtract (a, b) | Multiply (a, b) | Divide (a, b) | Modulo (a, b)
     | Equal (a, b) | NotEqual (a, b) | Less (a, b) | Greater (a, b) | LessEqual (a, b) | GreaterEqual (a, b)
@@ -44,7 +45,7 @@ let rec private varNames (expr: Expr) : Set<string> =
     | If (c, t, e) -> Set.unionMany [ varNames c; varNames t; varNames e ]
     | Tuple items -> items |> List.map varNames |> Set.unionMany
     | LetRecs (bindings, body) -> bindings |> List.map (fun (_, _, b) -> varNames b) |> List.fold Set.union (varNames body)
-    | Match (scrutinee, cases) ->
+    | Match (scrutinee, cases) | Try (scrutinee, cases) ->
         cases
         |> List.map (fun (_, guard, body) -> Set.union (guard |> Option.map varNames |> Option.defaultValue Set.empty) (varNames body))
         |> List.fold Set.union (varNames scrutinee)

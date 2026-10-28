@@ -116,6 +116,13 @@ let private processItem (out: TextWriter) (input: string) (state: State) (item: 
             | ps -> sprintf "(%s) %s" (ps |> List.map (sprintf "'%s") |> String.concat ", ") name
         out.WriteLine(sprintf "type %s" shown)
         { Declarations = declarations; Env = Eval.declareConstructors state.Env name ctors }
+    // OCaml 처럼 exception E of int. 인자 타입은 생성자의 타입 (int -> exn) 에서 꺼냄
+    | TopException (name, argType, _) ->
+        let ctorType = typeOf (chain declarations (Ctor name))
+        let suffix = " -> exn"
+        let shown = if ctorType.EndsWith suffix then sprintf "%s of %s" name (ctorType.Substring(0, ctorType.Length - suffix.Length)) else name
+        out.WriteLine(sprintf "exception %s" shown)
+        { Declarations = declarations; Env = Eval.declareConstructors state.Env "exn" [ name, argType ] }
 
 /// 입력 하나(;; 로 끝나는 덩어리)를 처리. 오류가 나면 알리고, 그 앞 항목까지의 상태를 돌려줌
 let submit (state: State) (input: string) (out: TextWriter) : State =

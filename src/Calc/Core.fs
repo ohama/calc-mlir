@@ -53,6 +53,8 @@ type CExpr =
     | CData of ctor: string * payload: CExpr option
     /// 위에서부터 패턴과 가드가 모두 맞는 첫 분기. 없으면 Match failure. 패턴은 Ast 그대로
     | CMatch of scrutinee: CExpr * cases: (Pattern * CExpr option * CExpr) list
+    /// try: 런타임의 calc_try 가 _setjmp 한 뒤 body 클로저를 () 로 부르고, raise 되면 handler 클로저를 예외 값으로 부름
+    | CTry of body: CExpr * handler: CExpr
 
 /// fun param -> body 를 최상위로 옮긴 것. 호출 규약은 (클로저, 인자) -> 결과 (D4)
 type CFunction =
@@ -102,3 +104,4 @@ let rec freeVars (expr: CExpr) : Set<string> =
             let used = Set.union (guard |> Option.map freeVars |> Option.defaultValue Set.empty) (freeVars body)
             Set.difference used (patternVars pattern)
         Set.unionMany (freeVars scrutinee :: List.map caseVars cases)
+    | CTry (body, handler) -> Set.union (freeVars body) (freeVars handler)

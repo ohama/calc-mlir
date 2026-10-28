@@ -44,6 +44,8 @@ rule tokenize = parse
     | "false"       { FALSE }
     | "not"         { NOT }
     | "match"       { MATCH }
+    | "try"         { TRY }
+    | "exception"   { EXCEPTION }
     | "with"        { WITH }
     | "when"        { WHEN }
     | "type"        { TYPE }

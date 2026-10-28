@@ -4,6 +4,23 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.32.0] - 2026-10-28
+
+### 추가
+- 예외(OCaml과 같은 문법). 인터프리터, 타입 추론, 컴파일러, REPL 모두 지원합니다.
+  - `exception E`, `exception E of t` 선언(최상위, `exception … in 식`). 새 타입 `exn`. 처음부터 있는 예외는 `Failure of string`, `Not_found`입니다.
+  - `raise : exn -> 'a`(내장 함수), `failwith : string -> 'a`(prelude, `raise (Failure msg)`)
+  - `try e with | p -> e | …`: 위에서부터 맞는 분기가 받고, 맞는 분기가 없으면 다시 raise합니다. 빠진 분기 경고는 하지 않고, 쓰이지 않는 분기 경고는 합니다.
+  - 잡히지 않은 예외는 `Error: msg`(`Failure msg`) 또는 `Error: exception <값>`을 출력하고 종료 코드 1로 끝납니다.
+  - 인터프리터는 .NET 예외(`Eval.CalcException`), 컴파일러는 C 런타임의 `calc_try`(`_setjmp`)와 `calc_raise`(`_longjmp`)를 씁니다. `try`의 본문과 handler는 클로저가 됩니다(`Core.CTry`).
+  - 같은 이름의 예외는 프로그램에 하나만 선언할 수 있습니다(`Exception E is already defined`). 실행 중에는 예외를 이름으로 구분하므로, 인자 타입이 다른 두 예외가 섞이면 soundness가 깨지기 때문입니다.
+  - 0으로 나누기, `Match failure` 같은 실행 중 오류는 예외가 아니라서 `try`로 받을 수 없습니다.
+- 테스트 40개 추가, 3개 수정 (총 906개)
+
+### 변경
+- `head`, `tail`, `nth`를 내장 함수에서 prelude로 옮겼습니다. `failwith`로 실패하므로 메시지는 같고(`head: empty list`), 이제 `try … with Failure msg`로 받을 수 있습니다. 내장 함수는 18개(`raise` 포함), prelude 함수는 20개입니다.
+- `try`, `exception`이 키워드가 되었습니다.
+
 ## [0.31.0] - 2026-10-28
 
 ### 추가

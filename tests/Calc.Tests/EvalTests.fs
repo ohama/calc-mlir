@@ -320,7 +320,20 @@ let cases =
       "let rec fact (n: int) : int = if n = 0 then 1 else n * fact (n - 1) in fact 5", VInt 120
       "let xs : int list = [] in 1 :: xs", VList [ VInt 1 ]
       "(fun (_ : int) -> 0) 5", VInt 0
-      "type ('a, 'b) pair = P of 'a * 'b in match (P (1, \"x\") : (int, string) pair) with P (a, _) -> a", VInt 1 ]
+      "type ('a, 'b) pair = P of 'a * 'b in match (P (1, \"x\") : (int, string) pair) with P (a, _) -> a", VInt 1
+      // 예외
+      "try failwith \"boom\" with Failure m -> \"caught \" + m", VString "caught boom"
+      "try 1 + 2 with _ -> 0", VInt 3
+      "exception Neg of int in let check n = if n < 0 then raise (Neg n) else n in (try check 5 with Neg n -> n, try check (-3) with Neg n -> n * 10)", VTuple [ VInt 5; VInt -30 ]
+      "exception E in try (try raise E with Not_found -> 1) with E -> 2", VInt 2
+      "exception E in try (try raise Not_found with Not_found -> raise E) with E -> 3", VInt 3
+      "try raise Not_found with Failure _ -> 1 | x when x = Not_found -> 2", VInt 2
+      "try head [] with Failure m -> m", VString "head: empty list"
+      "try toString (nth [1; 2] 5) with Failure m -> m", VString "nth: index out of range (length 2, index 5)"
+      "let rec loop n = if n = 0 then raise Not_found else loop (n - 1) in try loop 100000 with Not_found -> \"deep\"", VString "deep"
+      "exception E of int in [E 1; Failure \"x\"; Not_found]", VList [ VData ("exn", "E", Some (VInt 1)); VData ("exn", "Failure", Some (VString "x")); VData ("exn", "Not_found", None) ]
+      "exception E of int in E 1 = E 1 && E 1 <> E 2", VBool true
+      "let safeDiv a b = try Some (if b = 0 then failwith \"div\" else a / b) with Failure _ -> None in (safeDiv 6 2, safeDiv 1 0)", VTuple [ some (VInt 3); none ] ]
 
 /// 오류 메시지가 정확히 일치하는지 확인
 let expectError input message =
@@ -486,7 +499,7 @@ let tests =
         testList "리스트 내장 함수 오류" [
             expectError "head []" "head: empty list"
             expectError "tail []" "tail: empty list"
-            expectError "head 1" "Type error: expected list but got int"
+            expectError "head 1" "Match failure: 1" // prelude 의 match xs with x :: _ -> ...
             expectError "nth [10] 1" "nth: index out of range (length 1, index 1)"
             expectError "nth [10] (-1)" "nth: index out of range (length 1, index -1)"
             expectError "nth [] 0" "nth: index out of range (length 0, index 0)"
@@ -532,10 +545,10 @@ let tests =
                 (fun ex -> Expect.equal ex.Message "Unbound variable: length" "")
         }
 
-        test "모든 내장 함수와 option 생성자가 builtins 환경에 있음" {
+        test "모든 내장 함수와 option, 예외 생성자가 builtins 환경에 있음" {
             Expect.equal
                 (builtins |> Map.keys |> Set.ofSeq)
-                (builtinArity |> Map.keys |> Set.ofSeq |> Set.add "Some" |> Set.add "None")
+                (builtinArity |> Map.keys |> Set.ofSeq |> Set.union (set [ "Some"; "None"; "Failure"; "Not_found" ]))
                 ""
         }
 
@@ -570,6 +583,15 @@ let tests =
             expectError "(1, 2) < (1, 3)" "Type error: expected int or string but got tuple"
             expectError "(1, 2) = 1" "Type error: expected tuple but got int"
             expectError "[1] = [(1, 2)]" "Type error: expected int but got tuple"
+        ]
+
+        testList "잡히지 않은 예외" [
+            expectError "failwith \"fatal\"" "fatal" // Failure 는 메시지만 (내장 함수의 오류와 같은 모양)
+            expectError "raise Not_found" "exception Not_found"
+            expectError "exception E of string in raise (E \"x\")" "exception E \"x\""
+            expectError "try raise Not_found with Failure _ -> 1" "exception Not_found" // 맞는 분기가 없으면 다시 raise
+            expectError "try 1 / 0 with _ -> 0" "Attempted to divide by zero." // 실행 중 오류는 예외가 아님
+            expectError "try head [] with Not_found -> 0" "head: empty list"
         ]
 
         testList "ADT 오류" [

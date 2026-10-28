@@ -29,6 +29,7 @@ let rec valueMatches value t =
     | VList items, TyCon ("list", [ e ]) -> items |> List.forall (fun v -> valueMatches v e)
     | VData ("option", _, payload), TyCon ("option", [ e ]) ->
         payload |> Option.forall (fun v -> valueMatches v e)
+    | VData ("exn", _, _), TyCon ("exn", []) -> true
     | VData (typeName, _, _), TyCon (name, _) -> name.StartsWith(typeName + "@")
     | VTuple vs, TyTuple ts -> List.length vs = List.length ts && List.forall2 valueMatches vs ts
     | (VClosure _ | VRecClosure _ | VRecGroup _ | VBuiltin _ | VConstructor _), TyFun _ -> true
@@ -117,6 +118,15 @@ let inferred =
       "let f (x: 'a) = let id (y: 'b) = y in (id 1, id true, x) in f", "'a -> int * bool * 'a"
       "type ('a, 'b) pair = P of 'a * 'b in fun (p: (int, 'b) pair) -> p", "(int, 'a) pair -> (int, 'a) pair"
       "(None : int option)", "int option"
+      // 예외
+      "raise", "exn -> 'a"
+      "failwith", "string -> 'a"
+      "Failure", "string -> exn"
+      "Not_found", "exn"
+      "fun x -> try x with Not_found -> 0", "int -> int"
+      "exception E of int * string in E", "int * string -> exn"
+      "fun f -> try f () with Failure m -> m", "(unit -> string) -> string"
+      "let f n = if n > 0 then n else failwith \"neg\" in f", "int -> int"
       "(fun (x: 'a) -> x + 1)", "int -> int"
       // = 는 모든 타입 (함수 비교는 실행 중 오류로 남음, OCaml 과 같음)
       "(fun x -> x) = (fun x -> x)", "bool" ]
@@ -172,6 +182,16 @@ let tests =
             expectTypeError "(1 : foo)" "Unknown type: foo"
             expectTypeError "([] : list)" "Type list expects 1 type argument(s) but got 0"
             expectTypeError "(1 : (int, int) option)" "Type option expects 1 type argument(s) but got 2"
+            // 예외
+            expectTypeError "try 1 with Not_found -> \"a\"" "Type mismatch: expected int but got string"
+            expectTypeError "try 1 with Some x -> x" "Type mismatch: expected exn but got 'a option"
+            expectTypeError "raise 1" "Type mismatch: expected exn but got int"
+            expectTypeError "exception E of 'a in 1" "Unbound type variable: 'a"
+            expectTypeError "exception E of foo in 1" "Unknown type: foo"
+            expectTypeError "exception E in exception E in 1" "Exception E is already defined"
+            // 범위가 겹치지 않아도: 실행 중에는 이름으로 구분하므로 v 가 안쪽 E s 와 맞아 버림
+            expectTypeError "let v = (exception E of int in E 1) in exception E of string in match v with E s -> s | _ -> \"\"" "Exception E is already defined"
+            expectTypeError "exception Failure in 1" "Exception Failure is already defined"
         ]
 
         test "모든 내장 함수와 생성자에 타입이 있음" {

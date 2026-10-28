@@ -37,7 +37,7 @@
 | lowering | `Core.fs`, `Lower.fs` | `Ast.Expr` → Core IR. 연산을 `Prim`으로, `&&`/`||`를 `if`로, closure conversion(함수를 최상위로). 지원하지 않는 기능은 `NotSupported` |
 | 코드 생성 | `Codegen.fs` | Core IR → MLIR 텍스트 |
 | 빌드 | `Toolchain.fs` | 도구 찾기, 임시 폴더에서 외부 도구(`mlir-opt`, `mlir-translate`, `clang`)를 차례로 실행, C 런타임 오브젝트 캐시 |
-| 런타임 | `runtime/runtime.c`, `builtins.c`, `runtime.h`, `unicode.h` | 초기화, 결과 출력, 오류 종료, polymorphic 연산(`calc_add`, `calc_eq`, `calc_compare`), 내장 함수 20개, `calc_apply` |
+| 런타임 | `runtime/runtime.c`, `builtins.c`, `runtime.h`, `unicode.h` | 초기화, 결과 출력, 오류 종료, polymorphic 연산(`calc_add`, `calc_eq`, `calc_compare`), 내장 함수 18개, `calc_apply`, 예외(`calc_try`, `calc_raise`) |
 | 진입 | `Program.fs`의 `compile` | 위 단계를 잇고, 오류를 인터프리터와 같은 형식(`Error: ...`)으로 출력 |
 
 F#으로 하는 일은 MLIR **텍스트**를 만드는 데까지입니다. LLVM을 라이브러리로 링크하지 않고, 텍스트 파일을 외부 도구에 넘깁니다(설계 D1).
@@ -419,25 +419,25 @@ llvm.mlir.global internal constant @ctor_1("None\00") {addr_space = 0 : i32}
 ## 10. 내장 함수 (단계 7)
 
 ```
-let f = substr "hello" in (f 1 3, map length ["a"; "bb"], head [7])
+let f = substr "hello" in (f 1 3, map length ["a"; "bb"], toInt "7")
 ```
 
-`Lower`는 변수 범위를 따라가서, 범위에 없는 이름(`substr`, `length`, `head`)만 내장 함수로 봅니다. `map`은 prelude가 앞에 붙인 `let`으로 범위에 있으므로 보통 변수입니다(11장).
+`Lower`는 변수 범위를 따라가서, 범위에 없는 이름(`substr`, `length`, `toInt`)만 내장 함수로 봅니다. `map`은 prelude가 앞에 붙인 `let`으로 범위에 있으므로 보통 변수입니다(11장).
 
 | 쓰는 모양 | Core | 생성 코드 |
 |---|---|---|
-| 인자가 다 모임: `head [7]` | `CBuiltin ("head", [...])` | `llvm.call @calc_builtin_head(%xs) : (i64) -> i64` |
+| 인자가 다 모임: `toInt "7"` | `CBuiltin ("toInt", [...])` | `llvm.call @calc_builtin_toInt(%s) : (i64) -> i64` |
 | partial application: `substr "hello"` | 클로저 `fun $b0 -> fun $b1 -> fun $b2 -> CBuiltin (...)`에 차례로 적용 | 클로저 3개, 마지막 함수가 `@calc_builtin_substr` 호출 |
 | 값으로: `map length xs` | `CApply (CApply (CVar "map", <length 클로저>), xs)` | prelude의 `map` 클로저가 `calc_apply`로 `length` 클로저를 부름 |
 | 가린 이름: `let length = ... in length x` | 보통 변수 `CVar` | 클로저 호출 |
 
-- **선언:** 모듈은 20개 내장 함수를 모두 `llvm.func @calc_builtin_<이름>(i64, ...) -> i64`로 선언합니다. 링커가 `builtins.o`와 이름으로 연결합니다.
+- **선언:** 모듈은 18개 내장 함수를 모두 `llvm.func @calc_builtin_<이름>(i64, ...) -> i64`로 선언합니다. 링커가 `builtins.o`와 이름으로 연결합니다.
 - **`calc_apply(f, x)`:** 클로저 1번 칸의 코드 포인터를 `(value *, value) -> value` 함수로 부릅니다. 생성한 코드의 calling convention과 같으므로 C와 MLIR이 서로의 함수를 그대로 부를 수 있습니다.
 - **option:** 생성 코드는 `Some`/`None`의 이름 전역을 따로 만들지 않고, 런타임의 `calc_name_some`, `calc_none`을 외부 전역으로 선언해서 씁니다(`llvm.mlir.global external constant`). 0.29.0까지는 런타임의 `tryHead`, `tryFind`도 `Some`을 만들어서 패턴 검사의 포인터 비교가 맞으려면 이름이 한 곳에 있어야 했습니다. 지금은 option을 만드는 내장 함수가 없지만, 선언 없이 모든 프로그램에 있는 타입이라 그대로 런타임에 둡니다.
 
 ## 11. prelude (Calc로 쓴 표준 라이브러리)
 
-`map`, `fold`, `range`처럼 Calc로 쓸 수 있는 함수 16개는 C 런타임에 없습니다. `src/Calc/prelude.calc`의 Calc 코드를 프로그램 앞에 붙여서, 사용자 함수와 똑같이 컴파일합니다.
+`map`, `fold`, `range`, `head`처럼 Calc로 쓸 수 있는 함수 20개는 C 런타임에 없습니다. `src/Calc/prelude.calc`의 Calc 코드를 프로그램 앞에 붙여서, 사용자 함수와 똑같이 컴파일합니다.
 
 ```
 Ast.Expr ──▶ Prelude.wrap ──▶ let rec fold f acc xs = …  in
@@ -481,6 +481,39 @@ llvm.func internal @lambda_0(%closure: !llvm.ptr, %arg: i64) -> i64 {
 - **tail position의 분기는 블록으로:** tail position이 아닌 `if`와 `match`는 값을 내는 `scf.if`입니다. 그런데 `scf.if` 안의 호출은 뒤에 결과를 모으는 분기가 있어서 `musttail`이 될 수 없습니다(`musttail` 바로 뒤에는 `ret`만 올 수 있음). 그래서 함수 본문의 tail position은 `Codegen.emitTail`이 따로 만듭니다. 분기는 `llvm.cond_br`와 블록으로, 끝은 분기마다 `llvm.return`으로 만듭니다. tail position은 본문, `let`과 `;`의 마지막 식, `if`의 두 분기, `match`의 분기 본문입니다. 마지막 분기 뒤의 `Match failure`는 `llvm.unreachable`로 끝납니다.
 - **signature가 같아서 가능:** `musttail`은 호출하는 함수와 호출되는 함수의 signature가 같아야 합니다. 모든 클로저 함수가 `(!llvm.ptr, i64) -> i64`이므로, 어떤 클로저든 다른 클로저를 `musttail`로 부를 수 있습니다. 진입 함수(`@calc_main() -> i64`)는 signature가 달라서 tail call을 하지 않습니다. 진입 함수는 한 번만 불리므로 문제가 없습니다.
 - **`-O2`만으로는 보장되지 않음:** `musttail`이 없던 0.30.0도 `-O2`에서는 LLVM이 대부분의 tail call을 jump로 바꿨습니다(위 예제를 1억 번 돌려도 통과). 같은 코드를 `-O0`으로 컴파일하면 깊이 1000만에서 stack overflow로 죽었습니다(exit 138). 지금은 `-O0`에서도 통과하고, 테스트가 `Toolchain.Tools.OptimizationLevel = "-O0"`으로 이것을 확인합니다.
+
+## 13. 예외
+
+`try e with …`는 `Lower`에서 클로저 두 개와 런타임 호출 하나가 됩니다.
+
+```
+try body with | p1 -> e1 | p2 -> e2
+  ==>  CTry (fun () -> body,
+             fun $exn -> match $exn with | p1 -> e1 | p2 -> e2 | _ -> raise $exn)
+  ==>  llvm.call @calc_try(%body, %handler) : (i64, i64) -> i64
+```
+
+```c
+value calc_try(value body, value handler) {
+    calc_handler h;
+    h.outer = calc_handlers;
+    calc_handlers = &h;
+    if (_setjmp(h.jump) == 0) {
+        value result = calc_apply(body, CALC_UNIT);   /* 본문 */
+        calc_handlers = h.outer;
+        return result;
+    }
+    calc_handlers = h.outer;                          /* handler 안의 raise 는 바깥 try 로 */
+    return calc_apply(handler, calc_raised);
+}
+```
+
+- **왜 C에서 `setjmp`를 하나:** `longjmp`는 `setjmp`를 부른 함수가 아직 살아 있을 때만 돌아갈 수 있습니다. 생성한 코드에서 `setjmp`를 부르려면 그 함수에 `returns_twice`를 붙이고 `jmp_buf`의 크기를 플랫폼마다 맞춰야 합니다. 본문을 클로저로 만들어 C 함수 안에서 부르면 이 문제가 없습니다. 대신 `try`마다 클로저 두 개를 할당합니다.
+- **`raise`:** 내장 함수 `calc_builtin_raise`가 `calc_raise`를 부릅니다. 가장 안쪽 `calc_try`의 `jmp_buf`로 `_longjmp`합니다. 그 사이의 생성한 코드 프레임은 그대로 버려집니다. 할당은 모두 GC가 관리하므로 정리할 것이 없습니다.
+- **`_setjmp`와 `_longjmp`:** `setjmp`와 달리 시그널 마스크를 저장하지 않아서 시스템 호출이 없습니다.
+- **잡히지 않은 예외:** `calc_try`가 없으면 `calc_raise`가 `Failure msg`는 `Error: msg`로, 나머지는 `Error: exception <값>`으로 출력하고 종료 코드 1로 끝냅니다(인터프리터의 `CalcException.Message`와 같음).
+- **생성자:** 예외는 `exn` 타입의 생성자라서 보통 생성자처럼 이름 전역과 `DATA` 블록이 됩니다(9장). 실행 중에는 이름 포인터로 구분하므로, 타입 검사가 같은 이름의 예외를 프로그램에 하나만 허용합니다.
+- **tail call:** `try`의 본문과 handler는 클로저 안에서 불리므로 `try` 바깥 함수의 tail position이 아닙니다. 본문 안의 tail call은 그 클로저 안에서 그대로 `musttail`입니다(12장).
 
 ## 관련 문서
 

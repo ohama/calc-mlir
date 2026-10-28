@@ -685,6 +685,22 @@ let tests =
             }
         ]
 
+        testList "예외" [
+            test "try ... with 는 match 처럼 분기 목록, 본문은 ; 까지" {
+                Expect.equal
+                    (parse "try f x with Failure m -> m | Not_found -> \"\"")
+                    (Try (App (Var "f", Var "x"), [ PCtor ("Failure", Some (PVar "m")), None, Var "m"; PCtor ("Not_found", None), None, Str "" ]))
+                    ""
+                Expect.equal (parse "try a; b with _ -> c") (Try (Seq (Var "a", Var "b"), [ PWildcard, None, Var "c" ])) ""
+                Expect.equal (parse "try a with | E when g -> b") (Try (Var "a", [ PCtor ("E", None), Some (Var "g"), Var "b" ])) "첫 | 와 가드"
+            }
+            test "exception 선언: 식과 최상위" {
+                Expect.equal (parse "exception E of int in E 1") (ExceptionDecl ("E", Some (TName ("int", [])), App (Ctor "E", Number 1))) ""
+                Expect.equal (parse "exception E\nexception F of string * int") (ExceptionDecl ("E", None, ExceptionDecl ("F", Some (TTuple [ TName ("string", []); TName ("int", []) ]), Unit))) "최상위"
+                expectParseError "exception e in 1" "parse error: unexpected 'e'" 1 11
+            }
+        ]
+
         testList "주석" [
             test "// 줄 주석과 (* *) 블록 주석 (중첩 가능)" {
                 Expect.equal (parse "1 // 끝까지\n+ (* 가운데 (* 중첩 *) *) 2") (Add (Number 1, Number 2)) ""

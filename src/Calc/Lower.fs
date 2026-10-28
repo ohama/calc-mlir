@@ -99,6 +99,16 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Set<stri
         | Some true -> state.AddFunction("x", None, CData (name, Some (CVar "x")))
         // 타입 검사를 통과했으므로 생기지 않음
         | None -> failwithf "Lower: unknown constructor %s" name
+    | ExceptionDecl (name, argType, body) -> lower state (Map.add name (Option.isSome argType) ctors) scope body
+    // 본문은 fun () -> body, handler 는 fun $exn -> match $exn with <분기> | _ -> raise $exn (맞는 분기가 없으면 다시 raise)
+    | Try (body, cases) ->
+        let handlerScope = Set.add "$exn" scope
+        let lowerCase (pattern, guard, handler) =
+            let scope = Set.union handlerScope (patternVars pattern)
+            pattern, Option.map (lower state ctors scope) guard, lower state ctors scope handler
+        let reraise = PWildcard, None, CBuiltin ("raise", [ CVar "$exn" ])
+        let handler = CMatch (CVar "$exn", List.map lowerCase cases @ [ reraise ])
+        CTry (state.AddFunction("$unit", None, lower state ctors scope body), state.AddFunction("$exn", None, handler))
     | TypeDecl (_, _, declared, body) ->
         let ctors = declared |> List.fold (fun acc (name, argType) -> Map.add name (Option.isSome argType) acc) ctors
         lower state ctors scope body
@@ -116,6 +126,6 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Set<stri
 
 let lowerProgram (expr: Expr) : CProgram =
     let state = State()
-    // 'a option = None | Some of 'a 는 선언 없이 쓸 수 있음 (Eval 의 초기 환경과 같음)
-    let main = lower state (Map.ofList [ "None", false; "Some", true ]) Set.empty expr
+    // 'a option = None | Some of 'a 와 예외 Failure, Not_found 는 선언 없이 쓸 수 있음 (Eval 의 초기 환경과 같음)
+    let main = lower state (Map.ofList [ "None", false; "Some", true; "Failure", true; "Not_found", false ]) Set.empty expr
     { Functions = state.Functions; Main = main }
