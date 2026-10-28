@@ -4,6 +4,11 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [Unreleased]
+
+### 추가
+- `docs/compiler-architecture.md`: 컴파일러 구조와 흐름. 예제 하나를 MLIR → LLVM IR → 실행 파일까지 따라가고, 진입점 `main`과 런타임의 배포·링크·호출, 지금 구조의 한계를 설명합니다.
+
 ## [0.17.0] - 2026-10-28
 
 ### 추가
