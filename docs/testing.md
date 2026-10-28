@@ -130,22 +130,24 @@ Result: 11
 
 | 입력 | 단계 | 기대 출력 |
 |---|---|---|
-| `1 +` | 파서 | `Error: parse error` |
-| `2 $ 3` | 렉서 | `Error: Unexpected character: $` |
+| `1 +` | 파서 | `Error: parse error: unexpected end of input (line 1, column 4)` 아래에 오류 줄과 `^` 표시 |
+| `1 + + 2` | 파서 | `Error: parse error: unexpected '+' (line 1, column 5)` |
+| `2 $ 3` | 렉서 | `Error: Unexpected character: $ (line 1, column 3)` |
 | `1 / 0` | 평가 | AST 출력 후 `Error: Attempted to divide by zero.` |
 | `y + 1` | 평가 | AST 출력 후 `Error: Unbound variable: y` |
-| `let x = 1` | 파서 (`in` 없음) | `Error: parse error` |
-| `let in = 1 in 2` | 파서 (키워드는 변수 이름이 될 수 없음) | `Error: parse error` |
-| `if true then 1` | 파서 (`else` 없음) | `Error: parse error` |
+| `let x = 1` | 파서 (`in` 없음) | `Error: parse error: unexpected end of input (line 1, column 10)` |
+| `let in = 1 in 2` | 파서 (키워드는 변수 이름이 될 수 없음) | `Error: parse error: unexpected 'in' (line 1, column 5)` |
+| `if true then 1` | 파서 (`else` 없음) | `Error: parse error: unexpected end of input (line 1, column 15)` |
 | `1 + true` | 평가 (타입) | AST 출력 후 `Error: Type error: expected int but got bool` |
 | `if 1 then 2 else 3` | 평가 (타입) | AST 출력 후 `Error: Type error: expected bool but got int` |
 | `1 < 2 < 3` | 평가 (타입: `(1 < 2) < 3`) | AST 출력 후 `Error: Type error: expected int but got bool` |
 | `1 2` | 평가 (함수가 아닌 값 호출) | AST 출력 후 `Error: Type error: expected function but got int` |
 | `let f x = f x in f 1` | 평가 (`rec` 없이 재귀) | AST 출력 후 `Error: Unbound variable: f` |
-| `let rec f = 1 in f` | 파서 (`let rec`에 인자 없음) | `Error: parse error` |
+| `let rec f = 1 in f` | 파서 (`let rec`에 인자 없음) | `Error: parse error: unexpected '=' (line 1, column 11)` |
 | `1 :: 2` | 평가 (`::` 오른쪽이 리스트가 아님) | AST 출력 후 `Error: Type error: expected list but got int` |
-| `match xs with [] -> 0` | 파서 (분기가 하나뿐) | `Error: parse error` |
-| `"abc` | 렉서 (닫히지 않은 문자열) | `Error: Unterminated string` |
+| `match xs with [] -> 0` | 파서 (분기가 하나뿐) | `Error: parse error: unexpected end of input (line 1, column 22)` |
+| `"abc` | 렉서 (닫히지 않은 문자열) | `Error: Unterminated string (line 1, column 1)` |
+| `2147483648` | 렉서 (`int` 범위 밖) | `Error: Integer literal out of range: 2147483648 (line 1, column 1)` |
 | `"a" + 1` | 평가 (타입) | AST 출력 후 `Error: Type error: expected string but got int` |
 | `toInt "abc"` | 평가 (내장 함수) | AST 출력 후 `Error: toInt: invalid integer: "abc"` |
 | `head []` | 평가 (내장 함수) | AST 출력 후 `Error: head: empty list` |
@@ -158,7 +160,7 @@ Result: 11
 | 명령 | 기대 출력 | 종료 코드 |
 |---|---|---|
 | `--help`, `-h` | `USAGE: calc [--help] [--expr=<expr>] [--version]`로 시작하는 사용법 | 0 |
-| `--version`, `-v` | `calc 0.10.0` (`Calc.fsproj`의 `<Version>`) | 0 |
+| `--version`, `-v` | `calc 0.11.0` (`Calc.fsproj`의 `<Version>`) | 0 |
 | `-e "(2+3)*4"` | `Result: 20` | 0 |
 | `--expr=7/2` | `Result: 3` | 0 |
 | `--expr "-5 + 2"` | `Result: -3` (`-`로 시작하는 식도 값으로 처리됨) | 0 |

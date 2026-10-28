@@ -4,6 +4,24 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.11.0] - 2026-10-28
+
+### 추가
+- 렉서·파서 오류에 위치 표시. 줄과 열은 1부터 셉니다.
+  - `parse error: unexpected '+' (line 1, column 5)`처럼 문법에 맞지 않는 토큰과 그 위치를 보여 줍니다.
+  - 입력이 중간에 끝나면 `parse error: unexpected end of input`이고, 위치는 마지막 글자 바로 뒤입니다.
+  - `Unterminated string`은 여는 `"` 위치, `Invalid escape sequence`는 `\` 위치를 보여 줍니다.
+- `calc`가 오류 메시지 아래에 오류가 난 줄과 `^` 표시를 출력합니다.
+- `Errors` 모듈: `SyntaxError(message, line, column)` 예외
+- `Program.errorLocation`: 오류 줄과 `^` 표시 문자열을 만듭니다.
+- 테스트 16개 추가 (총 419개)
+
+### 변경
+- 렉서 오류가 `Exception` 대신 `Errors.SyntaxError`입니다. `Message`에 위치가 붙습니다.
+- 파서 오류 메시지가 `parse error`에서 `parse error: unexpected ... (line L, column C)`로 바뀌었습니다.
+- 범위를 넘는 정수 리터럴의 오류가 .NET 메시지(`Value was either too large or too small for an Int32.`) 대신 `Integer literal out of range: <숫자>`입니다.
+- `docs/grammar.md`, `docs/testing.md`, `docs/build.md`, `README.md`에 오류 위치 규칙과 메시지를 반영했습니다.
+
 ## [0.10.0] - 2026-10-28
 
 ### 추가

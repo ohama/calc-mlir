@@ -13,6 +13,15 @@ let tokens (input: string) =
         | t -> loop (t :: acc)
     loop []
 
+/// SyntaxError 의 메시지와 위치(1부터)를 확인
+let expectLexError input message line column =
+    Expect.throwsC
+        (fun () -> tokens input |> ignore)
+        (fun ex ->
+            match ex with
+            | Errors.SyntaxError (m, l, c) -> Expect.equal (m, l, c) (message, line, column) input
+            | _ -> failtestf "SyntaxError 가 아님: %s" (ex.GetType().Name))
+
 [<Tests>]
 let tests =
     testList "Lexer" [
@@ -119,34 +128,46 @@ let tests =
         test "문자열 안의 줄바꿈은 그대로 포함" {
             Expect.equal (tokens "\"a\nb\"") [ STRING "a\nb"; EOF ] ""
         }
-        test "닫히지 않은 문자열" {
-            Expect.throwsC
-                (fun () -> tokens "\"abc" |> ignore)
-                (fun ex -> Expect.equal ex.Message "Unterminated string" "")
+        test "닫히지 않은 문자열: 여는 \" 위치" {
+            expectLexError "\"abc" "Unterminated string" 1 1
+            expectLexError "1 + \"abc" "Unterminated string" 1 5
         }
-        test "알 수 없는 이스케이프" {
-            Expect.throwsC
-                (fun () -> tokens "\"a\\qb\"" |> ignore)
-                (fun ex -> Expect.equal ex.Message "Invalid escape sequence: \\q" "")
+        test "알 수 없는 이스케이프: \\ 위치" {
+            expectLexError "\"a\\qb\"" "Invalid escape sequence: \\q" 1 3
         }
         test "문자열 끝의 \\ 는 닫는 \" 를 이스케이프" {
-            Expect.throwsC
-                (fun () -> tokens "\"abc\\\"" |> ignore)
-                (fun ex -> Expect.equal ex.Message "Unterminated string" "")
+            expectLexError "\"abc\\\"" "Unterminated string" 1 1
         }
         test ": 하나는 알 수 없는 문자" {
-            Expect.throwsC
-                (fun () -> tokens "1 : 2" |> ignore)
-                (fun ex -> Expect.equal ex.Message "Unexpected character: :" "")
+            expectLexError "1 : 2" "Unexpected character: :" 1 3
         }
         test "& 하나는 알 수 없는 문자" {
-            Expect.throwsC
-                (fun () -> tokens "1 & 2" |> ignore)
-                (fun ex -> Expect.equal ex.Message "Unexpected character: &" "")
+            expectLexError "1 & 2" "Unexpected character: &" 1 3
         }
         test "알 수 없는 문자" {
+            expectLexError "2 $ 3" "Unexpected character: $" 1 3
+        }
+        test "범위를 넘는 정수 리터럴" {
+            expectLexError "1 + 2147483648" "Integer literal out of range: 2147483648" 1 5
+        }
+        test "int 최댓값 리터럴은 허용" {
+            Expect.equal (tokens "2147483647") [ NUMBER 2147483647; EOF ] ""
+        }
+        test "오류 위치: 여러 줄" {
+            expectLexError "1 +\n  2 $" "Unexpected character: $" 2 5
+        }
+        test "오류 위치: \\r\\n 줄바꿈" {
+            expectLexError "1\r\n\r\n $" "Unexpected character: $" 3 2
+        }
+        test "오류 위치: 문자열 안의 줄바꿈도 줄 수에 포함" {
+            expectLexError "\"a\nb\" $" "Unexpected character: $" 2 4
+        }
+        test "오류 위치: 탭은 한 칸" {
+            expectLexError "\t$" "Unexpected character: $" 1 2
+        }
+        test "Message 에 위치 포함" {
             Expect.throwsC
                 (fun () -> tokens "2 $ 3" |> ignore)
-                (fun ex -> Expect.equal ex.Message "Unexpected character: $" "")
+                (fun ex -> Expect.equal ex.Message "Unexpected character: $ (line 1, column 3)" "")
         }
     ]

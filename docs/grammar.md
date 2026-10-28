@@ -404,11 +404,12 @@ type Value =
 
 | 단계 | 원인 | 메시지 |
 |---|---|---|
-| 렉서 | 알 수 없는 문자 | `Unexpected character: <문자>` |
-| 렉서 | 닫히지 않은 문자열 | `Unterminated string` |
-| 렉서 | 지원하지 않는 이스케이프 | `Invalid escape sequence: \<문자>` |
-| 렉서 | `int` 범위를 넘는 숫자 | `Value was either too large or too small for an Int32.` |
-| 파서 | 문법에 맞지 않는 토큰 나열 (예: `1 +`, `let x = 1`, `if c then 1`, `let in = 1 in 2`, `let rec f = 1 in f`, `fun -> 1`, `[1;]`, `match xs with [] -> 0`) | `parse error` |
+| 렉서 | 알 수 없는 문자 | `Unexpected character: <문자> (line L, column C)` |
+| 렉서 | 닫히지 않은 문자열 | `Unterminated string (line L, column C)`. 위치는 여는 `"` |
+| 렉서 | 지원하지 않는 이스케이프 | `Invalid escape sequence: \<문자> (line L, column C)`. 위치는 `\` |
+| 렉서 | `int` 범위를 넘는 숫자 | `Integer literal out of range: 2147483648 (line L, column C)` |
+| 파서 | 문법에 맞지 않는 토큰 (예: `1 + + 2`, `let in = 1 in 2`, `[1;]`) | `parse error: unexpected '<토큰>' (line L, column C)` |
+| 파서 | 식이 끝나지 않았는데 입력이 끝남 (예: `1 +`, `let x = 1`, `if c then 1`, `match xs with [] -> 0`) | `parse error: unexpected end of input (line L, column C)` |
 | 평가 | 정의되지 않은 변수 | `Unbound variable: <이름>` |
 | 평가 | 피연산자 타입 불일치 | `Type error: expected <기대 타입> but got <int\|bool\|string\|function\|list>` |
 | 평가 | 리스트가 아닌 값에 `::`나 `match` 사용 (예: `1 :: 2`) | `Type error: expected list but got int` |
@@ -421,4 +422,24 @@ type Value =
 | 평가 | `nth`의 위치가 리스트 밖 | `nth: index out of range (length 1, index 1)` |
 | 평가 | 재귀가 너무 깊음 | `Stack overflow.` (프로세스 종료, 잡을 수 없음) |
 
-파서 오류 메시지에는 아직 위치(줄, 열) 정보가 없습니다.
+### 오류 위치
+
+렉서와 파서 오류(`Errors.SyntaxError`)에는 위치가 붙습니다. 평가 오류에는 아직 위치가 없습니다.
+
+- 줄과 열은 **1부터** 셉니다. 열은 UTF-16 문자 단위이고 탭도 한 칸입니다.
+- 줄바꿈은 `\n`과 `\r\n` 모두 한 줄로 셉니다. 문자열 리터럴 안의 줄바꿈도 셉니다.
+- 파서 오류의 위치는 **문법에 맞지 않는 첫 토큰의 시작**입니다. 문자열 토큰은 여는 `"`가 시작입니다.
+- 입력이 중간에 끝난 경우의 위치는 **마지막 글자 바로 뒤**입니다. 끝에 있는 공백과 줄바꿈은 건너뜁니다. 그래서 `echo "1 +" | calc`처럼 줄바꿈이 붙은 입력도 `line 1, column 4`입니다.
+- 빈 입력은 `line 1, column 1`입니다.
+
+`calc` 명령은 메시지 아래에 오류가 난 줄과 `^` 표시를 표준 에러로 출력합니다.
+
+```
+$ calc -e "1 + + 2"
+Error: parse error: unexpected '+' (line 1, column 5)
+  1 | 1 + + 2
+    |     ^
+```
+
+- 오류 위치는 "파서가 더 진행할 수 없게 된 곳"입니다. 실제 실수는 더 앞에 있을 수 있습니다.
+  - 예를 들어 `let x = 1 in\n  let y = 2\n  x + y`에서 빠진 것은 둘째 줄의 `in`입니다. 하지만 파서는 `2\n  x + y`를 함수 호출 `2 x + y`로 읽으므로 입력 끝(`line 3, column 8`)에서야 오류를 냅니다.

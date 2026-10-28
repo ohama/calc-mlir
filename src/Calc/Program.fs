@@ -17,7 +17,21 @@ type CliArgs =
 
 let parse (input: string) : Expr =
     let lexbuf = LexBuffer<char>.FromString input
-    Parser.start Lexer.tokenize lexbuf
+    try
+        Parser.start Lexer.tokenize lexbuf
+    with Errors.ParseFailure ->
+        // 오류를 낸 토큰은 마지막으로 읽은 토큰 (StartPos ~ EndPos)
+        let startPos, endPos = lexbuf.StartPos, lexbuf.EndPos
+        if startPos.AbsoluteOffset = endPos.AbsoluteOffset then
+            // 입력 끝: 끝의 공백·줄바꿈을 건너뛴 마지막 글자 바로 뒤를 가리킴
+            let offset = input.TrimEnd().Length
+            let before = input.Substring(0, offset)
+            let line = before |> Seq.filter ((=) '\n') |> Seq.length
+            let column = offset - (before.LastIndexOf '\n' + 1)
+            raise (Errors.SyntaxError ("parse error: unexpected end of input", line + 1, column + 1))
+        else
+            let token = input.Substring(startPos.AbsoluteOffset, endPos.AbsoluteOffset - startPos.AbsoluteOffset)
+            Errors.syntaxError (sprintf "parse error: unexpected '%s'" token) startPos
 
 /// Calc.fsproj 의 <Version> 값 (빌드 메타데이터 "+<git hash>" 는 제거)
 let version () =
@@ -44,6 +58,18 @@ let runWithLargeStack (f: unit -> 'T) : 'T =
     | Some ex -> raise ex
     | None -> result
 
+/// 오류가 난 줄과 그 아래 ^ 표시. 탭은 그대로 두어야 ^ 가 같은 열에 맞음
+let errorLocation (input: string) line column =
+    let lines = input.Split('\n')
+    if line < 1 || line > lines.Length then []
+    else
+        let text = lines.[line - 1].TrimEnd('\r')
+        let prefix = text.Substring(0, min (column - 1) text.Length)
+        let padding = prefix |> String.map (fun c -> if c = '\t' then '\t' else ' ')
+        let gutter = string line
+        [ sprintf "  %s | %s" gutter text
+          sprintf "  %s | %s^" (String.replicate gutter.Length " ") padding ]
+
 let run (input: string) =
     try
         let ast = parse input
@@ -51,7 +77,12 @@ let run (input: string) =
         let value = runWithLargeStack (fun () -> Eval.eval ast)
         printfn "Result: %s" (Eval.formatValue value)
         0
-    with ex ->
+    with
+    | Errors.SyntaxError (_, line, column) as ex ->
+        eprintfn "Error: %s" ex.Message
+        errorLocation input line column |> List.iter (eprintfn "%s")
+        1
+    | ex ->
         eprintfn "Error: %s" ex.Message
         1
 

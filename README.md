@@ -63,6 +63,15 @@ echo "1 < 2" | dotnet run --project src/Calc
 
 성공하면 종료 코드 0, 렉서·파서·평가 오류가 나면 `Error: ...`를 표준 에러로 출력하고 종료 코드 1을 반환합니다.
 
+렉서·파서 오류는 위치와 함께 오류가 난 줄을 보여 줍니다.
+
+```
+$ dotnet run --project src/Calc -- --expr "1 + + 2"
+Error: parse error: unexpected '+' (line 1, column 5)
+  1 | 1 + + 2
+    |     ^
+```
+
 ## 프로젝트 구조
 
 ```
@@ -71,6 +80,7 @@ echo "1 < 2" | dotnet run --project src/Calc
 ├── src/Calc/
 │   ├── Calc.fsproj           # <Version> 은 여기서 관리
 │   ├── Ast.fs                # AST (Expr)
+│   ├── Errors.fs             # 렉서·파서 오류 (SyntaxError, 위치 포함)
 │   ├── Eval.fs               # 평가기 (Value, Env, eval)
 │   ├── Parser.fsy            # fsyacc 문법 → Parser.fs (빌드 시 생성)
 │   ├── Lexer.fsl             # fslex 규칙 → Lexer.fs (빌드 시 생성)

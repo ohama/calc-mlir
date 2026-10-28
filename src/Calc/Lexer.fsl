@@ -5,6 +5,7 @@ open Parser
 let lexeme (lexbuf: LexBuffer<_>) = LexBuffer<_>.LexemeString lexbuf
 
 open System.Text
+open Errors
 }
 
 let digit = ['0'-'9']
@@ -17,8 +18,12 @@ let newline = ('\n' | '\r' '\n')
 rule tokenize = parse
     | whitespace    { tokenize lexbuf }
     | newline       { lexbuf.EndPos <- lexbuf.EndPos.NextLine; tokenize lexbuf }
-    | digit+        { NUMBER (int (lexeme lexbuf)) }
-    | '"'           { readString (StringBuilder()) lexbuf }
+    | digit+        { match System.Int32.TryParse(lexeme lexbuf, System.Globalization.NumberStyles.None,
+                                              System.Globalization.CultureInfo.InvariantCulture) with
+                      | true, n -> NUMBER n
+                      | false, _ -> syntaxError (sprintf "Integer literal out of range: %s" (lexeme lexbuf)) lexbuf.StartPos }
+    // 닫히지 않은 문자열 오류는 여는 " 위치로 알려야 하므로 시작 위치를 넘김
+    | '"'           { readString (StringBuilder()) lexbuf.StartPos lexbuf }
     // 키워드는 IDENT 보다 먼저 와야 함 (같은 길이로 매치되면 앞의 규칙이 이김)
     | "let"         { LET }
     | "in"          { IN }
@@ -55,18 +60,19 @@ rule tokenize = parse
     | '('           { LPAREN }
     | ')'           { RPAREN }
     | eof           { EOF }
-    | _             { failwithf "Unexpected character: %s" (lexeme lexbuf) }
+    | _             { syntaxError (sprintf "Unexpected character: %s" (lexeme lexbuf)) lexbuf.StartPos }
 
 // 여는 " 다음부터 닫는 " 까지 읽어서 STRING 토큰 하나를 만듦
-and readString (sb: StringBuilder) = parse
-    | '"'           { STRING (sb.ToString()) }
+and readString (sb: StringBuilder) (start: Position) = parse
+    // 토큰 위치가 닫는 " 가 아니라 여는 " 부터가 되도록 StartPos 를 되돌림
+    | '"'           { lexbuf.StartPos <- start; STRING (sb.ToString()) }
     // 액션 코드에서 '"' 라고 쓰면 fslex 가 " 를 문자열 시작으로 보고 "unterminated string in code" 오류를 냄
-    | '\\' '"'      { sb.Append('\"') |> ignore; readString sb lexbuf }
-    | '\\' '\\'     { sb.Append('\\') |> ignore; readString sb lexbuf }
-    | '\\' 'n'      { sb.Append('\n') |> ignore; readString sb lexbuf }
-    | '\\' 't'      { sb.Append('\t') |> ignore; readString sb lexbuf }
-    | '\\' 'r'      { sb.Append('\r') |> ignore; readString sb lexbuf }
-    | '\\' _        { failwithf "Invalid escape sequence: %s" (lexeme lexbuf) }
-    | newline       { lexbuf.EndPos <- lexbuf.EndPos.NextLine; sb.Append(lexeme lexbuf) |> ignore; readString sb lexbuf }
-    | eof           { failwith "Unterminated string" }
-    | _             { sb.Append(lexeme lexbuf) |> ignore; readString sb lexbuf }
+    | '\\' '"'      { sb.Append('\"') |> ignore; readString sb start lexbuf }
+    | '\\' '\\'     { sb.Append('\\') |> ignore; readString sb start lexbuf }
+    | '\\' 'n'      { sb.Append('\n') |> ignore; readString sb start lexbuf }
+    | '\\' 't'      { sb.Append('\t') |> ignore; readString sb start lexbuf }
+    | '\\' 'r'      { sb.Append('\r') |> ignore; readString sb start lexbuf }
+    | '\\' _        { syntaxError (sprintf "Invalid escape sequence: %s" (lexeme lexbuf)) lexbuf.StartPos }
+    | newline       { lexbuf.EndPos <- lexbuf.EndPos.NextLine; sb.Append(lexeme lexbuf) |> ignore; readString sb start lexbuf }
+    | eof           { syntaxError "Unterminated string" start }
+    | _             { sb.Append(lexeme lexbuf) |> ignore; readString sb start lexbuf }

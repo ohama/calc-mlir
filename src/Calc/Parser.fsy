@@ -1,6 +1,9 @@
 %{
 open Ast
 
+/// 기본 동작은 위치 없는 Exception "parse error". Program.parse 가 lexbuf 의 위치를 붙이도록 따로 구분되는 예외를 던짐
+let parse_error_rich = Some (fun (_: FSharp.Text.Parsing.ParseErrorContext<_>) -> raise Errors.ParseFailure)
+
 /// fun x y -> body  ==  fun x -> fun y -> body
 let makeLambda (parameters: string list) (body: Expr) =
     List.foldBack (fun p acc -> Lambda(p, acc)) parameters body

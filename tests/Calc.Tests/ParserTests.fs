@@ -5,6 +5,15 @@ open Ast
 
 let parse = Program.parse
 
+/// parse 가 SyntaxError 를 내고, 메시지와 위치(1부터)가 맞는지 확인
+let expectParseError input message line column =
+    Expect.throwsC
+        (fun () -> parse input |> ignore)
+        (fun ex ->
+            match ex with
+            | Errors.SyntaxError (m, l, c) -> Expect.equal (m, l, c) (message, line, column) input
+            | _ -> failtestf "SyntaxError 가 아님: %s" (ex.GetType().Name))
+
 [<Tests>]
 let tests =
     testList "Parser" [
@@ -330,7 +339,56 @@ let tests =
         test "불완전한 식은 parse error" {
             Expect.throwsC
                 (fun () -> parse "1 +" |> ignore)
-                (fun ex -> Expect.equal ex.Message "parse error" "")
+                (fun ex -> Expect.equal ex.Message "parse error: unexpected end of input (line 1, column 4)" "")
+        }
+        testList "parse error 위치" [
+            test "예상하지 못한 토큰" {
+                expectParseError "1 + + 2" "parse error: unexpected '+'" 1 5
+                expectParseError "1 2 )" "parse error: unexpected ')'" 1 5
+                expectParseError "[1;]" "parse error: unexpected ']'" 1 4
+            }
+            test "여러 글자 토큰은 전체를 보여 줌" {
+                expectParseError "let in = 1 in 2" "parse error: unexpected 'in'" 1 5
+                expectParseError "1 -> 2" "parse error: unexpected '->'" 1 3
+            }
+            test "문자열 토큰은 여는 \" 부터" {
+                expectParseError "let \"ab\" = 1" "parse error: unexpected '\"ab\"'" 1 5
+            }
+            test "입력 끝은 마지막 글자 바로 뒤" {
+                expectParseError "1 +" "parse error: unexpected end of input" 1 4
+                expectParseError "(1" "parse error: unexpected end of input" 1 3
+                expectParseError "let x = 1" "parse error: unexpected end of input" 1 10
+            }
+            test "입력 끝: 뒤의 공백과 줄바꿈은 건너뜀" {
+                expectParseError "1 +  \n\n" "parse error: unexpected end of input" 1 4
+            }
+            test "빈 입력" {
+                expectParseError "" "parse error: unexpected end of input" 1 1
+                expectParseError "  \n " "parse error: unexpected end of input" 1 1
+            }
+            test "여러 줄" {
+                expectParseError "let x = 1 in\n  let y = 2\n  x + y" "parse error: unexpected end of input" 3 8
+                expectParseError "1 +\n\n  )" "parse error: unexpected ')'" 3 3
+            }
+            test "렉서 오류도 위치와 함께 전달" {
+                expectParseError "1 + $" "Unexpected character: $" 1 5
+            }
+        ]
+        test "오류 위치 표시" {
+            Expect.equal
+                (Program.errorLocation "1 + + 2" 1 5)
+                [ "  1 | 1 + + 2"; "    |     ^" ]
+                ""
+            Expect.equal
+                (Program.errorLocation "a\nbc\r\nd" 2 3)
+                [ "  2 | bc"; "    |   ^" ]
+                ""
+            // 탭은 그대로 두어 ^ 가 같은 열에 오게 함
+            Expect.equal
+                (Program.errorLocation "\tx )" 1 4)
+                [ "  1 | \tx )"; "    | \t  ^" ]
+                ""
+            Expect.equal (Program.errorLocation "1" 5 1) [] ""
         }
         test "닫히지 않은 괄호는 parse error" {
             Expect.throws (fun () -> parse "(1 + 2" |> ignore) ""
