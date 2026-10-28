@@ -7,13 +7,13 @@ open Infer
 /// 타입 오류의 메시지와 위치 (줄, 열)
 let private errorAt (input: string) =
     try
-        typecheck (Program.parse input) |> ignore
+        typecheck (Program.load input) |> ignore
         failtestf "타입 오류가 나야 함: %s" input
     with TypeError (message, position) ->
         message, position
 
 let private warnings (input: string) =
-    snd (typecheckWithWarnings (Program.parse input)) |> List.map (fun w -> w.Message, w.Position)
+    snd (typecheckWithWarnings (Program.load input)) |> List.map (fun w -> w.Message, w.Position)
 
 let private notExhaustive example = sprintf "this match is not exhaustive. Example of a value not matched: %s" example
 
@@ -154,7 +154,7 @@ let tests =
             // 빠진 분기 검사의 건전성: 경고가 없으면 Match failure 가 나지 않아야 함
             let inputs = (EvalTests.cases |> List.map fst) @ [ "match [1] with | [] -> 0"; "let (a, 1) = (5, 2) in a"; "match None with | Some x -> x" ]
             for input in inputs do
-                let ast = Program.parse input
+                let ast = Program.load input
                 match (try Some (typecheckWithWarnings ast) with TypeError _ -> None) with
                 | None -> ()
                 | Some (_, ws) ->

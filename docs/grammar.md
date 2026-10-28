@@ -580,6 +580,11 @@ type Value =
 
 처음 환경에 들어 있는 함수입니다. 문법상으로는 보통 변수이므로 따로 키워드가 없습니다.
 
+함수는 두 종류로 구현되어 있지만, 쓰는 쪽에서는 구분되지 않습니다.
+
+- **prelude(Calc로 쓴 함수, 16개):** `fst`, `snd`, `ignore`, `isEmpty`, `fold`, `reverse`, `append`, `range`, `sum`, `map`, `filter`, `exists`, `forall`, `tryHead`, `tryFind`, `defaultValue`. 아래 "prelude"를 참고하세요.
+- **내장 함수(F#과 C로 구현, 20개):** 나머지. 문자열 함수, `toString`, `toInt`, 실행 중 오류를 내는 `head`, `tail`, `nth`, 여러 타입을 받는 `length`, `sort`, 출력 함수입니다.
+
 #### 문자열
 
 | 함수 | 타입 | 예 | 결과 |
@@ -662,6 +667,25 @@ type Value =
 
 - 문자열은 따옴표 없이 그대로, 나머지 값은 결과와 같은 모양(`formatValue`)으로 출력합니다. `toString`과 같은 규칙입니다.
 - 출력은 표준 출력으로, 호출한 순서대로 나갑니다. 실행 중 오류가 나면 그때까지의 출력은 남습니다.
+
+#### prelude (Calc로 쓴 표준 라이브러리)
+
+위 표의 함수 중 16개는 [`src/Calc/prelude.calc`](../src/Calc/prelude.calc)에 Calc 코드로 있습니다. 인터프리터, 타입 추론, 컴파일러가 모두 이 정의 하나를 씁니다.
+
+```
+let rec fold f acc xs = match xs with [] -> acc | x :: rest -> fold f (f acc x) rest
+let reverse xs = fold (fun acc x -> x :: acc) [] xs
+let map f xs = reverse (fold (fun acc x -> f x :: acc) [] xs)
+let sum (xs: int list) : int = fold (fun acc x -> acc + x) 0 xs
+```
+
+- **붙이는 방법:** 프로그램을 파싱한 뒤, 프로그램이 쓰는 prelude 정의만 `let … in` 사슬로 앞에 붙입니다(`Prelude.wrap`). `map`을 쓰면 `map`이 쓰는 `fold`와 `reverse`도 붙습니다. 쓰지 않는 정의는 타입 추론, 평가, 컴파일 비용만 늘리므로 붙이지 않습니다. REPL은 처음부터 모두 붙입니다.
+- **가리기:** 프로그램에서 같은 이름을 정의하면 그쪽이 가립니다. prelude 안의 정의는 바뀌지 않습니다. `let reverse xs = xs in map f ys`의 `map`은 prelude의 `reverse`를 씁니다.
+- **긴 리스트:** 모두 tail recursion이라 `sum (range 1 1000000)`도 스택이 자라지 않습니다. `map`과 `filter`는 거꾸로 모은 뒤 `reverse`합니다. 함수는 앞 원소부터 호출합니다.
+- **타입:** prelude의 타입은 추론한 것입니다. `sum`처럼 `+`의 타입을 정해야 하는 곳에는 타입 표기를 씁니다. 타입은 예전의 내장 함수와 같습니다.
+- **`--no-typecheck`의 오류:** 타입이 맞지 않게 쓰면 prelude 안의 `match`나 연산이 실패합니다. `fst 1`은 `Match failure: 1`, `range 1 true`는 `Type error: expected int or string but got bool`입니다.
+- **내장 함수로 남은 것:** Calc에는 아직 예외를 내는 방법이 없어서, 실행 중 오류를 내는 `head`, `tail`, `nth`는 내장 함수입니다. `length`와 `sort`는 여러 타입을 받는데, Calc 함수로 쓰면 allowed list가 있는 type variable이 generalize되지 않아(첫 사용이 타입을 정함) 같은 타입이 될 수 없습니다.
+- **성능:** 인터프리터는 F#의 `List` 함수 대신 Calc 코드를 해석하므로 긴 리스트에서 느립니다. 100만 개 리스트에 `range`, `map`, `filter`, `sum`, `exists`를 쓰는 프로그램이 0.77초에서 5.0초가 되었습니다(Release). 컴파일한 실행 파일은 0.04초에서 0.23초가 되었습니다.
 
 ## 5. 오류
 

@@ -1,0 +1,31 @@
+// Calc 표준 라이브러리 (prelude). 프로그램 앞에 붙어서 인터프리터, 타입 추론, 컴파일러가 같은 정의를 씀.
+// 프로그램이 쓰는 정의만 붙음 (Prelude.wrap). 프로그램에서 같은 이름을 정의하면 그쪽이 가림.
+// 긴 리스트에서도 스택이 자라지 않도록 모두 tail recursion: map, filter 는 거꾸로 모은 뒤 reverse.
+// 실행 중 오류를 내는 함수(head, tail, nth), 여러 타입을 받는 함수(length, sort), 문자열과 출력 함수는 내장 함수.
+
+// 튜플, unit
+let fst p = match p with (a, _) -> a
+let snd p = match p with (_, b) -> b
+let ignore _ = ()
+
+// 리스트: 고차 함수는 F# List 처럼 함수가 먼저, 나머지는 리스트가 먼저
+let isEmpty xs = match xs with [] -> true | _ -> false
+let rec fold f acc xs = match xs with [] -> acc | x :: rest -> fold f (f acc x) rest
+let reverse xs = fold (fun acc x -> x :: acc) [] xs
+let append xs ys = fold (fun acc x -> x :: acc) ys (reverse xs)
+let range (a: int) (b: int) : int list =
+    let rec go i acc = if i < a then acc else go (i - 1) (i :: acc) in
+    go b []
+// + 는 int 와 string 을 받으므로 표기로 int 를 정함
+let sum (xs: int list) : int = fold (fun acc x -> acc + x) 0 xs
+// f 는 앞 원소부터 호출 (출력 순서가 F# List.map 과 같음)
+let map f xs = reverse (fold (fun acc x -> f x :: acc) [] xs)
+let filter f xs = reverse (fold (fun acc x -> if f x then x :: acc else acc) [] xs)
+// 결과가 정해지면 나머지 원소에는 f 를 호출하지 않음
+let rec exists f xs = match xs with [] -> false | x :: rest -> if f x then true else exists f rest
+let rec forall f xs = match xs with [] -> true | x :: rest -> if f x then forall f rest else false
+
+// option
+let tryHead xs = match xs with [] -> None | x :: _ -> Some x
+let rec tryFind f xs = match xs with [] -> None | x :: rest -> if f x then Some x else tryFind f rest
+let defaultValue d opt = match opt with Some v -> v | None -> d

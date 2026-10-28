@@ -6,7 +6,7 @@ open Ast
 open Eval
 open FsCheck
 
-let calc input = eval (Program.parse input)
+let calc input = eval (Program.load input)
 
 let cases =
     [ "1 + 2", VInt 3
@@ -381,7 +381,7 @@ let tests =
         testList "unit, ;, print" [
             let run (input: string) =
                 use writer = new System.IO.StringWriter()
-                let value = evalWithOutput writer (Program.parse input)
+                let value = evalWithOutput writer (Program.load input)
                 writer.ToString(), value
             test "() 와 순서 실행" {
                 Expect.equal (calc "()") VUnit ""
@@ -393,7 +393,7 @@ let tests =
             }
             test "순서: 왼쪽부터, 오류 전의 출력은 남음" {
                 use writer = new System.IO.StringWriter()
-                Expect.throws (fun () -> evalWithOutput writer (Program.parse "println 1; 1 / 0") |> ignore) ""
+                Expect.throws (fun () -> evalWithOutput writer (Program.load "println 1; 1 / 0") |> ignore) ""
                 Expect.equal (writer.ToString()) "1\n" ""
             }
             test "ignore 와 최상위 선언" {
@@ -491,7 +491,8 @@ let tests =
             expectError "nth [10] (-1)" "nth: index out of range (length 1, index -1)"
             expectError "nth [] 0" "nth: index out of range (length 0, index 0)"
             expectError "append [1] 2" "Type error: expected list but got int"
-            expectError "range 1 true" "Type error: expected int but got bool"
+            // prelude(Calc 코드)의 함수를 타입 검사 없이 잘못 쓰면, 그 안의 연산이나 match 가 실패
+            expectError "range 1 true" "Type error: expected int or string but got bool"
             expectError "sum [1; true]" "Type error: expected int but got bool"
             expectError "sum [\"a\"]" "Type error: expected int but got string"
             // List.sortWith 가 감싼 예외가 아니라 원래 타입 오류
@@ -500,7 +501,7 @@ let tests =
             expectError "sort [true]" "Type error: expected int or string but got bool"
             expectError "sort [[1]; [2]]" "Type error: expected int or string but got list"
             expectError "map 1 [1]" "Type error: expected function but got int"
-            expectError "map (fun x -> x) 1" "Type error: expected list but got int"
+            expectError "map (fun x -> x) 1" "Match failure: 1"
             expectError "filter (fun x -> x) [1]" "Type error: expected bool but got int"
             expectError "exists (fun x -> 1) [1]" "Type error: expected bool but got int"
             expectError "forall (fun x -> \"a\") [1]" "Type error: expected bool but got string"
@@ -562,8 +563,9 @@ let tests =
             expectError "let (a, b) = (1, 2, 3) in a" "Match failure: (1, 2, 3)"
             expectError "let (a, b) = 1 in a" "Match failure: 1"
             expectError "match 1 with x when 1 -> x" "Type error: expected bool but got int"
-            expectError "fst (1, 2, 3)" "Type error: expected pair but got tuple"
-            expectError "fst 1" "Type error: expected pair but got int"
+            // fst 는 prelude 의 match p with (a, _) -> a
+            expectError "fst (1, 2, 3)" "Match failure: (1, 2, 3)"
+            expectError "fst 1" "Match failure: 1"
             expectError "(1, 2) + 1" "Type error: expected int or string but got tuple"
             expectError "(1, 2) < (1, 3)" "Type error: expected int or string but got tuple"
             expectError "(1, 2) = 1" "Type error: expected tuple but got int"
@@ -581,7 +583,7 @@ let tests =
             expectError "(type t = A in A) = Some 1" "Type error: expected t but got option"
             expectError "Some 1 = 1" "Type error: expected option but got int"
             expectError "None 1" "Type error: expected function but got option"
-            expectError "defaultValue 0 5" "Type error: expected option but got int"
+            expectError "defaultValue 0 5" "Match failure: 5"
             expectError "sort [Some 1]" "Type error: expected int or string but got option"
             expectError "(type t = A in 1) + (match A with A -> 1)" "Unknown constructor: A"
         ]

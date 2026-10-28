@@ -6,7 +6,7 @@ open Expecto
 
 /// 입력들을 차례로 넣고, 입력마다 나온 출력
 let private session (inputs: string list) =
-    let mutable state = Repl.initial
+    let mutable state = Repl.initial ()
     [ for input in inputs do
           use out = new StringWriter()
           state <- Repl.submit state input out
@@ -44,6 +44,13 @@ let tests =
                   "let g (x: 'a) = x + 1;;",
                   "Warning: the type variable 'a has been constrained to be type int (line 1, column 11)\n  1 | let g (x: 'a) = x + 1;;\n    |           ^\nval g : int -> int = <fun>\n"
                   "(f 1 : string);;", "- : string = \"1\"\n" ]
+        }
+        test "prelude 의 함수는 처음부터 보이고, 다시 정의할 수 있음" {
+            expectSession
+                [ "map;;", "- : ('a -> 'b) -> 'a list -> 'b list = <fun>\n"
+                  "sum (range 1 4);;", "- : int = 10\n"
+                  "let map = 1;;", "val map : int = 1\n"
+                  "map + 1;;", "- : int = 2\n" ]
         }
         test "let rec ... and ... 는 함수마다 val" {
             expectSession

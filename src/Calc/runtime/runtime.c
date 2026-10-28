@@ -60,14 +60,6 @@ const char calc_name_some[] = "Some";
 const char calc_name_none[] = "None";
 const calc_unit calc_none __attribute__((aligned(8))) = {CALC_KIND_DATA | (1 << 8), calc_name_none};
 
-value calc_some(value v) {
-    value *block = GC_MALLOC(3 * sizeof(value));
-    block[0] = CALC_KIND_DATA | (2 << 8);
-    block[1] = (value)calc_name_some;
-    block[2] = v;
-    return (value)block;
-}
-
 int64_t calc_list_length(value v) {
     int64_t n = 0;
     for (; v != CALC_NIL; v = CALC_FIELD(v, 2)) n++;

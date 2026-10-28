@@ -239,7 +239,6 @@ let private instantiate (st: State) t =
 let private initialContext (st: State) =
     let gen allowed = newVarAt st genericLevel allowed
     let a = gen None
-    let b = gen None
     let ( ^-> ) x y = TyFun (x, y)
     let intOrString = gen (Some [ "int"; "string" ])
     let stringOrList = gen (Some [ "string"; "list" ])
@@ -263,31 +262,15 @@ let private initialContext (st: State) =
             // 리스트
             "head", listOf a ^-> a
             "tail", listOf a ^-> listOf a
-            "isEmpty", listOf a ^-> tBool
             "nth", listOf a ^-> tInt ^-> a
-            "reverse", listOf a ^-> listOf a
-            "append", listOf a ^-> listOf a ^-> listOf a
-            "range", tInt ^-> tInt ^-> listOf tInt
-            "sum", listOf tInt ^-> tInt
             "sort", listOf intOrString ^-> listOf intOrString
-            "map", (a ^-> b) ^-> listOf a ^-> listOf b
-            "filter", (a ^-> tBool) ^-> listOf a ^-> listOf a
-            "fold", (b ^-> a ^-> b) ^-> b ^-> listOf a ^-> b
-            "exists", (a ^-> tBool) ^-> listOf a ^-> tBool
-            "forall", (a ^-> tBool) ^-> listOf a ^-> tBool
-            // 튜플
-            "fst", TyTuple [ a; b ] ^-> a
-            "snd", TyTuple [ a; b ] ^-> b
             // option
-            "tryHead", listOf a ^-> optionOf a
-            "tryFind", (a ^-> tBool) ^-> listOf a ^-> optionOf a
-            "defaultValue", a ^-> optionOf a ^-> a
             "None", optionOf a
             "Some", a ^-> optionOf a
             // 출력
             "print", a ^-> tUnit
             "println", a ^-> tUnit
-            "ignore", a ^-> tUnit
+            // map, fold, fst, ignore 같은 함수는 prelude.calc 에서 추론한 타입
         ]
     let types =
         Map.ofList [ "int", ("int", 0); "bool", ("bool", 0); "string", ("string", 0); "unit", ("unit", 0); "list", ("list", 1); "option", ("option", 1) ]

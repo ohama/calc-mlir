@@ -12,21 +12,22 @@ type State =
       /// 평가 환경. 선언을 다시 평가하지 않으므로 앞 입력의 print 가 되풀이되지 않음
       Env: Eval.Env }
 
-let initial = { Declarations = []; Env = Eval.builtins }
-
-/// 선언들을 body 앞에 let ... in 사슬로 (식 항목은 이름을 묶지 않으므로 뺌)
-let private chain (declarations: TopItem list) (body: Expr) =
-    List.foldBack
-        (fun item rest ->
+/// prelude 의 선언을 모두 받아들인 상태. 값은 함수뿐이라 바로 만들 수 있음 (출력 없음)
+let private withPrelude =
+    lazy
+        (let declare env item =
             match item with
-            | TopLet (name, value, _) -> Let (name, value, rest)
-            | TopLetRec (name, param, b, _) -> LetRec (name, param, b, rest)
-            | TopLetRecs (bindings, _) -> LetRecs (bindings, rest)
-            | TopLetPattern (pattern, value, _) -> LetPattern (pattern, value, rest)
-            | TopType (name, typeParams, ctors, _) -> TypeDecl (name, typeParams, ctors, rest)
-            | TopExpr _ -> rest)
-        declarations
-        body
+            | TopLet (name, value, _) -> Map.add name (Eval.evalIn env value) env
+            | TopLetRec (name, param, body, _) -> Map.add name (Eval.VRecClosure (name, param, body, env)) env
+            | TopLetRecs (bindings, _) -> Eval.declareRecGroup env bindings
+            | _ -> failwith "prelude.calc: only let and let rec declarations are supported"
+         let items = Prelude.items ()
+         { Declarations = items; Env = List.fold declare Eval.builtins items })
+
+/// 처음 상태: prelude 의 정의가 모두 보임
+let initial () = withPrelude.Value
+
+let private chain = Prelude.chain
 
 /// 패턴이 묶는 이름 (쓴 순서)
 let rec private patternNames pattern =
@@ -143,7 +144,7 @@ let submit (state: State) (input: string) (out: TextWriter) : State =
 let run (banner: string) (input: TextReader) (out: TextWriter) =
     out.WriteLine banner
     let buffer = StringBuilder()
-    let mutable state = initial
+    let mutable state = initial ()
     let mutable running = true
     while running do
         out.Write(if buffer.Length = 0 then "# " else "  ")

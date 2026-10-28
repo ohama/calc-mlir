@@ -4,6 +4,18 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.30.0] - 2026-10-28
+
+### 변경
+- 표준 라이브러리를 Calc로 작성: `fst`, `snd`, `ignore`, `isEmpty`, `fold`, `reverse`, `append`, `range`, `sum`, `map`, `filter`, `exists`, `forall`, `tryHead`, `tryFind`, `defaultValue` 16개를 F#(`Eval.callBuiltin`)과 C(`builtins.c`) 구현에서 빼고 `src/Calc/prelude.calc`의 Calc 코드로 옮겼습니다. 인터프리터, 타입 추론, 컴파일러, REPL이 모두 이 정의 하나를 씁니다.
+  - 프로그램을 파싱한 뒤 쓰는 prelude 정의만 `let … in` 사슬로 앞에 붙입니다(`Prelude.wrap`). REPL은 처음부터 모두 붙입니다. 같은 이름을 정의하면 그쪽이 가립니다.
+  - 모두 tail recursion이라 긴 리스트에서도 스택이 자라지 않습니다. 타입과 결과, 함수를 부르는 순서는 예전과 같습니다.
+  - `--no-typecheck`로 타입이 맞지 않게 쓰면 오류 메시지가 달라집니다. `fst 1`은 `Match failure: 1`입니다.
+  - 긴 리스트에서 느려졌습니다. 100만 개 리스트 예제에서 인터프리터(Release)는 0.77초에서 5.0초, 컴파일한 실행 파일은 0.04초에서 0.23초입니다.
+- 내장 함수는 20개(문자열 함수, `toString`, `toInt`, `head`, `tail`, `nth`, `length`, `sort`, `print`, `println`)입니다. 런타임의 `calc_some`도 뺐습니다.
+- Debug 빌드에서도 F# tail call을 켰습니다(`<Tailcalls>true</Tailcalls>`). 인터프리터의 tail recursion이 Debug에서 깊이 100만에 stack overflow로 죽던 것이 Release와 같아졌습니다.
+- 테스트 8개 추가, 6개 수정 (총 861개)
+
 ## [0.29.0] - 2026-10-28
 
 ### 추가

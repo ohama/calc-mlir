@@ -29,7 +29,7 @@ let private runProcess (file: string) (args: string list) =
 /// 식을 컴파일하고 실행해서 (표준 출력, 표준 에러, 종료 코드)
 let compileAndRun (input: string) =
     let t = requireTools ()
-    let ast = Program.parse input
+    let ast = Program.load input
     Infer.typecheck ast |> ignore
     let mlir = Codegen.emitProgram ast
     let exe = Path.Combine(Path.GetTempPath(), "calc-test-" + Guid.NewGuid().ToString("N"))
@@ -42,7 +42,7 @@ let compileAndRun (input: string) =
 /// 컴파일러가 지원하고 타입 검사를 통과하는 식인지
 let private compilable (input: string) =
     try
-        let ast = Program.parse input
+        let ast = Program.load input
         Infer.typecheck ast |> ignore
         Codegen.emitProgram ast |> ignore
         true
@@ -55,7 +55,7 @@ let private compilable (input: string) =
 let private interpret (input: string) =
     use output = new StringWriter()
     try
-        match Eval.evalWithOutput output (Program.parse input) with
+        match Eval.evalWithOutput output (Program.load input) with
         | Eval.VUnit -> output.ToString(), "", 0
         | value -> output.ToString() + Eval.formatValue value + "\n", "", 0
     with ex ->
@@ -322,6 +322,16 @@ let private runCases =
           "let rec even n = if n = 0 then true else odd (n - 1) and odd n = if n = 0 then false else even (n - 1) in even 1000000", ("true\n", "", 0), "깊이 100만"
           "let rec f x = g x and g x = x + 1 in f = g", ("", "Error: Type error: expected int, bool, string, list, tuple or data but got function\n", 1), ""
         ]
+      "prelude (Calc 로 쓴 표준 라이브러리)",
+        [
+          "sum (range 1 1000000)", ("1784293664\n", "", 0), "긴 리스트: tail recursion, 합은 32비트에서 한 바퀴 돎"
+          "length (filter (fun x -> x % 2 = 0) (map (fun x -> x * 3) (range 1 1000000)))", ("500000\n", "", 0), ""
+          "ignore (map (fun x -> print x) [1; 2; 3]); filter (fun x -> print x; x > 1) [4; 5]", ("12345[4; 5]\n", "", 0), "f 는 앞 원소부터"
+          "exists (fun x -> print x; x = 2) [1; 2; 3]", ("12true\n", "", 0), "결과가 정해지면 멈춤"
+          "let reverse xs = xs in map (fun x -> x) [1; 2]", ("[1; 2]\n", "", 0), "사용자 정의는 prelude 안의 이름을 바꾸지 않음"
+          "(fst (1, \"a\"), snd (1, \"a\"), tryHead [7], tryFind (fun x -> x > 5) [1], defaultValue 0 None, append [1] [2], isEmpty [])",
+              ("(1, \"a\", Some 7, None, 0, [1; 2], true)\n", "", 0), ""
+        ]
       "Match failure",
         [
           "match [1] with | [] -> 0", ("", "Error: Match failure: [1]\n", 1), ""
@@ -360,7 +370,7 @@ let private batch =
          let programs =
              inputs
              |> List.mapi (fun i input ->
-                 let ast = Program.parse input
+                 let ast = Program.load input
                  Infer.typecheck ast |> ignore
                  sprintf "calc_entry_%d" i, ast)
          let chunkSize = max 1 ((programs.Length + Environment.ProcessorCount - 1) / Environment.ProcessorCount)
@@ -514,8 +524,8 @@ let tests =
             test "내장 함수: 인자가 다 모이면 호출, 남는 인자는 결과에 적용" {
                 Expect.equal (lowered "length \"ab\"").Main (Core.CBuiltin ("length", [ Core.CString "ab" ])) ""
                 Expect.equal
-                    (lowered "fst (fun x -> x, 1) 2").Main
-                    (Core.CApply (Core.CBuiltin ("fst", [ Core.CTuple [ Core.CMakeClosure ("lambda_0", []); Core.CInt 1 ] ]), Core.CInt 2))
+                    (lowered "head [fun x -> x] 2").Main
+                    (Core.CApply (Core.CBuiltin ("head", [ Core.CCons (Core.CMakeClosure ("lambda_0", []), Core.CNil) ]), Core.CInt 2))
                     ""
             }
             test "내장 함수를 값으로: 인자를 하나씩 받는 클로저" {

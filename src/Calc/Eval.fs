@@ -179,29 +179,12 @@ let builtinArity =
         // 리스트
         "head", 1
         "tail", 1
-        "isEmpty", 1
         "nth", 2
-        "reverse", 1
-        "append", 2
-        "range", 2
-        "sum", 1
         "sort", 1
-        "map", 2
-        "filter", 2
-        "fold", 3
-        "exists", 2
-        "forall", 2
-        // 튜플
-        "fst", 1
-        "snd", 1
-        // option
-        "tryHead", 1
-        "tryFind", 2
-        "defaultValue", 2
         // 출력: 문자열은 따옴표 없이, 나머지는 formatValue (toString 과 같음)
         "print", 1
         "println", 1
-        "ignore", 1
+        // fst, map, fold, range, ignore 같은 함수는 Calc 로 쓴 prelude (prelude.calc)
     ]
 
 let none = VData ("option", "None", None)
@@ -222,9 +205,9 @@ let display value =
     | VString s -> s
     | v -> formatValue v
 
-/// 인자가 다 모인 내장 함수를 실행. 문자열 위치와 길이는 UTF-16 코드 단위 (.NET string 과 같음)
-/// apply 는 map, filter 같은 고차 함수가 사용자 함수를 호출할 때 사용 (evalIn 보다 먼저 정의되므로 인자로 받음)
-let callBuiltin (apply: Value -> Value -> Value) name args =
+/// 인자가 다 모인 내장 함수를 실행. 문자열 위치와 길이는 UTF-16 코드 단위 (.NET string 과 같음).
+/// 사용자 함수를 부르는 고차 함수(map, filter)는 prelude 에 있으므로 내장 함수는 값만 다룸
+let callBuiltin name args =
     let ordinal = System.StringComparison.Ordinal
     match name, args with
     | "length", [ VString s ] -> VInt s.Length
@@ -264,7 +247,7 @@ let callBuiltin (apply: Value -> Value -> Value) name args =
                                     System.Globalization.CultureInfo.InvariantCulture) with
         | true, n -> VInt n
         | false, _ -> failwithf "toInt: invalid integer: %s" (quote s)
-    // 리스트: 고차 함수는 F# List 처럼 함수가 먼저, 나머지는 리스트가 먼저
+    // 리스트: 다루는 리스트가 먼저
     | "head", [ xs ] ->
         match list' xs with
         | h :: _ -> h
@@ -273,17 +256,11 @@ let callBuiltin (apply: Value -> Value -> Value) name args =
         match list' xs with
         | _ :: t -> VList t
         | [] -> failwith "tail: empty list"
-    | "isEmpty", [ xs ] -> VBool (List.isEmpty (list' xs))
     | "nth", [ xs; i ] ->
         let xs, i = list' xs, int' i
         if i < 0 || i >= List.length xs then
             failwithf "nth: index out of range (length %d, index %d)" (List.length xs) i
         List.item i xs
-    | "reverse", [ xs ] -> VList (List.rev (list' xs))
-    | "append", [ xs; ys ] -> VList (list' xs @ list' ys)
-    | "range", [ a; b ] -> VList ([ int' a .. int' b ] |> List.map VInt)
-    // List.sum 은 오버플로를 검사(OverflowException)하므로, 값이 한 바퀴 도는 언어의 + 와 맞추려고 fold 사용
-    | "sum", [ xs ] -> VInt (list' xs |> List.fold (fun acc x -> acc + int' x) 0)
     | "sort", [ xs ] ->
         let xs = list' xs
         // 비교 함수 안에서 난 예외는 List.sortWith 가 InvalidOperationException 으로 감싸므로,
@@ -292,34 +269,12 @@ let callBuiltin (apply: Value -> Value -> Value) name args =
         | first :: _ -> xs |> List.iter (fun x -> compareValues first x |> ignore)
         | [] -> ()
         VList (List.sortWith compareValues xs)
-    | "map", [ f; xs ] -> VList (list' xs |> List.map (apply f))
-    | "filter", [ f; xs ] -> VList (list' xs |> List.filter (fun x -> bool' (apply f x)))
-    | "fold", [ f; acc; xs ] -> list' xs |> List.fold (fun acc x -> apply (apply f acc) x) acc
-    | "exists", [ f; xs ] -> VBool (list' xs |> List.exists (fun x -> bool' (apply f x)))
-    | "forall", [ f; xs ] -> VBool (list' xs |> List.forall (fun x -> bool' (apply f x)))
-    | "fst", [ VTuple [ a; _ ] ] -> a
-    | "snd", [ VTuple [ _; b ] ] -> b
-    | ("fst" | "snd"), [ v ] -> typeError "pair" v
-    | "tryHead", [ xs ] ->
-        match list' xs with
-        | h :: _ -> some h
-        | [] -> none
-    | "tryFind", [ f; xs ] ->
-        match list' xs |> List.tryFind (fun x -> bool' (apply f x)) with
-        | Some x -> some x
-        | None -> none
     | "print", [ v ] ->
         output().Write(display v)
         VUnit
     | "println", [ v ] ->
         output().WriteLine(display v)
         VUnit
-    | "ignore", [ _ ] -> VUnit
-    | "defaultValue", [ d; opt ] ->
-        match opt with
-        | VData ("option", "Some", Some v) -> v
-        | VData ("option", "None", None) -> d
-        | v -> typeError "option" v
     | _ -> failwithf "Unknown builtin: %s" name
 
 /// 처음 환경. 내장 함수는 보통 변수처럼 let 으로 가릴 수 있음
@@ -464,7 +419,7 @@ and apply fv av =
         evalIn (declareRecGroup closureEnv bindings |> Map.add param av) body
     | VBuiltin (name, args) ->
         let args = args @ [ av ]
-        if List.length args = builtinArity.[name] then callBuiltin apply name args
+        if List.length args = builtinArity.[name] then callBuiltin name args
         else VBuiltin (name, args)
     | VConstructor (typeName, ctor, fields) ->
         // of int * int 처럼 원소가 여럿이면 그 수만큼의 튜플을 받아야 함

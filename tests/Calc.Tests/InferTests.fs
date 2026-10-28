@@ -5,7 +5,7 @@ open FsCheck
 open Eval
 open Infer
 
-let typeOf input = typeToString (typecheck (Program.parse input))
+let typeOf input = typeToString (typecheck (Program.load input))
 
 /// 정적 타입 오류 메시지가 정확히 일치하는지 확인
 let expectTypeError input message =
@@ -182,7 +182,7 @@ let tests =
         test "건전성: 타입이 맞는 식은 실행 중 타입 오류 없이 그 타입의 값이 됨" {
             let mutable checkedCount = 0
             for input, _ in EvalTests.cases do
-                let ast = Program.parse input
+                let ast = Program.load input
                 match (try Some (typecheck ast) with TypeError _ -> None) with
                 | None -> ()
                 | Some t ->
@@ -201,7 +201,7 @@ let tests =
                 |> List.map fst
                 |> List.filter (fun input ->
                     try
-                        typecheck (Program.parse input) |> ignore
+                        typecheck (Program.load input) |> ignore
                         false
                     with TypeError _ -> true)
             Expect.equal

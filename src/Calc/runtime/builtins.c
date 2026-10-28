@@ -1,4 +1,4 @@
-/* 내장 함수 33개. 인자 순서, 결과, 오류 메시지는 Eval.callBuiltin 과 같음.
+/* 내장 함수 20개 (map, fold 같은 함수는 Calc 로 쓴 prelude.calc). 인자 순서, 결과, 오류 메시지는 Eval.callBuiltin 과 같음.
    문자열 위치와 길이는 UTF-16 코드 단위 (.NET string 과 같음). 타입 검사를 통과했으므로 인자의 종류는 검사하지 않음 */
 #include "runtime.h"
 #include "unicode.h"
@@ -213,43 +213,12 @@ value calc_builtin_tail(value xs) {
     return TAIL(xs);
 }
 
-value calc_builtin_isEmpty(value xs) { return calc_bool(xs == CALC_NIL); }
-
 value calc_builtin_nth(value xs, value i) {
     int64_t n = calc_list_length(xs);
     int32_t k = INT(i);
     if (k < 0 || k >= n) calc_errorf("nth: index out of range (length %d, index %d)", (int)n, k);
     for (; k > 0; k--) xs = TAIL(xs);
     return HEAD(xs);
-}
-
-value calc_builtin_reverse(value xs) {
-    value r = CALC_NIL;
-    for (; xs != CALC_NIL; xs = TAIL(xs)) r = calc_cons(HEAD(xs), r);
-    return r;
-}
-
-/* xs @ ys: xs 는 복사, ys 는 공유 (F# 과 같음) */
-value calc_builtin_append(value xs, value ys) {
-    if (xs == CALC_NIL) return ys;
-    list_builder b = {CALC_NIL, CALC_NIL};
-    for (; xs != CALC_NIL; xs = TAIL(xs)) push(&b, HEAD(xs));
-    TAIL(b.last) = ys;
-    return b.head;
-}
-
-/* [a .. b]. a > b 면 [] */
-value calc_builtin_range(value a, value b) {
-    value r = CALC_NIL;
-    for (int64_t k = INT(b); k >= INT(a); k--) r = calc_cons(calc_int((int32_t)k), r);
-    return r;
-}
-
-/* 32비트에서 한 바퀴 돎 (인터프리터는 List.sum 대신 fold 로 같은 의미) */
-value calc_builtin_sum(value xs) {
-    uint32_t total = 0;
-    for (; xs != CALC_NIL; xs = TAIL(xs)) total += (uint32_t)INT(HEAD(xs));
-    return calc_int((int32_t)total);
 }
 
 static int compare_for_sort(const void *a, const void *b) { return calc_compare(*(const value *)a, *(const value *)b); }
@@ -264,58 +233,6 @@ value calc_builtin_sort(value xs) {
     for (int64_t i = n - 1; i >= 0; i--) r = calc_cons(items[i], r);
     return r;
 }
-
-/* 고차 함수: 사용자 함수를 앞에서부터 차례로 호출 (List.map, List.exists 처럼 처음 결과가 정해지면 멈춤) */
-value calc_builtin_map(value f, value xs) {
-    list_builder b = {CALC_NIL, CALC_NIL};
-    for (; xs != CALC_NIL; xs = TAIL(xs)) push(&b, calc_apply(f, HEAD(xs)));
-    return b.head;
-}
-
-value calc_builtin_filter(value f, value xs) {
-    list_builder b = {CALC_NIL, CALC_NIL};
-    for (; xs != CALC_NIL; xs = TAIL(xs)) {
-        if (calc_apply(f, HEAD(xs)) == CALC_TRUE) push(&b, HEAD(xs));
-    }
-    return b.head;
-}
-
-value calc_builtin_fold(value f, value acc, value xs) {
-    for (; xs != CALC_NIL; xs = TAIL(xs)) acc = calc_apply(calc_apply(f, acc), HEAD(xs));
-    return acc;
-}
-
-value calc_builtin_exists(value f, value xs) {
-    for (; xs != CALC_NIL; xs = TAIL(xs)) {
-        if (calc_apply(f, HEAD(xs)) == CALC_TRUE) return CALC_TRUE;
-    }
-    return CALC_FALSE;
-}
-
-value calc_builtin_forall(value f, value xs) {
-    for (; xs != CALC_NIL; xs = TAIL(xs)) {
-        if (calc_apply(f, HEAD(xs)) != CALC_TRUE) return CALC_FALSE;
-    }
-    return CALC_TRUE;
-}
-
-/* ---- 튜플과 option ---- */
-
-value calc_builtin_fst(value pair) { return CALC_FIELD(pair, 1); }
-
-value calc_builtin_snd(value pair) { return CALC_FIELD(pair, 2); }
-
-value calc_builtin_tryHead(value xs) { return xs == CALC_NIL ? CALC_NONE : calc_some(HEAD(xs)); }
-
-value calc_builtin_tryFind(value f, value xs) {
-    for (; xs != CALC_NIL; xs = TAIL(xs)) {
-        if (calc_apply(f, HEAD(xs)) == CALC_TRUE) return calc_some(HEAD(xs));
-    }
-    return CALC_NONE;
-}
-
-/* Some 은 인자가 있는 블록, None 은 없는 블록 */
-value calc_builtin_defaultValue(value d, value opt) { return CALC_SIZE(opt) == 2 ? CALC_FIELD(opt, 2) : d; }
 
 /* ---- 출력 ---- */
 
@@ -337,10 +254,5 @@ value calc_builtin_print(value v) {
 value calc_builtin_println(value v) {
     put_display(v);
     putchar('\n');
-    return CALC_UNIT;
-}
-
-value calc_builtin_ignore(value v) {
-    (void)v;
     return CALC_UNIT;
 }

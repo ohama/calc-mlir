@@ -14,6 +14,7 @@
     <Compile Include="InferTests.fs" />
     <Compile Include="DiagnosticTests.fs" />
     <Compile Include="ReplTests.fs" />
+    <Compile Include="PreludeTests.fs" />
     <Compile Include="CompileTests.fs" />
     <Compile Include="Main.fs" />
   </ItemGroup>

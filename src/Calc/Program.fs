@@ -28,6 +28,9 @@ type CliArgs =
             | File _ -> "run a program file: prints only what the program prints, then the result unless it is ()"
 
 let parse = Frontend.parse
+
+/// 실행하거나 컴파일할 프로그램: 쓰는 prelude 정의를 앞에 붙인 AST
+let load (input: string) = Prelude.wrap (parse input)
 let version = Frontend.version
 let runWithLargeStack f = Frontend.runWithLargeStack f
 let errorLocation = Frontend.errorLocation
@@ -49,8 +52,9 @@ let typecheckAndWarn (input: string) (ast: Ast.Expr) =
 
 let run (typecheck: bool) (input: string) =
     try
-        let ast = parse input
-        printfn "AST:    %A" ast
+        let program = parse input
+        printfn "AST:    %A" program
+        let ast = Prelude.wrap program
         if typecheck then
             printfn "Type:   %s" (Infer.typeToString (typecheckAndWarn input ast))
         let value = runWithLargeStack (fun () -> Eval.eval ast)
@@ -76,7 +80,7 @@ type CompileMode =
 /// 타입 추론을 통과한 프로그램만 컴파일 (docs/compiler-design.md 1장)
 let compile (mode: CompileMode) (input: string) =
     try
-        let ast = parse input
+        let ast = load input
         typecheckAndWarn input ast |> ignore
         let mlir = Codegen.emitProgram ast
         match mode with
@@ -109,7 +113,7 @@ let compile (mode: CompileMode) (input: string) =
 /// 프로그램 파일 실행 (calc prog.calc): OCaml, dotnet fsi 처럼 프로그램의 출력만 보여 주고, 마지막 값이 () 가 아니면 그 값을 출력
 let runFile (typecheck: bool) (input: string) =
     try
-        let ast = parse input
+        let ast = load input
         if typecheck then typecheckAndWarn input ast |> ignore
         let value = runWithLargeStack (fun () -> Eval.eval ast)
         match value with

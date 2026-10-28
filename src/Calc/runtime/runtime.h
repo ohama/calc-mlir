@@ -83,7 +83,6 @@ value calc_bool(int b);
 calc_string *calc_new_string(int64_t length); /* 내용은 부르는 쪽이 채움 */
 value calc_string_of(const uint16_t *units, int64_t length);
 value calc_cons(value head, value tail);
-value calc_some(value v);
 int64_t calc_list_length(value list);
 
 /* UTF-16 버퍼 (malloc). formatValue 결과를 모으고, 출력할 때 UTF-8 로 바꿈 */
@@ -115,25 +114,9 @@ value calc_builtin_toString(value v);
 value calc_builtin_toInt(value s);
 value calc_builtin_head(value xs);
 value calc_builtin_tail(value xs);
-value calc_builtin_isEmpty(value xs);
 value calc_builtin_nth(value xs, value i);
-value calc_builtin_reverse(value xs);
-value calc_builtin_append(value xs, value ys);
-value calc_builtin_range(value a, value b);
-value calc_builtin_sum(value xs);
 value calc_builtin_sort(value xs);
-value calc_builtin_map(value f, value xs);
-value calc_builtin_filter(value f, value xs);
-value calc_builtin_fold(value f, value acc, value xs);
-value calc_builtin_exists(value f, value xs);
-value calc_builtin_forall(value f, value xs);
-value calc_builtin_fst(value pair);
-value calc_builtin_snd(value pair);
-value calc_builtin_tryHead(value xs);
-value calc_builtin_tryFind(value f, value xs);
-value calc_builtin_defaultValue(value d, value opt);
 value calc_builtin_print(value v);
 value calc_builtin_println(value v);
-value calc_builtin_ignore(value v);
 
 #endif

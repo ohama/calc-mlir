@@ -61,7 +61,7 @@ type private StringTable(prefix: string) =
     member _.Entries = order |> Seq.map (fun s -> names[s], s) |> List.ofSeq
 
     /// 생성자 이름 → 이름을 담은 C 문자열 전역. 같은 이름은 하나 (런타임은 이름으로 비교하고 출력함).
-    /// Some 과 None 은 런타임의 전역: 내장 함수(tryHead 등)가 만든 option 값도 패턴 검사(이름 포인터 비교)에 맞도록
+    /// Some 과 None 은 런타임의 전역: 선언 없이 모든 프로그램에 있는 타입이라 이름을 한 곳에 둠 (패턴 검사는 이름 포인터 비교)
     member _.CtorName(ctor: string) =
         match ctor, ctorNames.TryGetValue ctor with
         | "Some", _ -> "calc_name_some"
