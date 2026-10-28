@@ -44,6 +44,7 @@ dotnet run --project src/Calc -- examples/hello.calc
 ```
 
 - **`-e`와 표준 입력:** 학습용 출력입니다. `AST:`, `Type:`, `Result:`를 차례로 출력하고, 프로그램이 `print`로 출력한 것은 `Type:`과 `Result:` 사이에 나옵니다.
+- **REPL(인자 없이 터미널에서, 또는 `--repl`):** OCaml toplevel, `dotnet fsi`처럼 입력마다 결과를 보여 줍니다(아래 "REPL").
 - **파일 실행(`calc prog.calc`):** OCaml의 `ocaml prog.ml`, F#의 `dotnet fsi prog.fsx`처럼 프로그램이 출력한 것만 보여 줍니다. 마지막 값이 `()`가 아니면 그 값을 한 줄 더 출력합니다. 경고와 오류는 표준 에러로 나갑니다.
 
 `--` 뒤에 오는 값은 `dotnet run`이 아니라 Calc 프로그램에 전달됩니다.
@@ -61,11 +62,12 @@ dotnet src/Calc/bin/Debug/net10.0/Calc.dll --expr "2 + 3"
 | 옵션 | 짧은 형식 | 설명 |
 |---|---|---|
 | `--expr <expr>` | `-e <expr>` | 주어진 식을 계산합니다. `--expr=<expr>` 형식도 됩니다. 생략하면 표준 입력에서 읽습니다. |
-| `--version` | `-v` | 버전을 출력하고 종료합니다 (예: `calc 0.25.0`). |
+| `--version` | `-v` | 버전을 출력하고 종료합니다 (예: `calc 0.26.0`). |
 | `--no-typecheck` | | 타입 추론을 건너뛰고 바로 평가합니다. 타입은 평가 중에 동적으로 검사됩니다. |
 | `--emit-mlir` | | 평가하지 않고, 컴파일러가 만든 MLIR을 출력합니다. |
 | `--compile <path>` | | 평가하지 않고, 네이티브 실행 파일을 `<path>`에 만듭니다. `--compile=<path>` 형식도 됩니다. |
 | `--keep-temps` | | `--compile`과 함께 쓰면 중간 파일(`.mlir`, `.ll`, `.o`)을 지우지 않고 폴더 경로를 출력합니다. |
+| `--repl` | | REPL을 띄웁니다. 인자 없이 터미널에서 실행해도 REPL이 뜨므로, 표준 입력이 파이프일 때 씁니다. |
 | `<file>` | | 프로그램 파일을 실행합니다(옵션이 아닌 마지막 인자). `--compile`과 함께 쓰면 그 파일을 컴파일합니다. `--expr`이 있으면 `--expr`이 우선입니다. |
 | `--help` | `-h` | 사용법을 출력하고 종료합니다. |
 
@@ -87,7 +89,7 @@ dotnet src/Calc/bin/Debug/net10.0/Calc.dll --expr "2 + 3"
 그다음 F# 컴파일러가 `Calc.fsproj`에 적힌 순서대로 컴파일합니다.
 
 ```
-Ast.fs → Errors.fs → Eval.fs → Infer.fs → Core.fs → Lower.fs → Codegen.fs → Toolchain.fs → Parser.fsi → Parser.fs → Lexer.fs → Program.fs
+Ast.fs → Errors.fs → Eval.fs → Infer.fs → Core.fs → Lower.fs → Codegen.fs → Toolchain.fs → Parser.fsi → Parser.fs → Lexer.fs → Frontend.fs → Repl.fs → Program.fs
 ```
 
 F#은 앞에 나온 파일만 참조할 수 있습니다. 그래서 순서가 중요합니다.
@@ -124,6 +126,42 @@ dotnet clean src/Calc
 ```sh
 rm -f src/Calc/{Lexer,Parser}.fs{,i}
 ```
+
+## REPL
+
+인자 없이 터미널에서 `calc`를 실행하면 REPL이 뜹니다. 표준 입력이 파이프일 때는 `--repl`을 씁니다.
+
+```
+$ dotnet run --project src/Calc
+calc 0.26.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
+# let rec fact n =
+    if n = 0 then 1 else n * fact (n - 1);;
+val fact : int -> int = <fun>
+# fact 10;;
+- : int = 3628800
+# type shape = Circle of int | Rect of int * int;;
+type shape
+# let (a, b) = (1, "s");;
+val a : int = 1
+val b : string = "s"
+# a + true;;
+Error: Type mismatch: expected int but got bool (line 1, column 5)
+  1 | a + true;;
+    |     ^
+# #quit;;
+```
+
+- **입력 끝:** 줄 끝(공백 제외)이 `;;`인 곳까지가 입력 하나입니다. 여러 줄에 걸쳐 쓸 수 있고, 이어 쓰는 줄의 프롬프트는 공백입니다. 문자열이나 주석 안의 줄 끝 `;;`도 입력 끝으로 봅니다.
+- **입력 하나:** 프로그램 파일과 같은 문법입니다(최상위 선언, `;;`로 구분한 식). 항목마다 결과를 보여 줍니다.
+  - 식은 `- : <타입> = <값>`으로 보여 줍니다.
+  - 선언은 `val <이름> : <타입> = <값>`, 타입 선언은 `type <이름>`으로 보여 줍니다.
+  - `let () = …`는 아무것도 보여 주지 않고, `let _ = e`는 `- : …`로 보여 줍니다.
+- **정의 유지:** 앞에서 정의한 이름, 함수, 타입, 생성자는 다음 입력에서도 보입니다. 같은 이름을 다시 정의하면 앞의 것을 가립니다.
+  - 타입은 지금까지의 선언을 앞에 붙여 다시 추론합니다.
+  - 값은 이어서 쓰므로 앞 입력의 `print`가 되풀이되지 않습니다.
+- **출력과 경고:** `print`의 출력은 결과 줄보다 먼저 나옵니다. 빠진 분기 경고와 버리는 값 경고는 그 입력에서 처음 생긴 것만 보여 줍니다.
+- **오류:** 위치를 보여 주고 다음 입력을 기다립니다. 오류가 난 항목과 그 뒤 항목의 정의는 남지 않습니다.
+- **끝내기:** `#quit;;` 또는 Ctrl-D(입력 끝)입니다. `;;` 없이 끝난 마지막 입력도 처리합니다.
 
 ## 네이티브 컴파일 (실험 중)
 

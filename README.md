@@ -35,6 +35,7 @@ Result: 10
 | 최상위 선언 (`in` 없이, 식은 `;;` 뒤에) | `let x = 1`, `let rec f n = ...`, `type t = ...`, `;; f x` |
 | `unit`, 순서 실행 `;`, 출력 | `()`, `let f () = ...`, `println "a"; print 1`, `ignore e` |
 | 주석 | `// 줄 끝까지`, `(* 블록, (* 중첩 *) 가능 *)` |
+| REPL | `calc` (터미널), `# let x = 1;;` → `val x : int = 1` |
 
 - 우선순위 (낮은 것부터): `;` < `let`/`if`/`fun`/`match` < `||` < `&&` < 비교 < `::` < `+ -` < `* /` < 단항 `-`, `not` < 함수 호출
 - **타입 추론** (Hindley–Milner, let-polymorphism): 실행 전에 타입을 추론하고, 맞지 않으면 평가하지 않습니다. 타입 오류는 문제가 된 식의 위치(줄, 열, `^`)를 가리킵니다.
@@ -65,6 +66,17 @@ echo "1 < 2" | dotnet run --project src/Calc
 
 # 프로그램 파일 실행: 프로그램이 출력한 것만 보여 줌
 dotnet run --project src/Calc -- examples/hello.calc
+
+# REPL: 인자 없이 터미널에서 실행 (입력은 ;; 로 끝냄)
+dotnet run --project src/Calc
+```
+
+```
+calc 0.26.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
+# let add a b = a + b;;
+val add : int -> int -> int = <fun>
+# add 1 2;;
+- : int = 3
 ```
 
 `examples/`에 예제 프로그램이 있습니다(`hello.calc`, `tree.calc`).
@@ -81,6 +93,8 @@ let _ = println (fact 10)
 
 | 옵션 | 설명 |
 |---|---|
+| (인자 없음) | 터미널에서 실행하면 REPL을 띄웁니다. 표준 입력이 파이프면 그 식을 계산합니다. |
+| `--repl` | 표준 입력이 파이프여도 REPL로 실행합니다. |
 | `<file>` | 프로그램 파일을 실행합니다. 프로그램이 출력한 것과, `()`가 아닌 마지막 값만 출력합니다. |
 | `--expr <expr>`, `-e <expr>` | 식을 계산하고 `AST:`, `Type:`, `Result:`를 출력합니다. 생략하면 표준 입력에서 읽습니다. |
 | `--version`, `-v` | 버전을 출력합니다. |
@@ -114,6 +128,8 @@ Error: parse error: unexpected '+' (line 1, column 5)
 │   ├── Lower.fs              # 컴파일러: AST → Core IR, 클로저 변환
 │   ├── Codegen.fs            # 컴파일러: Core IR → MLIR 텍스트
 │   ├── Toolchain.fs          # 컴파일러: mlir-opt, mlir-translate, clang 실행
+│   ├── Frontend.fs           # 파싱, 큰 스택 실행, 오류 위치 (명령줄과 REPL 이 함께 씀)
+│   ├── Repl.fs               # REPL
 │   ├── runtime/              # 컴파일한 프로그램의 C 런타임 (Boehm GC, 내장 함수, Unicode 표)
 │   ├── Parser.fsy            # fsyacc 문법 → Parser.fs (빌드 시 생성)
 │   ├── Lexer.fsl             # fslex 규칙 → Lexer.fs (빌드 시 생성)

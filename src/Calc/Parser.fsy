@@ -19,14 +19,6 @@ let paramBody (param: string) (body: Expr) =
 let makeLambda (parameters: string list) (body: Expr) =
     List.foldBack (fun p acc -> Lambda(p, paramBody p acc)) parameters body
 
-/// 최상위 항목: in 없는 선언 또는 식. 위치는 선언의 시작 (풀어 쓴 let 노드에 기록)
-type TopItem =
-    | TopLet of string * Expr * FSharp.Text.Lexing.Position
-    | TopLetRec of string * string * Expr * FSharp.Text.Lexing.Position
-    | TopLetPattern of Pattern * Expr * FSharp.Text.Lexing.Position
-    | TopType of string * string list * (string * TypeExpr option) list * FSharp.Text.Lexing.Position
-    | TopExpr of Expr
-
 /// 최상위 항목들을 식 하나로: 선언은 뒤 항목 전체를 본문으로 하는 let, 식은 e; (나머지). 끝이 선언이면 ()
 let rec makeProgram (items: TopItem list) : Expr =
     let located (pos: FSharp.Text.Lexing.Position) (e: Expr) =
@@ -121,13 +113,18 @@ let makeTuple (items: TypeExpr list) =
 %left STAR SLASH
 %nonassoc UMINUS NOT
 
-%start start
+%start start startItems
 %type <Ast.Expr> start
+%type <Ast.TopItem list> startItems
 
 %%
 
 start:
     | Items EOF                     { makeProgram $1 }
+
+// REPL: 입력 하나의 항목들을 그대로 (선언마다 환경에 더함)
+startItems:
+    | Items EOF                     { $1 }
 
 // 프로그램 = 최상위 항목들. 선언(in 없는 let, let rec, type)은 차례로 쓰고, 선언 뒤의 식은 ;; 다음에 씀 (OCaml 과 같음).
 // 식 하나만 있는 프로그램은 예전과 같은 AST

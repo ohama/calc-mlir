@@ -4,9 +4,20 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
-## [Unreleased]
+## [0.26.0] - 2026-10-28
+
+### 추가
+- REPL: 인자 없이 터미널에서 `calc`를 실행하거나 `--repl`을 주면 뜹니다(OCaml toplevel, `dotnet fsi`처럼).
+  - 입력은 줄 끝의 `;;`까지이고, 여러 줄에 걸쳐 쓸 수 있습니다. `#quit;;`나 Ctrl-D로 끝냅니다.
+  - 결과는 OCaml처럼 보여 줍니다: `- : int = 3`, `val add : int -> int -> int = <fun>`, `type 'a tree`.
+  - 앞에서 정의한 이름, 함수, 타입은 다음 입력에서도 보입니다. 타입은 지금까지의 선언을 앞에 붙여 다시 추론하고, 값은 이어서 써서 앞의 `print`가 되풀이되지 않습니다. 경고는 그 입력에서 새로 생긴 것만 보여 줍니다.
+  - 오류는 위치와 함께 보여 주고 계속합니다.
+- 파서 시작 기호 `startItems`(최상위 항목 목록), `Ast.TopItem`, `Frontend.parseItems`, `Eval.declareConstructors`, `Eval.withOutput`
+- `ReplTests.fs`: 테스트 10개 (총 774개)
 
 ### 변경
+- 파싱, 큰 스택 실행, 오류 위치 표시를 `Program.fs`에서 `Frontend.fs`로 옮겼습니다(`Program.parse` 등은 그대로 씀).
+- 표준 입력이 터미널이고 인자가 없으면 이제 REPL을 띄웁니다. 파이프 입력(`echo ... | calc`)은 예전과 같습니다.
 - `howto/` 문서 44개의 파일 이름 앞에 쓴 순서대로 번호를 붙였습니다(`01-handle-fsyacc-nonassoc-conflict.md` … `44-redirect-interpreter-output-per-test-with-asynclocal.md`). 문서 사이의 참조도 새 이름으로 고쳤습니다. 옛 이름의 링크는 더 이상 열리지 않습니다.
 - 각 howto 문서에 관련 커밋을 연결했습니다. 문서가 설명하는 코드 변경(문서를 쓰기 직전의 릴리스 커밋)을 머리말의 `order`, `commit`, `version`과 제목 아래 링크로 적었습니다. `howto/README.md` 표에 "관련 커밋" 열을 더했습니다.
 

@@ -33,6 +33,7 @@ dotnet run --project tests/Calc.Tests -- --debug            # 각 테스트 시�
 | `ParserTests.fs` | `Parser` | 최상위 선언과 `;;`, `unit`과 `;`의 범위, 주석, 우선순위, associativity, 괄호, 단항 마이너스, `let`/`if`/`fun`의 범위와 중첩, 함수 호출, 함수 정의 syntactic sugar, 리스트와 `::`, 튜플, 패턴과 `match`(가드, 중첩), 튜플 분해 `let`, 생성자와 `type` 선언, 타입 식, 문자열 리터럴, 파서 오류 |
 | `InferTests.fs` | `Infer` | 추론한 타입 표(polymorphism, 재귀, 패턴, 내장 함수, ADT), 타입 오류 메시지, soundness(타입 검사를 통과한 `EvalTests` 예제는 실행 중 오류 없이 그 타입의 값이 됨), 타입 검사가 거부하는 동적 예제 목록, FsCheck property |
 | `DiagnosticTests.fs` | `Diagnostics` | 타입 오류의 위치(문제가 된 식을 가리킴), 빠진 `match` 분기 경고와 값의 예, 버리는 값 경고, 가드, 경고가 없는 경우, soundness(실행 중 `Match failure`가 나는 평가 예제는 모두 경고를 받음) |
+| `ReplTests.fs` | `Repl` | 입력마다의 출력(`- : 타입 = 값`, `val`, `type`), 입력을 넘어 유지되는 정의와 let-polymorphism, `print` 순서, 가리기, 오류 뒤 계속, 경고를 한 번만, 여러 줄 입력과 `#quit;;` |
 | `CompileTests.fs` | `Compile` | 생성한 MLIR, value representation(태그, 클로저 헤더), closure conversion(`Lower`), 컴파일한 실행 파일의 출력(`print` 출력 포함), **differential testing**(컴파일할 수 있는 `EvalTests` 예제와 `examples/*.calc`를 인터프리터와 비교). LLVM/GC가 없으면 건너뜀(Skipped) |
 | `EvalTests.fs` | `Eval` | `unit`, `;`, `print`(출력을 `evalWithOutput`으로 받아 확인), 식 계산 표(정수, 불리언, 함수, 재귀, 리스트, 문자열, 내장 함수, 튜플, 패턴 매칭, option, 사용자 정의 타입), `let`과 섀도잉, 클로저, short-circuit evaluation, 타입 오류, 리스트·문자열·내장 함수·패턴 매칭·ADT 오류와 출력, 정의되지 않은 변수, 0으로 나누기, FsCheck property-based testing |
 | `Main.fs` | — | entry point (`runTestsInAssemblyWithCLIArgs`) |
@@ -199,7 +200,7 @@ dotnet run --project tests/Calc.Tests -- --filter "Compile"
 | 명령 | 기대 출력 | 종료 코드 |
 |---|---|---|
 | `--help`, `-h` | `USAGE: calc [--help] [--expr=<expr>] [--version] [--no-typecheck]`로 시작하는 사용법 | 0 |
-| `--version`, `-v` | `calc 0.25.0` (`Calc.fsproj`의 `<Version>`) | 0 |
+| `--version`, `-v` | `calc 0.26.0` (`Calc.fsproj`의 `<Version>`) | 0 |
 | `-e "(2+3)*4"` | `Result: 20` | 0 |
 | `--expr=7/2` | `Result: 3` | 0 |
 | `--expr "-5 + 2"` | `Result: -3` (`-`로 시작하는 식도 값으로 처리됨) | 0 |

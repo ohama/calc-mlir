@@ -73,3 +73,11 @@ type Expr =
     | Ctor of string
     /// type 'a name = C1 | C2 of t | ... in body
     | TypeDecl of name: string * typeParams: string list * ctors: (string * TypeExpr option) list * body: Expr
+
+/// 프로그램의 최상위 항목: in 없는 선언 또는 식. 위치는 선언의 시작 (풀어 쓴 let 노드에 기록)
+type TopItem =
+    | TopLet of string * Expr * FSharp.Text.Lexing.Position
+    | TopLetRec of string * string * Expr * FSharp.Text.Lexing.Position
+    | TopLetPattern of Pattern * Expr * FSharp.Text.Lexing.Position
+    | TopType of string * string list * (string * TypeExpr option) list * FSharp.Text.Lexing.Position
+    | TopExpr of Expr

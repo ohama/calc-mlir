@@ -326,6 +326,17 @@ let builtins: Env =
     |> Map.add "None" none
     |> Map.add "Some" (VConstructor ("option", "Some", 1))
 
+/// type 선언의 생성자를 환경에 추가: 인자 없는 생성자는 값, 인자 있는 생성자는 함수처럼 호출하는 값
+let declareConstructors (env: Env) (typeName: string) (ctors: (string * TypeExpr option) list) =
+    let bindCtor env (ctor, argType) =
+        let value =
+            match argType with
+            | None -> VData (typeName, ctor, None)
+            | Some (TTuple items) -> VConstructor (typeName, ctor, List.length items)
+            | Some _ -> VConstructor (typeName, ctor, 1)
+        Map.add ctor value env
+    List.fold bindCtor env ctors
+
 let rec evalIn (env: Env) expr =
     match expr with
     | Number n -> VInt n
@@ -398,16 +409,7 @@ let rec evalIn (env: Env) expr =
         match Map.tryFind name env with
         | Some (VData _ | VConstructor _ as v) -> v
         | _ -> failwithf "Unknown constructor: %s" name
-    | TypeDecl (typeName, _, ctors, body) ->
-        // 인자 없는 생성자는 값, 인자 있는 생성자는 함수처럼 호출하는 값으로 환경에 추가
-        let bindCtor env (ctor, argType) =
-            let value =
-                match argType with
-                | None -> VData (typeName, ctor, None)
-                | Some (TTuple items) -> VConstructor (typeName, ctor, List.length items)
-                | Some _ -> VConstructor (typeName, ctor, 1)
-            Map.add ctor value env
-        evalIn (List.fold bindCtor env ctors) body
+    | TypeDecl (typeName, _, ctors, body) -> evalIn (declareConstructors env typeName ctors) body
 
 and evalInt env expr =
     match evalIn env expr with
@@ -461,11 +463,14 @@ and apply fv av =
 /// 내장 함수만 있는 환경에서 평가
 let eval expr = evalIn builtins expr
 
-/// print, println 의 출력을 output 으로 보내면서 평가 (테스트, 다른 스레드에서도 이 호출 안에서만)
-let evalWithOutput (writer: System.IO.TextWriter) expr =
+/// action 안에서 print, println 의 출력을 writer 로 보냄 (그 안에서 시작한 스레드도 같음)
+let withOutput (writer: System.IO.TextWriter) (action: unit -> 'a) : 'a =
     let previous = outputSlot.Value
     outputSlot.Value <- writer
     try
-        eval expr
+        action ()
     finally
         outputSlot.Value <- previous
+
+/// print, println 의 출력을 writer 로 보내면서 평가 (테스트)
+let evalWithOutput (writer: System.IO.TextWriter) expr = withOutput writer (fun () -> eval expr)
