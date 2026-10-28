@@ -11,7 +11,10 @@ type Tools =
       Clang: string
       GcPrefix: string
       /// 빌드 출력 폴더로 복사된 runtime/runtime.c
-      Runtime: string }
+      Runtime: string
+      /// 생성한 코드를 컴파일하는 clang 의 최적화 수준. 기본은 -O2.
+      /// tail call 은 musttail 이라 -O0 에서도 보장됨 (테스트가 -O0 으로 확인)
+      OptimizationLevel: string }
 
 /// 외부 도구 실행이 실패함 (도구의 표준 에러를 담음)
 exception ToolError of string with
@@ -51,7 +54,8 @@ let find () : Result<Tools, string> =
               MlirTranslate = (tool "mlir-translate").Value
               Clang = (tool "clang").Value
               GcPrefix = gcPrefix
-              Runtime = runtime }
+              Runtime = runtime
+              OptimizationLevel = "-O2" }
     | names ->
         Error(
             sprintf "Missing tools: %s (install with: brew install llvm bdw-gc, or set CALC_LLVM_BIN / CALC_GC_PREFIX)"
@@ -86,7 +90,7 @@ let private compileObject (tools: Tools) (dir: string) (name: string) (mlir: str
           "-o"
           path ".llvm.mlir" ]
     run tools.MlirTranslate [ "--mlir-to-llvmir"; path ".llvm.mlir"; "-o"; path ".ll" ]
-    run tools.Clang [ "-O2"; "-Wno-override-module"; "-c"; path ".ll"; "-o"; path ".o" ]
+    run tools.Clang [ tools.OptimizationLevel; "-Wno-override-module"; "-c"; path ".ll"; "-o"; path ".o" ]
     path ".o"
 
 /// 런타임(runtime/ 의 .c 파일들)을 컴파일한 오브젝트. 런타임 파일(.c, .h)과 도구가 같으면 임시 폴더의 캐시를 다시 씀

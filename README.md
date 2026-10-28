@@ -49,6 +49,7 @@ Result: 10
 - **쓰이지 않는 분기 경고**: 앞의 분기들이 이미 덮어서 절대 선택되지 않는 분기를 경고합니다(OCaml Warning 11, F# FS0026과 같음).
 - **버리는 값 경고**: `e1; e2`의 `e1`이 `unit`이 아니면 경고합니다(F# FS0020과 같음).
 - **타입 변수 경고**: 타입 표기의 `'a`가 다른 타입으로 정해지면 경고합니다(F# FS0064와 같음).
+- **tail call**: 함수의 마지막 계산인 호출은 스택을 쓰지 않습니다. `let rec loop n = … loop (n - 1)`은 깊이에 상관없이 돕니다(인터프리터와 컴파일러 모두, Scheme·OCaml과 같음).
 
 자세한 문법과 의미는 [docs/grammar.md](docs/grammar.md)에 있습니다.
 
@@ -78,7 +79,7 @@ dotnet run --project src/Calc
 ```
 
 ```
-calc 0.30.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
+calc 0.31.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
 # let add a b = a + b;;
 val add : int -> int -> int = <fun>
 # add 1 2;;

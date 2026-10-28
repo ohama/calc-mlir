@@ -27,8 +27,11 @@ let private runProcess (file: string) (args: string list) =
     stdout, stderrTask.Result, p.ExitCode
 
 /// 식을 컴파일하고 실행해서 (표준 출력, 표준 에러, 종료 코드)
-let compileAndRun (input: string) =
-    let t = requireTools ()
+let rec compileAndRun (input: string) = compileAndRunWith id input
+
+/// 도구 설정을 바꿔서 (예: 생성한 코드의 최적화 수준)
+and compileAndRunWith (configure: Toolchain.Tools -> Toolchain.Tools) (input: string) =
+    let t = configure (requireTools ())
     let ast = Program.load input
     Infer.typecheck ast |> ignore
     let mlir = Codegen.emitProgram ast
@@ -486,6 +489,42 @@ let tests =
             }
         ]
 
+        testList "tail call" [
+            let functionsOf (mlir: string) =
+                mlir.Split("llvm.func internal @")
+                |> Array.skip 1
+                |> Array.map (fun f -> f.Substring(0, f.IndexOf "\n}"))
+            let lines (text: string) = text.Split('\n') |> Array.map (fun l -> l.Trim())
+            // musttail 호출 바로 다음 줄은 그 결과를 돌려주는 llvm.return (LLVM 의 musttail 조건)
+            let musttailReturns (mlir: string) =
+                let ls = lines mlir
+                [ for i in 0 .. ls.Length - 2 do
+                      if ls[i].Contains "llvm.call musttail" then
+                          let result = ls[i].Substring(0, ls[i].IndexOf " =")
+                          yield ls[i + 1] = sprintf "llvm.return %s : i64" result ]
+            test "tail position 의 호출은 musttail 다음 llvm.return" {
+                let mlir = Codegen.emitProgram (Program.parse "let rec go n acc = if n = 0 then acc else go (n - 1) (acc + 1) in go 10 0")
+                // go (n - 1) 은 결과에 다시 적용하므로 보통 호출, 바깥 적용만 tail call
+                Expect.equal (musttailReturns mlir) [ true ] ""
+            }
+            test "tail position 의 if 는 블록과 llvm.cond_br, 안쪽 if 는 scf.if" {
+                let mlir = Codegen.emitProgram (Program.parse "fun x -> if x = 1 then (if x = 2 then 3 else 4) + 1 else 5")
+                let body = (functionsOf mlir)[0]
+                Expect.stringContains body "llvm.cond_br" "tail position"
+                Expect.stringContains body "scf.if" "+ 의 피연산자는 tail position 이 아님"
+                Expect.equal (lines body |> Array.filter (fun l -> l.StartsWith "llvm.return") |> Array.length) 2 "분기마다 return"
+            }
+            test "tail position 이 아닌 호출과 진입 함수의 호출은 보통 호출" {
+                Expect.equal (musttailReturns (Codegen.emitProgram (Program.parse "fun f -> 1 + f 2"))) [] "+ 의 피연산자"
+                Expect.equal (musttailReturns (Codegen.emitProgram (Program.parse "(fun x -> x) 1"))) [] "진입 함수 (signature 가 다름)"
+            }
+            test "tail position 의 match: 분기마다 블록, 마지막은 Match failure 뒤 unreachable" {
+                let mlir = Codegen.emitProgram (Program.parse "fun f -> fun n -> match n with 0 -> f 0 | 1 -> f 1")
+                Expect.equal (musttailReturns mlir) [ true; true ] ""
+                Expect.stringContains mlir "llvm.unreachable" ""
+            }
+        ]
+
         testList "클로저 변환" [
             let lowered input = Lower.lowerProgram (Program.parse input)
             test "자유 변수를 캡처" {
@@ -569,6 +608,22 @@ let tests =
             }
             test "재귀 깊이 100만 (링크 옵션의 512MB 스택)" {
                 Expect.equal (compileAndRun "let rec f n = if n = 0 then 0 else 1 + f (n - 1) in f 1000000") ("1000000\n", "", 0) ""
+            }
+            test "tail call 은 -O0 에서도 스택을 쓰지 않음 (musttail): 깊이 1000만, if, match, 가드, and, ;, let, 함수 인자" {
+                let input =
+                    String.concat "\n"
+                        [ "let rec a n = if n = 0 then 0 else a (n - 1)"
+                          "let rec b n = match n with 0 -> 0 | x when x > 0 -> b (x - 1) | _ -> 0"
+                          "let rec even n = if n = 0 then true else odd (n - 1) and odd n = if n = 0 then false else even (n - 1)"
+                          "let rec c n acc = if n = 0 then acc else (ignore n; let m = n - 1 in c m (acc + 1))"
+                          "let rec loop g n = if n = 0 then g 0 else loop g (n - 1)"
+                          ";;"
+                          "(a 10000000, b 10000000, even 10000000, c 10000000 0, loop (fun x -> x + 1) 10000000)" ]
+                // -O2 는 musttail 이 없어도 대부분 tail call 로 바꾸므로, 최적화하지 않는 -O0 으로 보장을 확인
+                Expect.equal
+                    (compileAndRunWith (fun t -> { t with OptimizationLevel = "-O0" }) input)
+                    ("(0, 0, true, 10000000, 1)\n", "", 0)
+                    ""
             }
         ]
 

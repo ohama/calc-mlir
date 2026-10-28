@@ -4,6 +4,16 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.31.0] - 2026-10-28
+
+### 추가
+- 컴파일러의 tail call 보장: 함수 본문의 tail position(`if`, `match`, `let`, `;`의 마지막 식 포함)에 있는 호출을 LLVM `musttail`로 부르고 바로 `llvm.return`합니다. 최적화 수준과 상관없이 스택 프레임을 다시 써서, `let rec go n acc = … go (n - 1) (acc + 1)`, `let rec … and …`, 함수 인자로 받은 함수의 호출이 깊이에 상관없이 돕니다.
+  - 지금까지는 `-O2`의 LLVM 최적화가 대부분을 tail call로 바꿨지만 보장은 아니었습니다. 같은 코드를 `-O0`으로 컴파일하면 깊이 1000만에서 stack overflow로 죽었습니다.
+  - tail position의 `if`와 `match`는 `scf.if` 대신 블록과 `llvm.cond_br`로 만듭니다(`Codegen.emitTail`). tail position이 아닌 곳은 그대로 `scf.if`입니다.
+  - 인터프리터는 0.30.0부터 .NET tail call로 같은 동작입니다.
+- `Toolchain.Tools.OptimizationLevel`: 생성한 코드를 컴파일하는 clang의 최적화 수준(기본 `-O2`). 테스트가 `-O0`으로 tail call 보장을 확인합니다.
+- 테스트 5개 추가 (총 866개)
+
 ## [0.30.0] - 2026-10-28
 
 ### 변경

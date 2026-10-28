@@ -246,6 +246,7 @@ U _GC_init  U _GC_malloc  U _printf  U _fprintf  U _exit ← 실행할 때 동�
 | 실행 파일이 Homebrew의 `libgc.1.dylib`에 동적으로 의존 | `bdw-gc`가 없는 기기에서는 실행되지 않음 | `libgc.a` 정적 링크 |
 | MLIR 선언(`Codegen.fs`의 문자열)과 `runtime.h`를 맞추는 검사가 없음 | 인자 타입이 어긋나도 링크는 성공하고, 실행 중 값이 틀림. 지금은 differential testing만 잡음 | 선언을 한 곳에서 만들기, 또는 헤더와 비교하는 테스트 |
 | 런타임 호출은 최적화를 막음 | 위 어셈블리에서 `calc_compare` 호출이 남음 | 타입별 specialization(설계 단계 9) |
+| 함수 호출은 모두 클로저를 거침 | `go (n - 1) acc`처럼 이름이 정해진 함수도 커링된 클로저를 하나씩 적용하고, 중간 클로저를 할당함 | 알려진 함수 direct call, uncurrying(설계 단계 9, `TODO.md`) |
 
 ## 6. 함수와 클로저 (단계 3)
 
@@ -449,6 +450,37 @@ Ast.Expr ──▶ Prelude.wrap ──▶ let rec fold f acc xs = …  in
 - **같은 정의:** 인터프리터도 같은 `Prelude.wrap`을 거칩니다. 차등 테스트가 같은 정의의 두 실행을 비교합니다.
 - **비용:** 내장 함수였을 때는 C 루프였지만, 지금은 원소마다 `calc_apply`로 클로저를 부릅니다. 100만 개 리스트에 `range`, `map`, `filter`, `sum`, `exists`를 쓰는 프로그램이 0.04초에서 0.23초가 되었습니다. 알려진 함수를 direct call로 부르는 최적화(단계 9)가 이 비용을 줄일 수 있습니다.
 - **`upper`, `lower`, `trim`:** C 표준 라이브러리 대신 .NET에서 만든 표(`unicode.h`)를 씁니다. `ß`와 `İ`처럼 invariant 변환이 그대로 두는 문자까지 인터프리터와 같습니다.
+
+## 12. tail call
+
+함수 본문의 tail position에 있는 호출은 `musttail`로 부르고, 바로 뒤에서 그 결과를 `llvm.return`합니다. LLVM은 `musttail` 호출을 최적화 수준과 상관없이 호출한 함수의 스택 프레임을 다시 쓰는 jump로 만듭니다.
+
+```
+let rec go n acc = if n = 0 then acc else go (n - 1) (acc + 1) in go 10 0
+```
+
+`go`는 커링되어 함수 두 개가 됩니다. `n`을 받아 클로저를 만드는 함수와, `n`을 캡처하고 `acc`를 받는 아래 `@lambda_0`입니다(`--emit-mlir`, 일부 생략).
+
+```mlir
+llvm.func internal @lambda_0(%closure: !llvm.ptr, %arg: i64) -> i64 {
+  ...                                                     // %v1 = go, %v3 = n (캡처한 값)
+  %v7 = arith.cmpi eq, %v6, %v8 : i64                     // n = 0
+  llvm.cond_br %v7, ^bb1, ^bb2
+^bb1:
+  llvm.return %arg : i64                                  // acc
+^bb2:
+  ...
+  %v25 = llvm.call %v23(%v22, %v21) : !llvm.ptr, (!llvm.ptr, i64) -> i64          // go (n - 1): 결과를 다시 적용하므로 보통 호출
+  %v27 = llvm.call @calc_add(%arg, %v26) : (i64, i64) -> i64                      // acc + 1
+  ...
+  %v31 = llvm.call musttail %v29(%v28, %v27) : !llvm.ptr, (!llvm.ptr, i64) -> i64 // (go (n - 1)) (acc + 1)
+  llvm.return %v31 : i64
+}
+```
+
+- **tail position의 분기는 블록으로:** tail position이 아닌 `if`와 `match`는 값을 내는 `scf.if`입니다. 그런데 `scf.if` 안의 호출은 뒤에 결과를 모으는 분기가 있어서 `musttail`이 될 수 없습니다(`musttail` 바로 뒤에는 `ret`만 올 수 있음). 그래서 함수 본문의 tail position은 `Codegen.emitTail`이 따로 만듭니다. 분기는 `llvm.cond_br`와 블록으로, 끝은 분기마다 `llvm.return`으로 만듭니다. tail position은 본문, `let`과 `;`의 마지막 식, `if`의 두 분기, `match`의 분기 본문입니다. 마지막 분기 뒤의 `Match failure`는 `llvm.unreachable`로 끝납니다.
+- **signature가 같아서 가능:** `musttail`은 호출하는 함수와 호출되는 함수의 signature가 같아야 합니다. 모든 클로저 함수가 `(!llvm.ptr, i64) -> i64`이므로, 어떤 클로저든 다른 클로저를 `musttail`로 부를 수 있습니다. 진입 함수(`@calc_main() -> i64`)는 signature가 달라서 tail call을 하지 않습니다. 진입 함수는 한 번만 불리므로 문제가 없습니다.
+- **`-O2`만으로는 보장되지 않음:** `musttail`이 없던 0.30.0도 `-O2`에서는 LLVM이 대부분의 tail call을 jump로 바꿨습니다(위 예제를 1억 번 돌려도 통과). 같은 코드를 `-O0`으로 컴파일하면 깊이 1000만에서 stack overflow로 죽었습니다(exit 138). 지금은 `-O0`에서도 통과하고, 테스트가 `Toolchain.Tools.OptimizationLevel = "-O0"`으로 이것을 확인합니다.
 
 ## 관련 문서
 

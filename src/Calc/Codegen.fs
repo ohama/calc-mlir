@@ -130,18 +130,28 @@ let private emitStringGlobal (sb: StringBuilder) (name: string, s: string) =
         line (sprintf "  llvm.return %%3 : %s" ty)
     line "}"
 
-/// 함수 하나의 본문을 만드는 동안의 상태: SSA 이름, 출력 줄, 들여쓰기(scf.if 영역)
+/// 함수 하나의 본문을 만드는 동안의 상태: SSA 이름, 블록 이름, 출력 줄, 들여쓰기(scf.if 영역)
 type private FunctionBuilder(strings: StringTable) =
     let lines = StringBuilder()
     let mutable next = 0
+    let mutable nextBlock = 0
     let mutable depth = 1
 
     member _.Fresh() =
         next <- next + 1
         sprintf "%%v%d" next
 
+    /// 함수 영역의 새 블록 이름 (tail position 의 분기, emitTail)
+    member _.FreshBlock() =
+        nextBlock <- nextBlock + 1
+        sprintf "^bb%d" nextBlock
+
     member _.Emit(line: string) =
         lines.Append(String.replicate depth "  ").AppendLine(line) |> ignore
+
+    /// 블록 시작. 이 뒤의 줄은 이 블록에 들어감
+    member _.Label(block: string) =
+        lines.Append(block).AppendLine(":") |> ignore
 
     member _.Strings = strings
     member _.Indent() = depth <- depth + 1
@@ -354,42 +364,8 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
         let r = fb.Fresh()
         fb.Emit(sprintf "%s = llvm.ptrtoint %s : !llvm.ptr to i64" r block)
         r
-    // f a: 클로저의 1번 칸에서 코드 포인터를 꺼내 (클로저, 인자) 로 간접 호출
-    | CApply (f, a) ->
-        let fv = emitExpr fb env f
-        let av = emitExpr fb env a
-        let block = fb.Fresh()
-        fb.Emit(sprintf "%s = llvm.inttoptr %s : i64 to !llvm.ptr" block fv)
-        let code = fb.Fresh()
-        fb.Emit(sprintf "%s = llvm.load %s : !llvm.ptr -> !llvm.ptr" code (emitSlot fb block 1))
-        let r = fb.Fresh()
-        fb.Emit(sprintf "%s = llvm.call %s(%s, %s) : !llvm.ptr, (!llvm.ptr, i64) -> i64" r code block av)
-        r
-    // 모든 클로저를 먼저 할당한 뒤 다른 함수를 가리키는 칸을 채움 (서로를 가리키므로 순서대로 만들 수 없음)
-    | CLetRecGroup (closures, body) ->
-        let groupNames = closures |> List.map fst |> Set.ofList
-        let blocks =
-            [ for name, closure in closures ->
-                  match closure with
-                  | CMakeClosure (funcName, captured) ->
-                      let size = emitConst fb "i64" (int64 (8 * (2 + captured.Length)))
-                      let block = fb.Fresh()
-                      fb.Emit(sprintf "%s = llvm.call @calc_alloc(%s) : (i64) -> !llvm.ptr" block size)
-                      fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" (emitConst fb "i64" (closureHeader captured.Length)) block)
-                      let code = fb.Fresh()
-                      fb.Emit(sprintf "%s = llvm.mlir.addressof @%s%s : !llvm.ptr" code fb.Strings.Prefix funcName)
-                      fb.Emit(sprintf "llvm.store %s, %s : !llvm.ptr, !llvm.ptr" code (emitSlot fb block 1))
-                      let value = fb.Fresh()
-                      fb.Emit(sprintf "%s = llvm.ptrtoint %s : !llvm.ptr to i64" value block)
-                      name, block, value, captured
-                  | other -> failwithf "Codegen: let rec group expects closures, got %A" other ]
-        let groupEnv = blocks |> List.fold (fun acc (name, _, value, _) -> Map.add name value acc) env
-        for _, block, _, captured in blocks do
-            captured
-            |> List.iteri (fun i c ->
-                let v = if groupNames.Contains c then groupEnv[c] else emitExpr fb env (CVar c)
-                fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" v (emitSlot fb block (2 + i))))
-        emitExpr fb groupEnv body
+    | CApply (f, a) -> emitApply fb env "" f a
+    | CLetRecGroup (closures, body) -> emitExpr fb (emitRecGroup fb env closures) body
     | CNil -> emitConst fb "i64" nilValue
     // 인터프리터처럼 head 를 먼저 계산
     | CCons (h, t) ->
@@ -418,15 +394,57 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
                 // 뒤 분기에는 닿지 않음
                 emitExpr fb (emitBind fb pattern v env) body
             | (pattern, guard, body) :: rest ->
-                let test = emitTest fb pattern v
-                let cond =
-                    match guard with
-                    | None -> test
-                    | Some g ->
-                        let guardTrue () = untagBool fb (emitExpr fb (emitBind fb pattern v env) g)
-                        emitIfOf fb "i1" test guardTrue (fun () -> emitConst fb "i1" 0L)
+                let cond = emitCaseCondition fb env pattern guard v
                 emitIf fb cond (fun () -> emitExpr fb (emitBind fb pattern v env) body) (fun () -> emitCases rest)
         emitCases cases
+
+/// f a: 클로저의 1번 칸에서 코드 포인터를 꺼내 (클로저, 인자) 로 간접 호출. tailKind 는 "" 또는 "musttail "
+and private emitApply (fb: FunctionBuilder) (env: Map<string, string>) (tailKind: string) (f: CExpr) (a: CExpr) =
+    let fv = emitExpr fb env f
+    let av = emitExpr fb env a
+    let block = fb.Fresh()
+    fb.Emit(sprintf "%s = llvm.inttoptr %s : i64 to !llvm.ptr" block fv)
+    let code = fb.Fresh()
+    fb.Emit(sprintf "%s = llvm.load %s : !llvm.ptr -> !llvm.ptr" code (emitSlot fb block 1))
+    let r = fb.Fresh()
+    fb.Emit(sprintf "%s = llvm.call %s%s(%s, %s) : !llvm.ptr, (!llvm.ptr, i64) -> i64" r tailKind code block av)
+    r
+
+/// match 분기의 조건 (i1): 패턴 검사, 가드가 있으면 패턴이 맞을 때만 가드를 계산
+and private emitCaseCondition (fb: FunctionBuilder) (env: Map<string, string>) (pattern: Ast.Pattern) (guard: CExpr option) (v: string) =
+    let test = emitTest fb pattern v
+    match guard with
+    | None -> test
+    | Some g ->
+        let guardTrue () = untagBool fb (emitExpr fb (emitBind fb pattern v env) g)
+        emitIfOf fb "i1" test guardTrue (fun () -> emitConst fb "i1" 0L)
+
+/// let rec ... and ...: 모든 클로저를 먼저 할당한 뒤 다른 함수를 가리키는 칸을 채움 (서로를 가리키므로 순서대로 만들 수 없음).
+/// 그룹의 이름을 더한 환경을 돌려줌
+and private emitRecGroup (fb: FunctionBuilder) (env: Map<string, string>) (closures: (string * CExpr) list) =
+    let groupNames = closures |> List.map fst |> Set.ofList
+    let blocks =
+        [ for name, closure in closures ->
+              match closure with
+              | CMakeClosure (funcName, captured) ->
+                  let size = emitConst fb "i64" (int64 (8 * (2 + captured.Length)))
+                  let block = fb.Fresh()
+                  fb.Emit(sprintf "%s = llvm.call @calc_alloc(%s) : (i64) -> !llvm.ptr" block size)
+                  fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" (emitConst fb "i64" (closureHeader captured.Length)) block)
+                  let code = fb.Fresh()
+                  fb.Emit(sprintf "%s = llvm.mlir.addressof @%s%s : !llvm.ptr" code fb.Strings.Prefix funcName)
+                  fb.Emit(sprintf "llvm.store %s, %s : !llvm.ptr, !llvm.ptr" code (emitSlot fb block 1))
+                  let value = fb.Fresh()
+                  fb.Emit(sprintf "%s = llvm.ptrtoint %s : !llvm.ptr to i64" value block)
+                  name, block, value, captured
+              | other -> failwithf "Codegen: let rec group expects closures, got %A" other ]
+    let groupEnv = blocks |> List.fold (fun acc (name, _, value, _) -> Map.add name value acc) env
+    for _, block, _, captured in blocks do
+        captured
+        |> List.iteri (fun i c ->
+            let v = if groupNames.Contains c then groupEnv[c] else emitExpr fb env (CVar c)
+            fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" v (emitSlot fb block (2 + i))))
+    groupEnv
 
 /// 패턴이 값 v 와 일치하는지 (i1). 하위 패턴은 앞이 일치할 때만 검사하고, 필드도 그때 읽음
 and private emitTest (fb: FunctionBuilder) (pattern: Ast.Pattern) (v: string) : string =
@@ -493,6 +511,40 @@ and private emitBind (fb: FunctionBuilder) (pattern: Ast.Pattern) (v: string) (e
             List.fold2 (fun acc n r -> Map.add n r acc) env names results
     | _ -> env
 
+/// 함수 본문의 tail position: 값을 llvm.return 으로 돌려줌. 끝이 호출이면 musttail 호출 바로 뒤에 llvm.return
+/// (호출한 함수의 스택 프레임을 다시 씀. 최적화 수준과 상관없이 LLVM 이 보장).
+/// 그래서 tail position 의 if 와 match 는 scf.if 가 아니라 블록과 llvm.cond_br: scf.if 안의 호출 뒤에는
+/// 결과를 모으는 분기가 있어서 musttail 이 될 수 없음. tail position 이 아닌 곳은 emitExpr (scf.if)
+and private emitTail (fb: FunctionBuilder) (env: Map<string, string>) (expr: CExpr) : unit =
+    let branch (cond: string) (thenBranch: unit -> unit) (elseBranch: unit -> unit) =
+        let thenBlock = fb.FreshBlock()
+        let elseBlock = fb.FreshBlock()
+        fb.Emit(sprintf "llvm.cond_br %s, %s, %s" cond thenBlock elseBlock)
+        fb.Label thenBlock
+        thenBranch ()
+        fb.Label elseBlock
+        elseBranch ()
+    match expr with
+    | CLet (name, value, body) -> emitTail fb (Map.add name (emitExpr fb env value) env) body
+    | CLetRecGroup (closures, body) -> emitTail fb (emitRecGroup fb env closures) body
+    | CIf (cond, thenExpr, elseExpr) ->
+        let c = untagBool fb (emitExpr fb env cond)
+        branch c (fun () -> emitTail fb env thenExpr) (fun () -> emitTail fb env elseExpr)
+    | CApply (f, a) -> fb.Emit(sprintf "llvm.return %s : i64" (emitApply fb env "musttail " f a))
+    | CMatch (scrutinee, cases) ->
+        let v = emitExpr fb env scrutinee
+        let rec emitCases cases =
+            match cases with
+            | [] ->
+                fb.Emit(sprintf "llvm.call @calc_match_failure(%s) : (i64) -> ()" v)
+                fb.Emit "llvm.unreachable"
+            | (pattern, None, body) :: _ when irrefutable pattern -> emitTail fb (emitBind fb pattern v env) body
+            | (pattern, guard, body) :: rest ->
+                let cond = emitCaseCondition fb env pattern guard v
+                branch cond (fun () -> emitTail fb (emitBind fb pattern v env) body) (fun () -> emitCases rest)
+        emitCases cases
+    | _ -> fb.Emit(sprintf "llvm.return %s : i64" (emitExpr fb env expr))
+
 /// 최상위 함수 하나: 입구에서 캡처한 값을 꺼내 환경을 만들고 본문을 생성
 let private emitFunction (strings: StringTable) (sb: StringBuilder) (f: CFunction) =
     let fb = FunctionBuilder(strings)
@@ -511,11 +563,12 @@ let private emitFunction (strings: StringTable) (sb: StringBuilder) (f: CFunctio
         | None -> []
     // 인자가 가장 나중: let rec f f = ... 이면 본문의 f 는 인자 (인터프리터와 같음)
     let env = Map.ofList (captured @ self @ [ f.Param, "%arg" ])
-    let result = emitExpr fb env f.Body
+    // 본문 끝(들)은 llvm.return. 모든 함수의 signature 가 같아서 다른 클로저를 musttail 로 부를 수 있음
+    emitTail fb env f.Body
     // internal: 모듈 밖에서 보이지 않음. 여러 프로그램의 오브젝트를 한 실행 파일로 링크해도 이름이 겹치지 않음
     sb.AppendLine(sprintf "llvm.func internal @%s%s(%%closure: !llvm.ptr, %%arg: i64) -> i64 {" strings.Prefix f.Name) |> ignore
     sb.Append(fb.Text) |> ignore
-    sb.AppendLine(sprintf "  llvm.return %s : i64" result).AppendLine("}").AppendLine() |> ignore
+    sb.AppendLine("}").AppendLine() |> ignore
 
 let private declarations =
     [ "// Calc 컴파일러가 만든 MLIR. 값은 i64 하나 (docs/compiler-design.md D3)"

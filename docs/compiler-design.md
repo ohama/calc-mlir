@@ -209,7 +209,7 @@ clang prog.o runtime.o builtins.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack
 | `+`, `-`, `*` 오버플로 | `i32` 연산이라 한 바퀴 돎 (인터프리터와 같음) |
 | `head []`, `nth`, `substr`, `toInt`, `Match failure` | 인터프리터와 같은 메시지 |
 | 함수끼리 `=` | 인터프리터와 같은 `Type error: ...` (타입 추론이 허용하는 유일한 실행 중 타입 오류) |
-| 깊은 재귀 | 링크할 때 메인 스레드 스택을 512MB로 키움(`-Wl,-stack_size,0x20000000`, macOS). 인터프리터의 큰 스택 스레드와 같은 크기이고 재귀 깊이 100만을 확인함. tail call은 최적화 단계 |
+| 깊은 재귀 | 링크할 때 메인 스레드 스택을 512MB로 키움(`-Wl,-stack_size,0x20000000`, macOS). 인터프리터의 큰 스택 스레드와 같은 크기이고 재귀 깊이 100만을 확인함. tail position의 호출은 `musttail`이라 스택을 쓰지 않음(0.31.0, [compiler-architecture.md](compiler-architecture.md) 12장) |
 
 ### D10. 결과 출력
 
@@ -386,7 +386,7 @@ llvm.func @main() -> i32 {
 | **6. ADT와 option** | `type` 선언, 생성자 값과 패턴, `Some`/`None` | 생성자 descriptor 전역 상수, `DATA` 블록 | ADT 예제 |
 | **7. 내장 함수** | 문자열 14개, 리스트 14개, `fst`/`snd`, option 3개 | C 구현, 정적 클로저, `calc_apply`, `toString`과 `toInt` | 내장 함수 예제 전부 |
 | **8. 완성도** | 모든 `EvalTests` 예제와 오류 메시지 | 실행 중 오류 메시지 정리, 종료 코드 | 타입 검사를 통과하는 `EvalTests.cases` 전부가 같음 |
-| **9. 최적화 (선택)** | 성능 | 타입별 specialization, 알려진 함수 direct call, uncurrying, `tail` 호출, `-O2` 비교, 사용자 dialect(`calc`) 검토 | 벤치마크로 인터프리터와 비교 |
+| **9. 최적화 (선택)** | 성능 | 타입별 specialization, 알려진 함수 direct call, uncurrying, `tail` 호출(0.31.0 완료), `-O2` 비교, 사용자 dialect(`calc`) 검토 | 벤치마크로 인터프리터와 비교 |
 
 단계 1~2는 힙이 필요 없습니다. 그래서 GC와 런타임이 거의 비어 있는 상태로 파이프라인 전체를 먼저 검증할 수 있습니다.
 
@@ -408,7 +408,7 @@ llvm.func @main() -> i32 {
 |---|---|
 | 외부 도구 실행이 느림 | 단계 0~8에서는 감수. 나중에 MLIR C API(LLVM 소스 빌드)나 `mlir-opt` 한 번 실행으로 줄일 수 있음 |
 | 문자열 UTF-16 | 인터프리터와 같은 결과를 위해 선택. 메모리 두 배, C에서 다루기 번거로움 |
-| 깊은 재귀 | 스택 크기 옵션으로 시작. tail call 보장은 단계 9 |
+| 깊은 재귀 | 스택 크기 옵션으로 시작. tail call은 `musttail`로 보장(0.31.0) |
 | conservative GC | 정수처럼 보이는 포인터 때문에 GC가 메모리를 덜 회수할 수 있음. 태그로 대부분 피함 |
 | macOS 전용 경로 | `CALC_LLVM_BIN`, `CALC_GC_PREFIX`로 다른 환경을 지원. CI는 범위 밖 |
 | 사용자 dialect | C++ 빌드가 필요. 표준 dialect만으로 단계 8까지 가능한지 먼저 확인 |
