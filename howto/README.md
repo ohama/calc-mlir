@@ -46,8 +46,10 @@
 | 40 | [resolve-builtins-by-scope-when-compiling](resolve-builtins-by-scope-when-compiling.md) | 내장 함수는 가릴 수 있으므로 범위에 없는 이름만 내장 함수다. 다 모인 호출은 직접, 나머지는 커링 클로저(closure conversion이 만들어 줌) | 2026-10-28 |
 | 41 | [track-source-positions-without-changing-ast](track-source-positions-without-changing-ast.md) | AST에 위치 필드를 넣지 않고, 노드 참조를 키로 하는 ConditionalWeakTable에 시작 위치를 기록한다. 싱글턴 노드와 ResultRange 시작 위치를 조심한다 | 2026-10-28 |
 | 42 | [check-match-exhaustiveness-with-maranget](check-match-exhaustiveness-with-maranget.md) | 빠진 match 분기는 Maranget의 usefulness 검사로 판정하고 값의 예도 만든다. 가드는 세지 않고, Match failure 예제로 soundness를 테스트한다 | 2026-10-28 |
+| 43 | [design-top-level-declarations-and-sequencing-in-fsyacc](design-top-level-declarations-and-sequencing-in-fsyacc.md) | 선언 뒤의 식은 ;;로 구분해야 충돌이 없다. ;는 가장 낮은 %prec의 SeqExpr로 잇고, 선언은 let ... in 사슬로 풀어 쓴다. 다른 설계의 충돌 수를 재서 고른다 | 2026-10-28 |
+| 44 | [redirect-interpreter-output-per-test-with-asynclocal](redirect-interpreter-output-per-test-with-asynclocal.md) | 병렬 테스트마다 print 출력을 받으려면 AsyncLocal을 쓴다. 값은 설정한 흐름의 자손에만 보이므로 기본값은 읽을 때 null에서 정한다 | 2026-10-28 |
 
-추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 → 16 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match → 오류 위치), 17 → 18 → 19 (패턴 매칭, 생성자, ADT), 20 → 21 → 22 → 41 → 42 (타입 추론, 오류 위치, 빠진 분기), 8 → 9 → 13 → 14 → 15 (함수 평가, 재귀 한계, 내장 함수), 23 → 24 → 25 → 26 → 27 → 28 → 29 → 30 → 31 → 32 → 33 → 34 → 35 → 36 → 37 → 38 → 39 → 40 (네이티브 컴파일러), 4 → 6 (테스트), 5 (릴리스)
+추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 → 16 → 43 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match → 오류 위치 → 최상위 선언과 ;), 17 → 18 → 19 (패턴 매칭, 생성자, ADT), 20 → 21 → 22 → 41 → 42 (타입 추론, 오류 위치, 빠진 분기), 8 → 9 → 13 → 14 → 15 (함수 평가, 재귀 한계, 내장 함수), 23 → 24 → 25 → 26 → 27 → 28 → 29 → 30 → 31 → 32 → 33 → 34 → 35 → 36 → 37 → 38 → 39 → 40 (네이티브 컴파일러), 4 → 6 → 44 (테스트), 5 (릴리스)
 
 ---
-총 42개 | 업데이트: 2026-10-28
+총 44개 | 업데이트: 2026-10-28
