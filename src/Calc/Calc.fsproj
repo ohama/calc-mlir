@@ -3,7 +3,7 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
-    <Version>0.22.0</Version>
+    <Version>0.23.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
@@ -29,7 +29,7 @@
 
   <ItemGroup>
     <!-- 컴파일러가 실행 파일을 만들 때 함께 컴파일하는 C 런타임 -->
-    <None Include="runtime\**" CopyToOutputDirectory="PreserveNewest" LinkBase="runtime" />
+    <None Include="runtime\*.c;runtime\*.h" CopyToOutputDirectory="PreserveNewest" LinkBase="runtime" />
   </ItemGroup>
 
   <ItemGroup>

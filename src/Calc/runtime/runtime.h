@@ -45,6 +45,8 @@ void calc_init(void);
 void *calc_alloc(int64_t bytes);
 /* "Error: <message>" 를 표준 에러로 출력하고 종료 코드 1 로 끝냄 (인터프리터와 같은 형식) */
 void calc_error(const char *message);
+/* printf 형식의 calc_error */
+void calc_errorf(const char *format, ...);
 /* Eval.formatValue 와 같은 형식으로 결과를 출력 */
 void calc_print_result(value v);
 
@@ -59,5 +61,75 @@ int32_t calc_compare(value a, value b); /* -1, 0, 1 */
 
 /* "Error: Match failure: <값>" (Eval.formatValue 형식) 을 출력하고 종료 */
 void calc_match_failure(value v);
+
+/* 클로저 f 를 인자 하나로 호출. 생성한 코드의 호출 규약 (클로저, 인자) -> 결과 와 같음 */
+value calc_apply(value f, value arg);
+
+/* option: Some 과 None 의 이름과 None 값은 런타임에 하나. 생성한 코드도 이 전역을 가리킴 (패턴 검사가 이름 포인터를 비교) */
+extern const char calc_name_some[];
+extern const char calc_name_none[];
+typedef struct {
+    int64_t header;
+    const char *name;
+} calc_unit;
+extern const calc_unit calc_none;
+#define CALC_NONE ((value)&calc_none)
+
+/* ---- 런타임 안에서 함께 쓰는 도우미 (runtime.c, builtins.c) ---- */
+
+value calc_int(int32_t n);
+value calc_bool(int b);
+calc_string *calc_new_string(int64_t length); /* 내용은 부르는 쪽이 채움 */
+value calc_string_of(const uint16_t *units, int64_t length);
+value calc_cons(value head, value tail);
+value calc_some(value v);
+int64_t calc_list_length(value list);
+
+/* UTF-16 버퍼 (malloc). formatValue 결과를 모으고, 출력할 때 UTF-8 로 바꿈 */
+typedef struct {
+    uint16_t *units;
+    int64_t length;
+    int64_t capacity;
+} calc_buffer;
+void calc_buffer_units(calc_buffer *b, const uint16_t *units, int64_t length);
+void calc_buffer_value(calc_buffer *b, value v);                                  /* Eval.formatValue */
+void calc_buffer_quoted(calc_buffer *b, const uint16_t *units, int64_t length); /* Eval.quote */
+char *calc_buffer_utf8(calc_buffer *b);                                         /* 새 malloc 문자열, 버퍼는 비움 */
+
+/* ---- 내장 함수 (builtins.c). 인자 순서와 의미는 Eval.callBuiltin 과 같음 ---- */
+
+value calc_builtin_length(value v);
+value calc_builtin_substr(value s, value start, value count);
+value calc_builtin_upper(value s);
+value calc_builtin_lower(value s);
+value calc_builtin_trim(value s);
+value calc_builtin_contains(value s, value sub);
+value calc_builtin_startsWith(value s, value prefix);
+value calc_builtin_endsWith(value s, value suffix);
+value calc_builtin_indexOf(value s, value sub);
+value calc_builtin_replace(value s, value old_value, value new_value);
+value calc_builtin_split(value s, value sep);
+value calc_builtin_join(value sep, value items);
+value calc_builtin_toString(value v);
+value calc_builtin_toInt(value s);
+value calc_builtin_head(value xs);
+value calc_builtin_tail(value xs);
+value calc_builtin_isEmpty(value xs);
+value calc_builtin_nth(value xs, value i);
+value calc_builtin_reverse(value xs);
+value calc_builtin_append(value xs, value ys);
+value calc_builtin_range(value a, value b);
+value calc_builtin_sum(value xs);
+value calc_builtin_sort(value xs);
+value calc_builtin_map(value f, value xs);
+value calc_builtin_filter(value f, value xs);
+value calc_builtin_fold(value f, value acc, value xs);
+value calc_builtin_exists(value f, value xs);
+value calc_builtin_forall(value f, value xs);
+value calc_builtin_fst(value pair);
+value calc_builtin_snd(value pair);
+value calc_builtin_tryHead(value xs);
+value calc_builtin_tryFind(value f, value xs);
+value calc_builtin_defaultValue(value d, value opt);
 
 #endif

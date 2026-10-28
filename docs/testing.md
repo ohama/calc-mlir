@@ -146,7 +146,8 @@ dotnet run --project tests/Calc.Tests -- --filter "Compile"
 - `brew install llvm bdw-gc`가 되어 있지 않으면 이 테스트들은 실패가 아니라 **Skipped**로 표시됩니다.
 - 차등 테스트는 기대값을 따로 적지 않습니다. 같은 식을 `Eval.eval`로 실행한 결과(`Eval.formatValue`)와 실행 파일의 출력을 비교합니다. 컴파일러가 지원하는 기능이 늘어나면 비교하는 예제도 자동으로 늘어납니다.
 - 실행 중 오류가 나는 예제(`1 / 0` 등)는 표준 에러(`Error: <인터프리터와 같은 메시지>`)와 종료 코드 1까지 비교합니다.
-- 단계 6에서 차등 테스트는 185개를 비교합니다.
+- 단계 7에서 차등 테스트는 286개를 비교합니다. 타입 검사를 통과하는 평가 예제 263개 전부와 실행 중 오류 예제입니다.
+- `Unicode 표` 테스트는 `runtime/unicode.h`의 대소문자 변환이 모든 코드 포인트에서, 공백 목록이 `Char.IsWhiteSpace`와 같은지 확인합니다. 다르면 `dotnet fsi src/Calc/runtime/gen-unicode.fsx`로 다시 만듭니다.
 - **묶음 빌드:** 실행 테스트와 차등 테스트의 입력 약 220개를 실행 파일 하나로 빌드합니다(`Codegen.emitEntries`, `Toolchain.buildMany`).
   - 입력을 코어 수만큼의 MLIR 모듈로 나눠 병렬로 컴파일합니다.
   - 실행 파일 안의 드라이버가 입력마다 `fork`한 자식 프로세스에서 실행하고, 표준 출력·표준 에러·종료 코드를 파일로 남깁니다.
@@ -194,7 +195,7 @@ dotnet run --project tests/Calc.Tests -- --filter "Compile"
 | 명령 | 기대 출력 | 종료 코드 |
 |---|---|---|
 | `--help`, `-h` | `USAGE: calc [--help] [--expr=<expr>] [--version] [--no-typecheck]`로 시작하는 사용법 | 0 |
-| `--version`, `-v` | `calc 0.22.0` (`Calc.fsproj`의 `<Version>`) | 0 |
+| `--version`, `-v` | `calc 0.23.0` (`Calc.fsproj`의 `<Version>`) | 0 |
 | `-e "(2+3)*4"` | `Result: 20` | 0 |
 | `--expr=7/2` | `Result: 3` | 0 |
 | `--expr "-5 + 2"` | `Result: -3` (`-`로 시작하는 식도 값으로 처리됨) | 0 |

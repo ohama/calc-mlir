@@ -2,7 +2,7 @@
 
 `calc --compile`이 소스 코드에서 실행 파일을 만드는 과정을 예제 하나로 따라갑니다. 설계의 이유와 단계별 계획은 [compiler-design.md](compiler-design.md)에 있습니다. 이 문서는 **지금 코드가 실제로 하는 일**을 설명합니다.
 
-이 문서의 출력은 모두 직접 실행해서 얻었습니다. 2장의 예제는 단계 2(0.17.0), 6장의 클로저는 단계 3, 7장의 문자열은 단계 4, 8장의 패턴 매칭은 단계 5, 9장의 ADT는 단계 6 기준입니다. 환경은 macOS arm64, Homebrew LLVM 22.1.7, bdw-gc 8.2.12입니다.
+이 문서의 출력은 모두 직접 실행해서 얻었습니다. 2장의 예제는 단계 2(0.17.0), 6장의 클로저는 단계 3, 7장의 문자열은 단계 4, 8장의 패턴 매칭은 단계 5, 9장의 ADT는 단계 6, 10장의 내장 함수는 단계 7 기준입니다. 환경은 macOS arm64, Homebrew LLVM 22.1.7, bdw-gc 8.2.12입니다.
 
 ## 1. 큰 그림
 
@@ -36,7 +36,7 @@
 | 낮추기 | `Core.fs`, `Lower.fs` | `Ast.Expr` → Core IR. 연산을 `Prim`으로, `&&`/`||`를 `if`로, 클로저 변환(함수를 최상위로). 지원하지 않는 기능은 `NotSupported` |
 | 코드 생성 | `Codegen.fs` | Core IR → MLIR 텍스트 |
 | 빌드 | `Toolchain.fs` | 도구 찾기, 임시 폴더에서 외부 도구(`mlir-opt`, `mlir-translate`, `clang`)를 차례로 실행, C 런타임 오브젝트 캐시 |
-| 런타임 | `runtime/runtime.c`, `runtime.h` | 초기화, 결과 출력, 오류 종료, 다형 연산(`calc_add`, `calc_eq`, `calc_compare`) |
+| 런타임 | `runtime/runtime.c`, `builtins.c`, `runtime.h`, `unicode.h` | 초기화, 결과 출력, 오류 종료, 다형 연산(`calc_add`, `calc_eq`, `calc_compare`), 내장 함수 33개, `calc_apply` |
 | 진입 | `Program.fs`의 `compile` | 위 단계를 잇고, 오류를 인터프리터와 같은 형식(`Error: ...`)으로 출력 |
 
 F#으로 하는 일은 MLIR **텍스트**를 만드는 데까지입니다. LLVM을 라이브러리로 링크하지 않고, 텍스트 파일을 외부 도구에 넘깁니다(설계 D1).
@@ -161,7 +161,7 @@ define i32 @main() {                      ; (다)가 C 의 main 심볼이 됨
 
 ```
 clang -O2 -Wno-override-module -c prog.ll -o prog.o
-clang prog.o $TMPDIR/calc-runtime-<해시>.o -L/opt/homebrew/opt/bdw-gc/lib -lgc \
+clang prog.o $TMPDIR/calc-runtime-<해시>.o $TMPDIR/calc-builtins-<해시>.o -L/opt/homebrew/opt/bdw-gc/lib -lgc \
       -Wl,-stack_size,0x20000000 -o discount
 ```
 
@@ -204,7 +204,7 @@ ret
 
 빌드하면 `runtime.c`와 `runtime.h`가 `Calc.dll` 옆의 `runtime/` 폴더로 복사됩니다. `Toolchain.find`는 이 파일을 `AppContext.BaseDirectory/runtime/runtime.c`에서 찾습니다. `ProjectReference`를 따라 테스트 프로젝트 출력 폴더에도 복사되므로, 테스트도 같은 코드로 찾습니다.
 
-처음 `--compile`할 때 `clang -O2 -c`로 `runtime.c`를 컴파일해서 임시 폴더에 `calc-runtime-<해시>.o`로 둡니다. 해시는 런타임 소스·헤더·`clang` 경로·GC 위치로 만들고, 같은 해시의 파일이 있으면 다시 씁니다. 다른 프로세스와 동시에 만들 수 있으므로 임시 이름으로 만든 뒤 옮깁니다.
+처음 `--compile`할 때 `clang -O2 -c`로 런타임의 `.c` 파일(`runtime.c`, `builtins.c`)을 컴파일해서 임시 폴더에 `calc-<파일>-<해시>.o`로 둡니다. 해시는 런타임의 모든 `.c`·`.h` 파일, `clang` 경로, GC 위치로 만들고, 같은 해시의 파일이 있으면 다시 씁니다. 다른 프로세스와 동시에 만들 수 있으므로 임시 이름으로 만든 뒤 옮깁니다.
 
 ### 링크: 선언과 정의를 이름으로 맞춤
 
@@ -413,6 +413,26 @@ llvm.mlir.global internal constant @ctor_1("None\00") {addr_space = 0 : i32}
 - **`type` 선언:** 코드를 만들지 않습니다. `Lower`가 생성자 범위(이름 → 인자 유무)를 넓히는 데만 씁니다. `Some`과 `None`은 처음부터 범위에 있습니다.
 - **인자 있는 생성자를 값으로 쓸 때(`let f = Some in f 3`):** `Lower`가 클로저 `fun x -> Some x`로 바꿉니다. 그래서 `<fun>`으로 출력되고, `=`로 비교하면 인터프리터와 같은 타입 오류가 납니다.
 - **출력:** 인터프리터와 같은 괄호 규칙을 씁니다. `Some (Some 1)`, `Some (-1)`, `Some None`, `Rect (2, 3)`입니다.
+
+## 10. 내장 함수 (단계 7)
+
+```
+let f = substr "hello" in (f 1 3, map length ["a"; "bb"], tryHead [7])
+```
+
+`Lower`는 변수 범위를 따라가서, 범위에 없는 이름(`substr`, `length`, `tryHead`)만 내장 함수로 봅니다.
+
+| 쓰는 모양 | Core | 생성 코드 |
+|---|---|---|
+| 인자가 다 모임: `tryHead [7]` | `CBuiltin ("tryHead", [...])` | `llvm.call @calc_builtin_tryHead(%xs) : (i64) -> i64` |
+| 부분 적용: `substr "hello"` | 클로저 `fun $b0 -> fun $b1 -> fun $b2 -> CBuiltin (...)`에 차례로 적용 | 클로저 3개, 마지막 함수가 `@calc_builtin_substr` 호출 |
+| 값으로: `map length xs` | `CBuiltin ("map", [<length 클로저>; xs])` | 런타임의 `map`이 `calc_apply`로 `length` 클로저를 부름 |
+| 가린 이름: `let length = ... in length x` | 보통 변수 `CVar` | 클로저 호출 |
+
+- **선언:** 모듈은 33개 내장 함수를 모두 `llvm.func @calc_builtin_<이름>(i64, ...) -> i64`로 선언합니다. 링커가 `builtins.o`와 이름으로 연결합니다.
+- **`calc_apply(f, x)`:** 클로저 1번 칸의 코드 포인터를 `(value *, value) -> value` 함수로 부릅니다. 생성한 코드의 호출 규약과 같으므로 C와 MLIR이 서로의 함수를 그대로 부를 수 있습니다.
+- **option:** 런타임이 `Some`/`None`을 만들므로(`tryHead`, `tryFind`), 생성 코드는 `Some`/`None`의 이름 전역을 따로 만들지 않습니다. 대신 런타임의 `calc_name_some`, `calc_none`을 외부 전역으로 선언해서 씁니다(`llvm.mlir.global external constant`). 그래야 패턴 검사의 포인터 비교가 런타임이 만든 값에도 맞습니다.
+- **`upper`, `lower`, `trim`:** C 표준 라이브러리 대신 .NET에서 만든 표(`unicode.h`)를 씁니다. `ß`와 `İ`처럼 invariant 변환이 그대로 두는 문자까지 인터프리터와 같습니다.
 
 ## 관련 문서
 

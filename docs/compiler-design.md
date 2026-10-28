@@ -2,7 +2,7 @@
 
 Calc 언어를 인터프리터(`Eval`) 대신 **네이티브 실행 파일로 컴파일**하기 위한 설계 문서입니다. 구현은 간단한 것부터 단계별로 진행합니다(8장). 각 단계는 그 자체로 동작하고 테스트되는 상태로 끝납니다.
 
-**진행 상황**: 단계 6 완료 (정수·불리언 연산, 비교, 단락 평가, `if`, `let`, 함수와 클로저, `let rec`, 문자열, 리스트, 튜플, `match`와 가드, `let` 패턴, `type` 선언과 생성자, `option`). AST의 모든 식을 컴파일하고, 남은 것은 내장 함수입니다. 다음은 단계 7(내장 함수).
+**진행 상황**: 단계 7 완료. 내장 함수 33개까지 모든 기능을 컴파일합니다. 타입 검사를 통과하는 `EvalTests.cases` 263개와 실행 중 오류 예제가 모두 인터프리터와 같아서, 단계 8(완성도)의 기준도 함께 채웠습니다. 남은 것은 단계 9(최적화, 선택)입니다.
 
 지금 코드가 실제로 하는 일(예제 하나로 따라가는 흐름, 진입점, 런타임 링크)은 [compiler-architecture.md](compiler-architecture.md)에 있습니다.
 
@@ -60,8 +60,8 @@ mlir-opt prog.mlir --convert-scf-to-cf --convert-cf-to-llvm --convert-arith-to-l
          --reconcile-unrealized-casts -o prog.llvm.mlir
 mlir-translate --mlir-to-llvmir prog.llvm.mlir -o prog.ll
 clang -O2 -Wno-override-module -c prog.ll -o prog.o
-clang -O2 -c runtime.c -I/opt/homebrew/opt/bdw-gc/include -o runtime.o     # 한 번만 (캐시)
-clang prog.o runtime.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack_size,0x20000000 -o prog
+clang -O2 -c runtime.c -I/opt/homebrew/opt/bdw-gc/include -o runtime.o     # 한 번만 (캐시). builtins.c 도 같음
+clang prog.o runtime.o builtins.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack_size,0x20000000 -o prog
 ```
 
 ### 새 명령줄 옵션
@@ -82,7 +82,9 @@ clang prog.o runtime.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack_size,0x200
 | `src/Calc/Lower.fs` | `Ast.Expr` → Core IR: 연산을 `Prim`으로, `&&`/`||`를 `if`로, 클로저 변환 |
 | `src/Calc/Codegen.fs` | Core IR → MLIR 텍스트 |
 | `src/Calc/Toolchain.fs` | 도구 찾기, 외부 프로세스 실행, 오류 전달 |
-| `src/Calc/runtime/runtime.c`, `runtime.h` | C 런타임 (6장). 빌드 출력 폴더의 `runtime/`으로 복사 (`CopyToOutputDirectory`) |
+| `src/Calc/runtime/runtime.c`, `runtime.h` | C 런타임 (6장): 할당, 출력(`calc_buffer_value`), 오류, 다형 연산, `calc_apply`, option 전역. 빌드 출력 폴더의 `runtime/`으로 복사 (`CopyToOutputDirectory`) |
+| `src/Calc/runtime/builtins.c` | 내장 함수 33개 (단계 7) |
+| `src/Calc/runtime/unicode.h`, `gen-unicode.fsx` | .NET 대소문자 변환과 공백 표 (`upper`, `lower`, `trim`). `dotnet fsi src/Calc/runtime/gen-unicode.fsx`로 다시 만듦 |
 | `tests/Calc.Tests/CompileTests.fs` | 차등 테스트 (9장) |
 
 컴파일 순서: `Ast → Errors → Eval → Infer → (Core → Lower) → Codegen → Toolchain → Parser → Lexer → Program`
@@ -180,11 +182,16 @@ clang prog.o runtime.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack_size,0x200
 - 마지막 분기까지 실패하면 `calc_match_failure(value)`를 호출합니다. 런타임은 `Error: Match failure: <값>`을 출력하고 종료 코드 1로 끝납니다.
 - 결정 트리 컴파일(Maranget)은 최적화 단계로 미룹니다.
 
-### D8. 내장 함수: C 런타임 + 정적 클로저
+### D8. 내장 함수: C 런타임 + 클로저
 
-- 내장 함수 33개는 `runtime.c`의 C 함수로 구현합니다.
-- 각 내장 함수는 **정적 클로저 객체**로도 존재합니다. 그래서 `map upper xs`처럼 값으로 넘길 수 있습니다. 인자가 여럿인 내장 함수는 인자를 모으는 클로저를 만듭니다(인터프리터의 `VBuiltin`과 같음).
-- `map`, `filter`, `fold` 같은 고차 함수는 C에서 `calc_apply(closure, arg)`로 사용자 클로저를 부릅니다.
+- 내장 함수 33개는 `runtime/builtins.c`의 C 함수 `calc_builtin_<이름>`로 구현합니다(단계 7). 인자 순서, 결과, 오류 메시지는 `Eval.callBuiltin`과 같습니다.
+- **호출:** `Lower`가 변수 범위를 따라가서, 범위에 없는 이름만 내장 함수로 봅니다. `let length = ...`처럼 가린 이름은 보통 변수입니다.
+  - 인자가 다 모인 호출(`substr s 1 3`)은 런타임 함수를 바로 부릅니다(`CBuiltin`). 남는 인자는 결과에 차례로 적용합니다.
+  - 값으로 쓰거나 부분 적용하면(`map length xs`, `substr "abc"`), 인자를 하나씩 받는 클로저 `fun $b0 -> fun $b1 -> ...`가 됩니다. 인터프리터의 `VBuiltin`과 같게 `<fun>`으로 출력되고, `=` 비교 오류도 같습니다. 처음 설계한 "정적 클로저 객체"는 필요 없었습니다. 클로저 변환이 바깥 인자를 캡처하기 때문입니다.
+- **고차 함수:** `map`, `filter`, `fold`, `exists`, `forall`, `tryFind`는 C에서 `calc_apply(closure, arg)`로 사용자 클로저를 부릅니다. 앞에서부터 부르고, `exists`, `forall`, `tryFind`는 결과가 정해지면 멈춥니다.
+- **option:** `Some`/`None`의 이름과 `None` 값은 런타임 전역(`calc_name_some`, `calc_name_none`, `calc_none`)입니다. 그래야 `tryHead`가 만든 값과 컴파일한 패턴의 이름 포인터 비교가 맞습니다.
+- **`upper`, `lower`, `trim`:** .NET의 `ToUpperInvariant`, `ToLowerInvariant`, `Char.IsWhiteSpace`를 코드 포인트마다 표로 만든 `runtime/unicode.h`를 씁니다. 표는 `gen-unicode.fsx`가 만들고, 테스트가 지금 .NET과 같은지 확인합니다.
+- **`toString`과 출력:** 같은 코드를 씁니다. 런타임의 `calc_buffer_value`(UTF-16 버퍼에 `Eval.formatValue` 형식으로)입니다.
 - `Some`과 `None`, 사용자 생성자는 단계 6에서 정적 클로저가 아니라 `Lower`가 처리합니다. 바로 적용한 `Some 1`은 그 자리에서 `DATA` 블록을 만들고, 값으로 쓴 `Some`은 클로저 `fun x -> Some x`가 됩니다. 생성자 이름은 `llvm.mlir.global` C 문자열 상수입니다.
 
 ### D9. 오류, 정수 의미, 스택
@@ -247,7 +254,6 @@ typedef int64_t value;
 
 void   calc_init(void);                       // GC_INIT 등
 void  *calc_alloc(int64_t bytes);             // GC_MALLOC
-value  calc_apply(value closure, value arg);
 void   calc_print_result(value v);            // Eval.formatValue 와 같은 형식
 void   calc_error(const char *message);       // "Error: ..." 출력, exit(1)
 void   calc_error_divide_by_zero(void);       // 인터프리터(.NET)와 같은 문장 (단계 1)
@@ -256,7 +262,10 @@ void   calc_match_failure(value v);
 value  calc_add(value a, value b);            // int 또는 string
 value  calc_eq(value a, value b);             // 구조적 비교
 int32_t calc_compare(value a, value b);       // int 또는 string (ordinal)
-// 내장 함수: calc_builtin_length, calc_builtin_substr, ...
+value  calc_apply(value closure, value arg);  // 내장 고차 함수가 사용자 클로저를 부름
+// 내장 함수 (builtins.c): calc_builtin_length, calc_builtin_substr, ... (33개)
+extern const char calc_name_some[], calc_name_none[];   // option 의 생성자 이름
+extern const calc_unit calc_none;                       // None 값
 ```
 
 생성 코드와 런타임은 이 헤더 하나로만 약속합니다. 런타임 함수 이름은 모두 `calc_`로 시작합니다.

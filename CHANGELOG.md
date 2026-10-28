@@ -4,6 +4,21 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.23.0] - 2026-10-28
+
+### 추가
+- 네이티브 컴파일러 단계 7: 내장 함수 33개를 컴파일합니다. 이제 모든 기능을 컴파일하고, 타입 검사를 통과하는 평가 예제 263개 전부가 인터프리터와 같은 결과와 오류 메시지를 냅니다.
+  - `runtime/builtins.c`: 문자열 14개, 리스트 14개, `fst`/`snd`, option 3개. 인자 순서, 결과, 오류 메시지가 `Eval.callBuiltin`과 같습니다.
+  - 인자가 다 모인 호출은 런타임 함수를 바로 부릅니다. 값으로 쓰거나 부분 적용하면 인자를 하나씩 받는 클로저가 됩니다. `let`으로 가린 이름은 보통 변수입니다(`Lower`가 변수 범위를 따라감).
+  - `calc_apply`: 런타임의 고차 함수(`map`, `filter`, `fold`, `exists`, `forall`, `tryFind`)가 사용자 클로저를 부릅니다.
+  - `Some`/`None`의 이름과 `None` 값은 런타임 전역입니다. 런타임이 만든 option도 컴파일한 패턴과 맞습니다.
+  - `upper`, `lower`, `trim`은 .NET에서 생성한 Unicode 표(`runtime/unicode.h`, `gen-unicode.fsx`)를 씁니다.
+  - `toString`과 출력이 같은 코드(`calc_buffer_value`)를 씁니다. 오류 메시지 길이 제한을 없앴습니다(`vasprintf`).
+- 컴파일러 테스트 9개 추가 (총 706개): 내장 함수 실행 표(문자열, 리스트·튜플·option, 값으로 쓰기, 오류), `Lower`의 내장 함수 처리, Unicode 표와 .NET 비교. 차등 테스트가 비교하는 예제는 185개에서 286개로 늘었습니다.
+
+### 변경
+- 런타임 캐시는 `.c` 파일마다 `calc-<파일>-<해시>.o`이고, 해시는 런타임의 모든 `.c`·`.h` 파일로 만듭니다. 빌드 출력에는 `runtime/`의 `.c`, `.h`만 복사합니다.
+
 ## [0.22.0] - 2026-10-28
 
 ### 추가

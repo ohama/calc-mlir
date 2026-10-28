@@ -89,26 +89,33 @@ let private compileObject (tools: Tools) (dir: string) (name: string) (mlir: str
     run tools.Clang [ "-O2"; "-Wno-override-module"; "-c"; path ".ll"; "-o"; path ".o" ]
     path ".o"
 
-/// runtime.c 를 컴파일한 오브젝트. 내용과 도구가 같으면 임시 폴더의 캐시를 다시 씀 (컴파일할 때마다 runtime.c 를 다시 컴파일하지 않음)
-let private runtimeObject (tools: Tools) =
-    let header = Path.Combine(Path.GetDirectoryName tools.Runtime, "runtime.h")
+/// 런타임(runtime/ 의 .c 파일들)을 컴파일한 오브젝트. 런타임 파일(.c, .h)과 도구가 같으면 임시 폴더의 캐시를 다시 씀
+/// (컴파일할 때마다 런타임을 다시 컴파일하지 않음)
+let private runtimeObjects (tools: Tools) =
+    let dir = Path.GetDirectoryName tools.Runtime
+    let files =
+        Directory.GetFiles(dir)
+        |> Array.filter (fun f -> f.EndsWith ".c" || f.EndsWith ".h")
+        |> Array.sort
     let key =
-        String.concat "\n" [ File.ReadAllText tools.Runtime; File.ReadAllText header; tools.Clang; tools.GcPrefix ]
+        String.concat "\n" [ yield! files |> Array.map File.ReadAllText; tools.Clang; tools.GcPrefix ]
         |> Text.Encoding.UTF8.GetBytes
         |> Security.Cryptography.SHA256.HashData
         |> Convert.ToHexString
-    let cached = Path.Combine(Path.GetTempPath(), sprintf "calc-runtime-%s.o" (key.Substring(0, 16)))
-    if not (File.Exists cached) then
-        // 다른 프로세스와 동시에 만들 수 있으므로 임시 이름으로 만든 뒤 옮김 (같은 폴더라 원자적)
-        let temp = cached + "." + Guid.NewGuid().ToString("N")
-        run tools.Clang [ "-O2"; "-c"; tools.Runtime; "-I" + Path.Combine(tools.GcPrefix, "include"); "-o"; temp ]
-        File.Move(temp, cached, true)
-    cached
+    [ for source in files |> Array.filter (fun f -> f.EndsWith ".c") do
+          let name = Path.GetFileNameWithoutExtension source
+          let cached = Path.Combine(Path.GetTempPath(), sprintf "calc-%s-%s.o" name (key.Substring(0, 16)))
+          if not (File.Exists cached) then
+              // 다른 프로세스와 동시에 만들 수 있으므로 임시 이름으로 만든 뒤 옮김 (같은 폴더라 원자적)
+              let temp = cached + "." + Guid.NewGuid().ToString("N")
+              run tools.Clang [ "-O2"; "-c"; source; "-I" + Path.Combine(tools.GcPrefix, "include"); "-o"; temp ]
+              File.Move(temp, cached, true)
+          yield cached ]
 
 let private link (tools: Tools) (objects: string list) (output: string) =
     run tools.Clang
         [ yield! objects
-          yield runtimeObject tools
+          yield! runtimeObjects tools
           yield "-L" + Path.Combine(tools.GcPrefix, "lib")
           yield "-lgc"
           // 깊은 재귀: 메인 스레드 스택을 512MB 로 (인터프리터의 큰 스택 스레드와 같은 크기, macOS ld)

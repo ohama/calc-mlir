@@ -43,7 +43,7 @@ type private StringTable(prefix: string) =
     let order = ResizeArray<string>()
     let ctorNames = System.Collections.Generic.Dictionary<string, string>()
     let ctorOrder = ResizeArray<string>()
-    let units = System.Collections.Generic.Dictionary<string, string>()
+    let units = System.Collections.Generic.Dictionary<string, string * string>()
     let unitOrder = ResizeArray<string>()
 
     member _.NameOf(s: string) =
@@ -57,10 +57,13 @@ type private StringTable(prefix: string) =
 
     member _.Entries = order |> Seq.map (fun s -> names[s], s) |> List.ofSeq
 
-    /// 생성자 이름 → 이름을 담은 C 문자열 전역. 같은 이름은 하나 (런타임은 이름으로 비교하고 출력함)
+    /// 생성자 이름 → 이름을 담은 C 문자열 전역. 같은 이름은 하나 (런타임은 이름으로 비교하고 출력함).
+    /// Some 과 None 은 런타임의 전역: 내장 함수(tryHead 등)가 만든 option 값도 패턴 검사(이름 포인터 비교)에 맞도록
     member _.CtorName(ctor: string) =
-        match ctorNames.TryGetValue ctor with
-        | true, name -> name
+        match ctor, ctorNames.TryGetValue ctor with
+        | "Some", _ -> "calc_name_some"
+        | "None", _ -> "calc_name_none"
+        | _, (true, name) -> name
         | _ ->
             let name = sprintf "%sctor_%d" prefix ctorNames.Count
             ctorNames[ctor] <- name
@@ -69,17 +72,18 @@ type private StringTable(prefix: string) =
 
     /// 인자 없는 생성자의 값: 전역 상수 블록 [헤더, 이름]
     member this.CtorUnit(ctor: string) =
-        this.CtorName ctor |> ignore
-        match units.TryGetValue ctor with
-        | true, name -> name
+        let nameGlobal = this.CtorName ctor
+        match ctor, units.TryGetValue ctor with
+        | "None", _ -> "calc_none"
+        | _, (true, (name, _)) -> name
         | _ ->
             let name = sprintf "%sunit_%d" prefix units.Count
-            units[ctor] <- name
+            units[ctor] <- (name, nameGlobal)
             unitOrder.Add ctor
             name
 
     member _.CtorEntries = ctorOrder |> Seq.map (fun c -> ctorNames[c], c) |> List.ofSeq
-    member _.UnitEntries = unitOrder |> Seq.map (fun c -> units[c], ctorNames[c]) |> List.ofSeq
+    member _.UnitEntries = unitOrder |> Seq.map (fun c -> units[c]) |> List.ofSeq
 
     /// 이 프로그램의 심볼(함수, 문자열 상수) 이름 앞에 붙임. 여러 프로그램을 한 모듈에 넣을 때 이름이 겹치지 않게
     member _.Prefix = prefix
@@ -349,6 +353,9 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
     | CTuple items ->
         let values = items |> List.map (emitExpr fb env)
         emitBlock fb (tupleHeader values.Length) values
+    | CBuiltin (name, args) ->
+        let values = args |> List.map (emitExpr fb env)
+        emitCall fb ("calc_builtin_" + name) values "i64"
     | CData (ctor, None) -> emitGlobalAddress fb (fb.Strings.CtorUnit ctor)
     | CData (ctor, Some payload) ->
         let pv = emitExpr fb env payload
@@ -459,8 +466,14 @@ let private declarations =
       "llvm.func @calc_eq(i64, i64) -> i64"
       "llvm.func @calc_compare(i64, i64) -> i32"
       "llvm.func @calc_match_failure(i64)"
+      // 내장 함수: runtime/builtins.c
+      for KeyValue (name, arity) in Eval.builtinArity do
+          sprintf "llvm.func @calc_builtin_%s(%s) -> i64" name (List.replicate arity "i64" |> String.concat ", ")
+      // option 의 이름과 None 값은 런타임에 하나 (runtime.h)
+      "llvm.mlir.global external constant @calc_name_some() {addr_space = 0 : i32} : !llvm.array<5 x i8>"
+      "llvm.mlir.global external constant @calc_name_none() {addr_space = 0 : i32} : !llvm.array<5 x i8>"
+      "llvm.mlir.global external constant @calc_none() {addr_space = 0 : i32} : !llvm.struct<(i64, ptr)>"
       "" ]
-
 /// 프로그램 하나: 문자열 상수, 클로저마다 최상위 함수, 식 하나를 계산하는 진입 함수 @entry. 심볼 이름에는 prefix 를 붙임
 let private emitBody (sb: StringBuilder) (prefix: string) (entry: string) (expr: Ast.Expr) =
     let program = Lower.lowerProgram expr

@@ -55,7 +55,7 @@ dotnet src/Calc/bin/Debug/net10.0/Calc.dll --expr "2 + 3"
 | 옵션 | 짧은 형식 | 설명 |
 |---|---|---|
 | `--expr <expr>` | `-e <expr>` | 주어진 식을 계산합니다. `--expr=<expr>` 형식도 됩니다. 생략하면 표준 입력에서 읽습니다. |
-| `--version` | `-v` | 버전을 출력하고 종료합니다 (예: `calc 0.22.0`). |
+| `--version` | `-v` | 버전을 출력하고 종료합니다 (예: `calc 0.23.0`). |
 | `--no-typecheck` | | 타입 추론을 건너뛰고 바로 평가합니다. 타입은 평가 중에 동적으로 검사됩니다. |
 | `--emit-mlir` | | 평가하지 않고, 컴파일러가 만든 MLIR을 출력합니다. |
 | `--compile <path>` | | 평가하지 않고, 네이티브 실행 파일을 `<path>`에 만듭니다. `--compile=<path>` 형식도 됩니다. |
@@ -120,7 +120,7 @@ rm -f src/Calc/{Lexer,Parser}.fs{,i}
 
 ## 네이티브 컴파일 (실험 중)
 
-`--compile`은 MLIR과 LLVM으로 실행 파일을 만듭니다. 설계와 단계별 계획은 [compiler-design.md](compiler-design.md)에 있습니다. 지금은 **정수와 불리언**(리터럴, `+ - * /`, 단항 `-`, 비교, `&& || not`, `if`), `let`, 함수(`fun`, 호출, 커링, `let f x =`, `let rec`, 클로저), 문자열(리터럴, `+`, `=`, `<`), 리스트, 튜플, 패턴 매칭(`match`, 가드, `let` 패턴), `type` 선언과 생성자, `option`을 컴파일합니다. 내장 함수는 아직입니다. 실행 결과와 실행 중 오류(`Error: Attempted to divide by zero.`, 종료 코드 1)는 인터프리터와 같습니다. 다른 기능이 있으면 `Error: Not supported by the compiler yet: <기능>`으로 멈춥니다.
+`--compile`은 MLIR과 LLVM으로 실행 파일을 만듭니다. 설계와 단계별 계획은 [compiler-design.md](compiler-design.md)에 있습니다. 지금은 **모든 기능**(정수, 불리언, `if`, `let`, 함수와 클로저, 문자열, 리스트, 튜플, 패턴 매칭, ADT, `option`, 내장 함수 33개)을 컴파일합니다. 실행 결과와 실행 중 오류(`Error: Attempted to divide by zero.`, 종료 코드 1)는 인터프리터와 같습니다. 앞으로 언어에 기능을 더하면, 컴파일러가 따라잡기 전까지는 `Error: Not supported by the compiler yet: <기능>`으로 멈춥니다.
 
 ### 준비
 
@@ -152,5 +152,11 @@ dotnet run --project src/Calc -- --emit-mlir -e "42"     # 생성한 MLIR 보기
 3. `clang -c`: 오브젝트 파일
 4. `clang`: 링크. C 런타임 오브젝트와 `-lgc`를 함께 링크합니다.
 
-C 런타임(`runtime/runtime.c`)은 한 번만 컴파일해서 임시 폴더에 `calc-runtime-<해시>.o`로 둡니다. 해시는 런타임 소스, 헤더, `clang` 경로, GC 위치로 만들어서, 이 중 하나가 바뀌면 다시 컴파일합니다.
+C 런타임(`runtime/runtime.c`, `builtins.c`)은 한 번만 컴파일해서 임시 폴더에 `calc-<파일>-<해시>.o`로 둡니다. 해시는 런타임의 모든 `.c`·`.h` 파일, `clang` 경로, GC 위치로 만들어서, 이 중 하나가 바뀌면 다시 컴파일합니다.
+
+`upper`, `lower`, `trim`이 쓰는 Unicode 표(`runtime/unicode.h`)는 .NET에서 생성합니다. .NET을 올린 뒤 테스트 `Unicode 표`가 실패하면 다시 만듭니다.
+
+```sh
+dotnet fsi src/Calc/runtime/gen-unicode.fsx
+```
 

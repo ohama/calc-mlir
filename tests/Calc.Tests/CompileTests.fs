@@ -75,7 +75,13 @@ let private runtimeErrorCases =
       "match (1, \"a\") with | (2, _) -> 0 | (_, \"b\") -> 1"
       "match None with | Some x -> x"
       "Some (fun x -> x) = Some (fun x -> x)"
-      "type t = A of int | B in match B with | A n -> n" ]
+      "type t = A of int | B in match B with | A n -> n"
+      "tail []"
+      "toInt \"2147483648\""
+      "toInt \"\""
+      "nth [1; 2] (0 - 1)"
+      "map head [[1]; []]"
+      "fold (fun a x -> a / x) 10 [2; 0]" ]
 
 /// 실행 테스트: 이름, [입력, (표준 출력, 표준 에러, 종료 코드), 메시지]. 차등 테스트 예제와 함께 실행 파일 하나로 묶어 빌드함 (batch)
 let private runCases =
@@ -244,6 +250,44 @@ let private runCases =
           "type 'a tree = Leaf | Node of 'a tree * 'a * 'a tree in let rec insert x t = match t with | Leaf -> Node (Leaf, x, Leaf) | Node (l, v, r) -> if x < v then Node (insert x l, v, r) else Node (l, v, insert x r) in insert 2 (insert 3 (insert 1 Leaf))", ("Node (Leaf, 1, Node (Node (Leaf, 2, Leaf), 3, Leaf))\n", "", 0), "재귀 타입"
           "match Some 1 with | None -> 0", ("", "Error: Match failure: Some 1\n", 1), ""
         ]
+      "내장 함수: 문자열",
+        [
+          "(length \"한글😀\", substr \"hello\" 1 3, indexOf \"hello\" \"l\", indexOf \"abc\" \"\")", ("(4, \"ell\", 2, 0)\n", "", 0), "UTF-16 코드 단위"
+          "(upper \"abc é ß ǅ 𐐨\", lower \"ÀÉ Σ İ\")", ("(\"ABC É ß Ǆ 𐐀\", \"àé σ İ\")\n", "", 0), "Unicode 대소문자 (.NET 표). ß 와 İ 는 invariant 에서 그대로"
+          "trim \"\u00A0 \\t x y \u3000\"", ("\"x y\"\n", "", 0), "Unicode 공백"
+          "(contains \"hello\" \"ell\", startsWith \"hello\" \"he\", endsWith \"hello\" \"lo\", contains \"a\" \"\")", ("(true, true, true, true)\n", "", 0), ""
+          "(replace \"aaa\" \"aa\" \"b\", replace \"a-b-c\" \"-\" \"\")", ("(\"ba\", \"abc\")\n", "", 0), "왼쪽부터 겹치지 않게"
+          "(split \"a,b,,c\" \",\", split \"\" \",\", split \"ab\" \"\")", ("([\"a\"; \"b\"; \"\"; \"c\"], [\"\"], [\"a\"; \"b\"])\n", "", 0), "빈 조각도 남김"
+          "join \", \" [\"a\"; \"b\"; \"c\"]", ("\"a, b, c\"\n", "", 0), ""
+          "(toString 42, toString \"s\", toString [Some (-1)], toString (fun x -> x))", ("(\"42\", \"s\", \"[Some (-1)]\", \"<fun>\")\n", "", 0), "문자열은 따옴표 없이"
+          "(toInt \"+7\", toInt \"-2147483648\", toInt \"007\")", ("(7, -2147483648, 7)\n", "", 0), ""
+        ]
+      "내장 함수: 리스트, 튜플, option",
+        [
+          "(head [1; 2], tail [1; 2], isEmpty [], nth [10; 20; 30] 2)", ("(1, [2], true, 30)\n", "", 0), ""
+          "(reverse [1; 2; 3], append [1] [2; 3], range 3 5, range 5 3, sum [2147483647; 1])", ("([3; 2; 1], [1; 2; 3], [3; 4; 5], [], -2147483648)\n", "", 0), "합은 한 바퀴 돎"
+          "(sort [3; 1; 2], sort [\"b\"; \"B\"; \"a\"])", ("([1; 2; 3], [\"B\"; \"a\"; \"b\"])\n", "", 0), "ordinal 순서"
+          "let k = 10 in (map (fun x -> x + k) [1; 2], filter (fun x -> x > 1) [1; 2; 3], fold (fun acc x -> acc * 10 + x) 0 [1; 2; 3])", ("([11; 12], [2; 3], 123)\n", "", 0), "클로저를 런타임이 호출"
+          "(exists (fun x -> 10 / x > 1) [1; 0], forall (fun x -> 10 / x > 1) [20; 0])", ("(true, false)\n", "", 0), "결과가 정해지면 멈춤 (0 으로 나누지 않음)"
+          "(fst (1, \"a\"), snd (1, \"a\"), tryHead [], tryHead [5], tryFind (fun x -> x > 1) [1; 2; 3])", ("(1, \"a\", None, Some 5, Some 2)\n", "", 0), ""
+          "(defaultValue 0 (tryFind (fun x -> x > 5) [1]), match tryHead [7] with | Some x -> x | None -> 0)", ("(0, 7)\n", "", 0), "런타임이 만든 Some 과 컴파일한 패턴"
+        ]
+      "내장 함수를 값으로",
+        [
+          "map length [\"a\"; \"bb\"; \"\"]", ("[1; 2; 0]\n", "", 0), ""
+          "let f = substr \"hello\" in (f 1 3, f 0 2)", ("(\"ell\", \"he\")\n", "", 0), "부분 적용"
+          "let length = fun x -> 42 in length [1]", ("42\n", "", 0), "let 으로 가림"
+          "(head, fst (fun x -> x + 1, 0) 41)", ("(<fun>, 42)\n", "", 0), "남는 인자"
+          "map (fold (fun a b -> a + b) 0) [[1; 2]; [3]]", ("[3; 3]\n", "", 0), ""
+        ]
+      "내장 함수 오류",
+        [
+          "substr \"abc\" 2 5", ("", "Error: substr: index out of range (length 3, start 2, count 5)\n", 1), ""
+          "head []", ("", "Error: head: empty list\n", 1), ""
+          "nth [1] 3", ("", "Error: nth: index out of range (length 1, index 3)\n", 1), ""
+          "toInt \" 1\\n\"", ("", "Error: toInt: invalid integer: \" 1\\n\"\n", 1), "따옴표와 이스케이프"
+          "replace \"a\" \"\" \"b\"", ("", "Error: replace: empty search string\n", 1), ""
+        ]
       "Match failure",
         [
           "match [1] with | [] -> 0", ("", "Error: Match failure: [1]\n", 1), ""
@@ -320,9 +364,15 @@ let tests =
                 Expect.equal (Codegen.tagBool false) 3L ""
                 Expect.equal (Codegen.tagBool true) 11L ""
             }
+            test "Some 과 None 은 런타임의 전역 (내장 함수가 만든 option 과 패턴이 맞도록)" {
+                let mlir = Codegen.emitProgram (Program.parse "match Some None with | Some None -> 1 | _ -> 0")
+                Expect.stringContains mlir "llvm.mlir.addressof @calc_name_some" ""
+                Expect.stringContains mlir "llvm.mlir.addressof @calc_none" ""
+                Expect.isFalse (mlir.Contains "@ctor_") "이 모듈의 생성자 이름 전역은 없음"
+            }
             test "인자 없는 생성자는 전역 상수 블록, 이름은 C 문자열 전역" {
-                let mlir = Codegen.emitProgram (Program.parse "[None; None]")
-                Expect.stringContains mlir "llvm.mlir.global internal constant @ctor_0(\"None\\00\")" ""
+                let mlir = Codegen.emitProgram (Program.parse "type t = Red | Blue in [Red; Red]")
+                Expect.stringContains mlir "llvm.mlir.global internal constant @ctor_0(\"Red\\00\")" ""
                 Expect.stringContains mlir "@unit_0() {addr_space = 0 : i32, alignment = 8 : i64} : !llvm.struct<(i64, ptr)>" ""
                 Expect.isFalse (mlir.Contains "@unit_1") "같은 생성자는 하나"
             }
@@ -366,10 +416,11 @@ let tests =
                 Expect.equal (Codegen.closureHeader 0) 0x101L "코드 포인터만"
                 Expect.equal (Codegen.closureHeader 2) 0x301L "코드 포인터 + 캡처 2개"
             }
-            test "내장 함수는 아직 NotSupported" {
-                Expect.throwsC
-                    (fun () -> Codegen.emitProgram (Program.parse "let n = length in 1") |> ignore)
-                    (fun ex -> Expect.equal ex.Message "Not supported by the compiler yet: built-in function length" "")
+            test "인자가 다 모인 내장 함수는 런타임 함수를 바로 호출" {
+                let mlir = Codegen.emitProgram (Program.parse "substr \"hello\" 1 3")
+                Expect.stringContains mlir "llvm.func @calc_builtin_substr(i64, i64, i64) -> i64" "선언"
+                Expect.stringContains mlir "= llvm.call @calc_builtin_substr(" "호출"
+                Expect.isFalse (mlir.Contains "@lambda_") "클로저 없음"
             }
             test "let 은 새 코드 없이 SSA 이름을 재사용" {
                 let mlir = Codegen.emitProgram (Program.parse "let x = 5 in x")
@@ -424,6 +475,25 @@ let tests =
                     (Core.CData ("B", Some (Core.CInt 2)))
                     "선언 자체는 코드가 없음"
             }
+            test "내장 함수: 인자가 다 모이면 호출, 남는 인자는 결과에 적용" {
+                Expect.equal (lowered "length \"ab\"").Main (Core.CBuiltin ("length", [ Core.CString "ab" ])) ""
+                Expect.equal
+                    (lowered "fst (fun x -> x, 1) 2").Main
+                    (Core.CApply (Core.CBuiltin ("fst", [ Core.CTuple [ Core.CMakeClosure ("lambda_0", []); Core.CInt 1 ] ]), Core.CInt 2))
+                    ""
+            }
+            test "내장 함수를 값으로: 인자를 하나씩 받는 클로저" {
+                let p = lowered "substr"
+                Expect.equal p.Main (Core.CMakeClosure ("lambda_2", [])) "바깥 함수"
+                Expect.equal
+                    (p.Functions |> List.map (fun f -> f.Name, f.Param, f.Captured))
+                    [ "lambda_0", "$b2", [ "$b0"; "$b1" ]; "lambda_1", "$b1", [ "$b0" ]; "lambda_2", "$b0", [] ]
+                    "안쪽 함수가 바깥 인자를 캡처"
+            }
+            test "let 으로 가린 내장 함수는 보통 변수" {
+                Expect.equal (lowered "let length = 5 in length").Main (Core.CLet ("length", Core.CInt 5, Core.CVar "length")) ""
+                Expect.equal (lowered "fun length -> length 1").Functions.Head.Body (Core.CApply (Core.CVar "length", Core.CInt 1)) "인자"
+            }
             test "&& 와 || 는 if 로" {
                 Expect.equal (lowered "true && false").Main (Core.CIf (Core.CBool true, Core.CBool false, Core.CBool false)) ""
                 Expect.equal (lowered "true || false").Main (Core.CIf (Core.CBool true, Core.CBool true, Core.CBool false)) ""
@@ -456,6 +526,28 @@ let tests =
             }
         ]
 
+        test "Unicode 표 (runtime/unicode.h) 가 지금 .NET 과 같음" {
+            // 다르면: dotnet fsi src/Calc/runtime/gen-unicode.fsx
+            let header = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "runtime", "unicode.h"))
+            let table (name: string) =
+                let start = header.IndexOf(name)
+                let body = header.Substring(start, header.IndexOf("};", start) - start)
+                Text.RegularExpressions.Regex.Matches(body, @"\{0x([0-9A-F]+), 0x([0-9A-F]+)\}")
+                |> Seq.map (fun m -> Convert.ToInt32(m.Groups[1].Value, 16), Convert.ToInt32(m.Groups[2].Value, 16))
+                |> Map.ofSeq
+            let upper, lower = table "calc_upper_map", table "calc_lower_map"
+            for cp in 0 .. 0x10FFFF do
+                if cp < 0xD800 || cp > 0xDFFF then
+                    let s = Char.ConvertFromUtf32 cp
+                    let expect (map: Map<int, int>) (converted: string) =
+                        let mapped = map |> Map.tryFind cp |> Option.defaultValue cp
+                        if Char.ConvertFromUtf32 mapped <> converted then failtestf "U+%04X: table %04X, .NET %A" cp mapped converted
+                    expect upper (s.ToUpperInvariant())
+                    expect lower (s.ToLowerInvariant())
+            let whitespace = [ for c in 0 .. 0xFFFF do if Char.IsWhiteSpace(char c) then sprintf "0x%04X," c ]
+            Expect.stringContains header (String.Join(" ", whitespace)) "Char.IsWhiteSpace"
+        }
+
         testList "실행" [
             for name, cases in runCases ->
                 test name {
@@ -470,7 +562,7 @@ let tests =
             let inputs = differentialInputs.Value
             for input in inputs do
                 Expect.equal (batchRun input) (interpret input) input
-            // 단계가 올라갈수록 늘어남 (단계 6: + ADT 와 option)
-            Expect.isGreaterThanOrEqual inputs.Length 185 "컴파일한 예제 수"
+            // 단계 7: 타입 검사를 통과하는 평가 예제 전부 + 실행 중 오류 예제
+            Expect.isGreaterThanOrEqual inputs.Length 286 "컴파일한 예제 수"
         }
     ]
