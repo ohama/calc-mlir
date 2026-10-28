@@ -796,7 +796,28 @@ Warning: this match is not exhaustive. Example of a value not matched: None (lin
 - **가드:** 가드가 있는 분기는 실패할 수 있으므로 덮는 데 세지 않습니다(OCaml, F#과 같음).
 - **알고리즘:** Maranget, "Warnings for pattern matching"(2007)의 usefulness 검사입니다. 값의 예도 같은 계산에서 나옵니다(`Infer.typecheckWithWarnings`).
 - **같은 결과:** 경고가 없는 프로그램은 실행 중에 `Match failure`가 나지 않습니다. 평가 예제로 이것을 테스트합니다(`DiagnosticTests`).
-- **아직 하지 않는 것:** 쓰이지 않는 분기 경고(OCaml Warning 11)는 아직 없습니다.
+
+### 쓰이지 않는 분기 경고
+
+앞의 분기들이 이미 모든 경우를 덮어서 절대 선택되지 않는 분기를 경고합니다(OCaml Warning 11, F# FS0026과 같음). 위치는 그 분기의 패턴을 가리킵니다.
+
+```
+$ calc -e "match true with true -> 1 | false -> 2 | _ -> 3"
+Warning: this match case is unused (line 1, column 42)
+  1 | match true with true -> 1 | false -> 2 | _ -> 3
+    |                                          ^
+```
+
+| 예 | 쓰이지 않는 분기 |
+|---|---|
+| `\| _ -> 0 \| 1 -> 1` | `1` (`_`가 이미 모두 덮음) |
+| `\| [] -> 0 \| x :: _ -> x \| [y] -> y` | `[y]` |
+| `\| Some _ -> 1 \| Some 2 -> 2 \| None -> 0` | `Some 2` |
+| `\| 1 \| 2 -> 0 \| 2 -> 1 \| _ -> 9` | `2` (or 패턴이 이미 덮음) |
+
+- **가드:** 가드가 있는 앞 분기는 실패할 수 있으므로 덮는 데 세지 않습니다. `| x when x > 0 -> 1 | 1 -> 2`의 두 번째 분기는 경고하지 않습니다. 가드가 있는 분기 자체도 앞 분기가 이미 덮으면 경고합니다.
+- **판정:** 빠진 분기 검사와 같은 Maranget usefulness 검사입니다. 분기마다 "앞의 가드 없는 분기들이 덮지 못하는 값 중에 이 패턴이 맞는 값이 있는가"를 묻습니다.
+- **아직 하지 않는 것:** or 패턴의 한쪽만 쓰이지 않는 경우(OCaml Warning 12)는 경고하지 않습니다.
 
 ### 버리는 값 경고
 

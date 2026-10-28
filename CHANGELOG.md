@@ -4,6 +4,14 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.28.0] - 2026-10-28
+
+### 추가
+- 쓰이지 않는 분기 경고: 앞의 분기들이 이미 모든 경우를 덮어서 절대 선택되지 않는 분기에 `Warning: this match case is unused (line, column)`(OCaml Warning 11, F# FS0026과 같음). `match`와 `function` 모두, `calc`, `calc --compile`, REPL에서 출력합니다.
+  - 빠진 분기 검사와 같은 Maranget usefulness 검사(`useful`)로 판정합니다. 가드가 있는 앞 분기는 덮는 데 세지 않습니다.
+  - 위치는 분기의 패턴을 가리킵니다. 파서가 분기(패턴, 가드, 본문 튜플)에 위치를 기록해서 `_` 분기도 가리킬 수 있습니다.
+- 테스트 13개 추가 (총 812개)
+
 ## [0.27.0] - 2026-10-28
 
 ### 추가

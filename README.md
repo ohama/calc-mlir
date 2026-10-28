@@ -45,6 +45,7 @@ Result: 10
   - `fun f x -> f (f x)`는 `('a -> 'a) -> 'a -> 'a`, `[1; true]`는 `Type mismatch: expected int list but got bool list`
   - `--no-typecheck`를 주면 추론을 건너뛰고 평가 중에 동적으로 검사합니다.
 - **빠진 `match` 분기 경고**: 모든 값을 덮지 못하는 `match`와 `let` 패턴에 대해, 덮지 못하는 값의 예와 위치를 경고합니다(OCaml Warning 8, F# FS0025와 같음).
+- **쓰이지 않는 분기 경고**: 앞의 분기들이 이미 덮어서 절대 선택되지 않는 분기를 경고합니다(OCaml Warning 11, F# FS0026과 같음).
 - **버리는 값 경고**: `e1; e2`의 `e1`이 `unit`이 아니면 경고합니다(F# FS0020과 같음).
 
 자세한 문법과 의미는 [docs/grammar.md](docs/grammar.md)에 있습니다.
@@ -75,7 +76,7 @@ dotnet run --project src/Calc
 ```
 
 ```
-calc 0.27.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
+calc 0.28.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
 # let add a b = a + b;;
 val add : int -> int -> int = <fun>
 # add 1 2;;

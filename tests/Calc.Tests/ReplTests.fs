@@ -75,6 +75,11 @@ let tests =
             Expect.equal outputs[1] "- : int = 1\n" "앞 선언의 경고를 되풀이하지 않음"
             Expect.stringStarts outputs[2] "Warning: this match is not exhaustive" "같은 모양의 새 선언은 다시 경고"
         }
+        test "쓰이지 않는 분기 경고" {
+            expectSession
+                [ "match 1 with _ -> 0 | 1 -> 1;;",
+                  "Warning: this match case is unused (line 1, column 23)\n  1 | match 1 with _ -> 0 | 1 -> 1;;\n    |                       ^\n- : int = 0\n" ]
+        }
         test "입력 하나에 항목 여럿: 차례로 처리" {
             expectSession [ "let a = 1\nlet b = a + 1\n;; a + b;;", "val a : int = 1\nval b : int = 2\n- : int = 3\n" ]
         }

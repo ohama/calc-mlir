@@ -46,7 +46,8 @@ type private State =
       /// 사용자 타입의 고유 이름 → (타입 매개변수 변수, 생성자와 인자 타입). 빠진 분기 검사가 씀
       DataTypes: Dictionary<string, TypeVar list * (string * Type option) list>
       /// 검사할 패턴 매칭: 대상 타입, (패턴, 가드가 있는지) 목록, 위치. 추론이 끝난 뒤 타입이 다 정해지면 검사
-      Matches: List<Type * (Pattern * bool) list * (int * int) option * string>
+      /// (패턴, 가드가 있는지, 분기의 위치)
+      Matches: List<Type * (Pattern * bool * (int * int) option) list * (int * int) option * string>
       /// e1; e2 에서 버리는 e1 의 타입과 위치
       Discarded: List<Type * (int * int) option> }
 
@@ -483,7 +484,7 @@ and private inferNode (st: State) (ctx: Context) expr : Type =
             let caseCtx = withVars binds ctx
             guard |> Option.iter (fun g -> expect g tBool (infer st caseCtx g))
             expect body result (infer st caseCtx body)
-        st.Matches.Add((ts, cases |> List.map (fun (p, g, _) -> p, Option.isSome g), Errors.positionOf expr, "match"))
+        st.Matches.Add((ts, cases |> List.map (fun ((p, g, _) as case) -> p, Option.isSome g, Errors.positionOf case), Errors.positionOf expr, "match"))
         result
     | LetPattern (pattern, value, body) ->
         st.Level <- st.Level + 1
@@ -491,7 +492,7 @@ and private inferNode (st: State) (ctx: Context) expr : Type =
         let tp, binds = inferPattern st ctx pattern
         expect value tp tv
         st.Level <- st.Level - 1
-        st.Matches.Add((tv, [ pattern, false ], Errors.positionOf expr, "let"))
+        st.Matches.Add((tv, [ pattern, false, None ], Errors.positionOf expr, "let"))
         binds |> List.iter (snd >> generalize st)
         infer st (withVars binds ctx) body
     | TypeDecl (name, typeParams, ctors, body) ->
@@ -620,6 +621,43 @@ let rec private missing (st: State) (rows: Pat list list) (types: Type list) : P
                         | _ -> Con ("str:" + (Seq.initInfinite (fun n -> String.replicate n "a") |> Seq.find (fun s -> not (heads.Contains("str:" + s)))), [])
                 head :: w)
 
+/// 패턴 q(열마다 하나)가 행렬 rows 가 덮지 못하는 값과 맞을 수 있는지 (Maranget 의 U(P, q)). 아니면 그 분기는 쓰이지 않음
+let rec private useful (st: State) (rows: Pat list list) (q: Pat list) (types: Type list) : bool =
+    let rec expand row =
+        match row with
+        | Or (a, b) :: tail -> expand (a :: tail) @ expand (b :: tail)
+        | _ -> [ row ]
+    let rows = List.collect expand rows
+    match q, types with
+    | [], _ -> List.isEmpty rows
+    | Or (a, b) :: qtail, _ -> useful st rows (a :: qtail) types || useful st rows (b :: qtail) types
+    | _, [] -> false
+    | qhead :: qtail, t :: rest ->
+        let specialize name arity =
+            rows
+            |> List.choose (fun row ->
+                match row with
+                | Con (n, args) :: tail when n = name -> Some (args @ tail)
+                | Any :: tail -> Some (List.replicate arity Any @ tail)
+                | _ -> None)
+        match qhead with
+        | Con (name, args) ->
+            // 생성자의 하위 타입: 타입이 생성자를 모두 알면 거기서, 상수(int, string)는 하위 패턴이 없음
+            let argTypes =
+                match signature st t with
+                | Some ctors -> ctors |> List.tryFind (fst >> (=) name) |> Option.map snd |> Option.defaultValue []
+                | None -> []
+            useful st (specialize name args.Length) (args @ qtail) (argTypes @ rest)
+        | Any ->
+            let heads = rows |> List.choose (function Con (name, _) :: _ -> Some name | _ -> None) |> Set.ofList
+            match signature st t with
+            | Some ctors when not heads.IsEmpty && ctors |> List.forall (fun (name, _) -> heads.Contains name) ->
+                ctors
+                |> List.exists (fun (name, argTypes) ->
+                    useful st (specialize name argTypes.Length) (List.replicate argTypes.Length Any @ qtail) (argTypes @ rest))
+            | _ -> useful st (rows |> List.choose (function Any :: tail -> Some tail | _ -> None)) qtail rest
+        | Or _ -> failwith "unreachable"
+
 /// 값의 예를 소스 문법으로 (formatValue 와 비슷하게): Some _, _ :: _, (true, _)
 let rec private patToString (prec: int) (p: Pat) =
     let paren cond (s: string) = if cond then "(" + s + ")" else s
@@ -646,8 +684,14 @@ let rec private patToString (prec: int) (p: Pat) =
 
 let private checkMatches (st: State) : Warning list =
     [ for t, cases, position, kind in st.Matches do
+          // 쓰이지 않는 분기: 앞의 (가드 없는) 분기들이 이미 모두 덮음 (OCaml Warning 11, F# FS0026)
+          let mutable before = []
+          for p, guarded, casePosition in cases do
+              if not (useful st before [ toPat p ] [ t ]) then
+                  yield { Message = "this match case is unused"; Position = casePosition |> Option.orElse position }
+              if not guarded then before <- before @ [ [ toPat p ] ]
           // 가드가 있는 분기는 실패할 수 있으므로 덮는 데 셈하지 않음 (OCaml, F# 와 같음)
-          let rows = cases |> List.filter (snd >> not) |> List.map (fun (p, _) -> [ toPat p ])
+          let rows = cases |> List.filter (fun (_, guarded, _) -> not guarded) |> List.map (fun (p, _, _) -> [ toPat p ])
           match missing st rows [ t ] with
           | Some [ example ] ->
               let what = if kind = "let" then "this let pattern" else "this match"

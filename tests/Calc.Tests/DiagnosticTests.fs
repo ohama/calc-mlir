@@ -90,6 +90,33 @@ let tests =
             Expect.equal (warnings "match () with () -> 1") [] "() 패턴은 unit 을 모두 덮음"
         }
 
+        testList "쓰이지 않는 분기 (OCaml Warning 11, F# FS0026)" [
+            let unused = "this match case is unused"
+            for input, expected in
+                [ "match true with true -> 1 | false -> 2 | _ -> 3", [ unused, Some (1, 42) ]
+                  "match 1 with _ -> 0 | 1 -> 1", [ unused, Some (1, 23) ]
+                  "match [1] with [] -> 0 | x :: _ -> x | [y] -> y", [ unused, Some (1, 40) ]
+                  "match Some 1 with Some _ -> 1 | Some 2 -> 2 | None -> 0", [ unused, Some (1, 33) ]
+                  "match (1, true) with (_, true) -> 1 | (1, false) -> 2 | (_, false) -> 3 | (2, _) -> 4", [ unused, Some (1, 75) ]
+                  "match 1 with 1 | 2 -> 0 | 2 -> 1 | _ -> 9", [ unused, Some (1, 27) ]
+                  "match \"a\" with \"a\" -> 1 | \"a\" -> 2 | _ -> 3", [ unused, Some (1, 27) ]
+                  "type c = R | G in match R with R -> 1 | G -> 2 | R -> 3", [ unused, Some (1, 50) ]
+                  "function 0 -> 1 | _ -> 2 | 3 -> 4", [ unused, Some (1, 28) ] ] do
+                yield test input { Expect.equal (warnings input) expected "" }
+            yield test "가드가 있는 앞 분기는 덮는 데 세지 않음" {
+                Expect.isEmpty (warnings "match 1 with x when x > 0 -> 1 | 1 -> 2 | _ -> 3") ""
+            }
+            yield test "가드가 있는 분기도 앞 분기가 덮으면 쓰이지 않음" {
+                Expect.equal (warnings "match 1 with _ -> 0 | x when x > 0 -> 1") [ unused, Some (1, 23) ] ""
+            }
+            yield test "빠진 분기와 쓰이지 않는 분기가 함께" {
+                Expect.equal
+                    (warnings "match Some 1 with Some _ -> 1 | Some 3 -> 3")
+                    [ notExhaustive "None", Some (1, 1); unused, Some (1, 33) ]
+                    "위치 순서"
+            }
+        ]
+
         test "모두 덮으면 경고 없음" {
             for input in
                 [ "match Some 1 with | Some x -> x | None -> 0"
