@@ -124,6 +124,35 @@ test "모든 내장 함수가 builtins 환경에 있음" {
 
 그리고 내장 함수마다 정상 호출 테스트를 하나 이상 둔다. 그래야 `callBuiltin`에 그 이름의 분기가 있는지 확인된다.
 
+### Step 6: 고차 내장 함수에는 `apply`를 인자로 넘긴다
+
+`map f xs`처럼 사용자 함수를 호출하는 내장 함수가 생기면 `callBuiltin`이 `apply`를 불러야 한다. 그런데 F#은 **정의된 순서대로만 이름을 볼 수 있다**. `callBuiltin`은 `evalIn`/`apply`보다 위에 있고, `apply`는 다시 `callBuiltin`을 부른다. 서로를 부르는 순환이다.
+
+| 방법 | 장단점 |
+|---|---|
+| `callBuiltin`을 `let rec evalIn ... and apply ... and callBuiltin ...` 체인에 넣기 | 동작하지만, 내장 함수 구현 전체가 평가기의 재귀 묶음 안으로 들어가 파일 구조가 섞임 |
+| `mutable` 전방 참조 (`let mutable applyRef = fun _ _ -> failwith "..."`를 나중에 채움) | 초기화 순서를 잊으면 실행 중에 실패함 |
+| **`apply`를 인자로 받기 (이 프로젝트)** | 순서 문제가 사라지고, 내장 함수 코드는 평가기를 몰라도 됨 |
+
+```fsharp
+/// apply 는 map, filter 같은 고차 함수가 사용자 함수를 호출할 때 사용 (evalIn 보다 먼저 정의되므로 인자로 받음)
+let callBuiltin (apply: Value -> Value -> Value) name args =
+    match name, args with
+    ...
+    | "map", [ f; xs ] -> VList (list' xs |> List.map (apply f))
+    | "filter", [ f; xs ] -> VList (list' xs |> List.filter (fun x -> bool' (apply f x)))
+    | "fold", [ f; acc; xs ] -> list' xs |> List.fold (fun acc x -> apply (apply f acc) x) acc
+
+// apply 안에서
+    | VBuiltin (name, args) ->
+        ...
+        if List.length args = builtinArity.[name] then callBuiltin apply name args
+```
+
+- `apply f`는 클로저든 다른 내장 함수든 똑같이 호출한다. 그래서 `map upper xs`, `map (substr "abc" 0) [1; 2]`처럼 내장 함수를 넘겨도 동작한다.
+- 인자가 여러 개인 함수(`fold`의 `fun acc x -> ...`)는 커링된 값이므로 `apply (apply f acc) x`로 하나씩 적용한다.
+- 콜백이 던진 예외가 라이브러리 함수에 감싸지지 않는지 확인한다. 예를 들어 `List.sortWith`는 비교 함수의 예외를 감싼다. 자세한 내용은 `guard-fsharp-core-semantics-in-builtins.md`에 있다.
+
 ## Example
 
 ```
@@ -144,8 +173,10 @@ length = length                                   → Type error: expected int, 
 - [ ] 내장 함수는 처음 환경의 보통 변수다 (렉서/파서 수정 없음, `let`으로 가릴 수 있음)
 - [ ] 인자 수 표와 디스패치의 이름 목록이 같은지 테스트한다
 - [ ] 부분 적용, 가리기, 인자 타입 오류가 나는 시점을 테스트로 고정한다
+- [ ] 고차 내장 함수는 `apply`를 인자로 받아 사용자 함수와 내장 함수를 똑같이 호출한다
 
 ## 관련 문서
 
 - `implement-closures-and-let-rec.md` - 사용자 정의 함수도 F# 함수가 아니라 데이터(클로저)로 표현한 방법
 - `use-ordinal-string-apis-for-language-builtins.md` - 문자열 내장 함수에서 .NET API를 쓸 때의 문화권 함정
+- `guard-fsharp-core-semantics-in-builtins.md` - FSharp.Core 함수의 오버플로 검사, 예외 감싸기가 언어로 새어 나오는 문제

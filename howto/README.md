@@ -18,8 +18,9 @@
 | 12 | [escape-quotes-and-braces-in-fslex-actions](escape-quotes-and-braces-in-fslex-actions.md) | fslex/fsyacc는 액션 코드를 자체 규칙으로 훑는다. 문자 리터럴 '"'와 '}'는 '\"'와 '\u007D'로 쓴다 | 2026-10-28 |
 | 13 | [implement-builtins-as-data-values](implement-builtins-as-data-values.md) | 내장 함수를 F# 함수로 Value에 넣으면 equality가 깨진다. 이름과 모은 인자만 저장하는 데이터로 표현한다 | 2026-10-28 |
 | 14 | [use-ordinal-string-apis-for-language-builtins](use-ordinal-string-apis-for-language-builtins.md) | .NET 문자열 API 일부는 기본이 문화권 비교다. 언어 내장 함수에는 Ordinal과 Invariant를 명시한다 | 2026-10-28 |
+| 15 | [guard-fsharp-core-semantics-in-builtins](guard-fsharp-core-semantics-in-builtins.md) | 내장 함수를 FSharp.Core 함수로 바로 구현하면 오버플로 검사, 예외 감싸기, 오류 메시지가 언어로 새어 나온다. 경계를 조사해 막는다 | 2026-10-28 |
 
-추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match), 8 → 9 → 13 → 14 (함수 평가, 재귀 한계, 내장 함수), 4 → 6 (테스트), 5 (릴리스)
+추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match), 8 → 9 → 13 → 14 → 15 (함수 평가, 재귀 한계, 내장 함수), 4 → 6 (테스트), 5 (릴리스)
 
 ---
-총 14개 | 업데이트: 2026-10-28
+총 15개 | 업데이트: 2026-10-28
