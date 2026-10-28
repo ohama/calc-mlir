@@ -10,6 +10,8 @@ type Value =
     | VClosure of param: string * body: Expr * env: Map<string, Value>
     /// let rec name param = body. 호출할 때 name 을 자기 자신으로 환경에 추가
     | VRecClosure of name: string * param: string * body: Expr * env: Map<string, Value>
+    /// let rec f x = ... and g y = ... 의 index 번째 함수. 호출할 때 그룹의 모든 이름을 환경에 추가
+    | VRecGroup of index: int * bindings: (string * string * Expr) list * env: Map<string, Value>
     | VList of Value list
     /// (v1, v2, ...) 원소 2개 이상
     | VTuple of Value list
@@ -37,7 +39,7 @@ let rec formatValue value =
     | VBool true -> "true"
     | VBool false -> "false"
     | VString s -> quote s
-    | VClosure _ | VRecClosure _ | VBuiltin _ | VConstructor _ -> "<fun>"
+    | VClosure _ | VRecClosure _ | VRecGroup _ | VBuiltin _ | VConstructor _ -> "<fun>"
     | VList items -> "[" + (items |> List.map formatValue |> String.concat "; ") + "]"
     | VTuple items -> "(" + (items |> List.map formatValue |> String.concat ", ") + ")"
     | VData (_, ctor, None) -> ctor
@@ -54,7 +56,7 @@ let typeName value =
     | VInt _ -> "int"
     | VBool _ -> "bool"
     | VString _ -> "string"
-    | VClosure _ | VRecClosure _ | VBuiltin _ | VConstructor _ -> "function"
+    | VClosure _ | VRecClosure _ | VRecGroup _ | VBuiltin _ | VConstructor _ -> "function"
     | VList _ -> "list"
     | VTuple _ -> "tuple"
     | VData (typeName, _, _) -> typeName
@@ -98,6 +100,8 @@ let rec matchPattern pattern value (env: Env) : Env option =
     | PVar name, v -> Some (Map.add name v env)
     | PWildcard, _ -> Some env
     | PUnit, VUnit -> Some env
+    // 왼쪽부터 처음 일치하는 쪽 (가드가 실패해도 다른 쪽을 다시 시도하지 않음, OCaml 과 같음)
+    | POr (a, b), v -> matchPattern a v env |> Option.orElseWith (fun () -> matchPattern b v env)
     | PInt n, VInt m -> if n = m then Some env else None
     | PBool b, VBool c -> if b = c then Some env else None
     | PString s, VString t -> if s = t then Some env else None
@@ -337,6 +341,10 @@ let declareConstructors (env: Env) (typeName: string) (ctors: (string * TypeExpr
         Map.add ctor value env
     List.fold bindCtor env ctors
 
+/// let rec ... and ...: 그룹의 함수마다 VRecGroup 값을 환경에 추가 (서로를 부를 수 있음)
+let declareRecGroup (env: Env) (bindings: (string * string * Expr) list) =
+    bindings |> List.indexed |> List.fold (fun acc (i, (name, _, _)) -> Map.add name (VRecGroup (i, bindings, env)) acc) env
+
 let rec evalIn (env: Env) expr =
     match expr with
     | Number n -> VInt n
@@ -355,6 +363,7 @@ let rec evalIn (env: Env) expr =
         evalIn (Map.add name v env) body
     | LetRec (name, param, body, inExpr) ->
         evalIn (Map.add name (VRecClosure (name, param, body, env)) env) inExpr
+    | LetRecs (bindings, inExpr) -> evalIn (declareRecGroup env bindings) inExpr
     | Lambda (param, body) -> VClosure (param, body, env)
     | App (f, arg) ->
         // 값에 의한 호출: 함수와 인자를 먼저 평가한 뒤 본문을 평가
@@ -372,6 +381,7 @@ let rec evalIn (env: Env) expr =
     | Subtract (a, b) -> VInt (evalInt env a - evalInt env b)
     | Multiply (a, b) -> VInt (evalInt env a * evalInt env b)
     | Divide (a, b) -> VInt (evalInt env a / evalInt env b)
+    | Modulo (a, b) -> VInt (evalInt env a % evalInt env b)
     | Negate e -> VInt -(evalInt env e)
     | Equal (a, b) -> VBool (evalEquals env a b)
     | NotEqual (a, b) -> VBool (not (evalEquals env a b))
@@ -448,6 +458,9 @@ and apply fv av =
     | VRecClosure (name, param, body, closureEnv) ->
         let env = closureEnv |> Map.add name fv |> Map.add param av
         evalIn env body
+    | VRecGroup (index, bindings, closureEnv) ->
+        let _, param, body = bindings[index]
+        evalIn (declareRecGroup closureEnv bindings |> Map.add param av) body
     | VBuiltin (name, args) ->
         let args = args @ [ av ]
         if List.length args = builtinArity.[name] then callBuiltin apply name args

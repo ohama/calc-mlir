@@ -343,6 +343,33 @@ let tests =
             Expect.equal (evalIn env (Program.parse "if c then a - b else 0")) (VInt 7) ""
         }
 
+        testList "작은 문법" [
+            test "% 는 .NET 과 같음: 부호는 왼쪽을 따름, 0 과 MinValue % -1 은 오류" {
+                Expect.equal (calc "(7 % 3, -7 % 3, 7 % -3)") (VTuple [ VInt 1; VInt -1; VInt 1 ]) ""
+                Expect.throwsT<System.DivideByZeroException> (fun () -> calc "5 % 0" |> ignore) ""
+                Expect.throwsT<System.OverflowException> (fun () -> calc "(-2147483647 - 1) % -1" |> ignore) ""
+            }
+            test "|> 와 >>" {
+                Expect.equal (calc "[1; 2; 3] |> map (fun x -> x * x) |> sum") (VInt 14) ""
+                Expect.equal (calc "let inc x = x + 1 in let dbl x = x * 2 in ((inc >> dbl) 5, (dbl >> inc) 5)") (VTuple [ VInt 12; VInt 11 ]) ""
+            }
+            test "function" {
+                Expect.equal (calc "map (function Some x -> x | None -> 0) [Some 1; None]") (VList [ VInt 1; VInt 0 ]) ""
+            }
+            test "or 패턴: 왼쪽부터 처음 맞는 쪽, 가드가 실패하면 다른 쪽을 다시 시도하지 않음" {
+                Expect.equal (calc "match (1, \"a\") with (x, \"a\") | (x, \"b\") -> x | _ -> 0") (VInt 1) ""
+                Expect.equal (calc "match (2, 3) with (1, y) | (y, 3) when y > 5 -> y | _ -> -1") (VInt -1) "(y, 3) 로 y = 2, 가드 실패 → 다음 분기"
+            }
+            test "let rec ... and ...: 서로 부름, 바깥 변수도 봄" {
+                Expect.equal
+                    (calc "let rec even n = if n = 0 then true else odd (n - 1) and odd n = if n = 0 then false else even (n - 1) in (even 10, odd 7)")
+                    (VTuple [ VBool true; VBool true ])
+                    ""
+                Expect.equal (calc "let k = 100 in let rec f x = if x = 0 then k else g (x - 1) and g y = f y + 1 in f 5") (VInt 105) ""
+                Expect.equal (formatValue (calc "let rec f x = g x and g x = x in f")) "<fun>" ""
+            }
+        ]
+
         testList "unit, ;, print" [
             let run (input: string) =
                 use writer = new System.IO.StringWriter()

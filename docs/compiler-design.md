@@ -182,6 +182,10 @@ clang prog.o runtime.o builtins.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack
 - 마지막 분기까지 실패하면 `calc_match_failure(value)`를 호출합니다. 런타임은 `Error: Match failure: <값>`을 출력하고 종료 코드 1로 끝납니다.
 - decision tree 컴파일(Maranget)은 최적화 단계로 미룹니다.
 
+- **or 패턴(0.27.0):** 검사는 `scf.if`로 "왼쪽이 맞으면 참, 아니면 오른쪽 검사"를 만듭니다. 이름 묶기는 묶는 이름 수만큼 값을 내는 `scf.if`(`%v:2 = scf.if … -> (i64, i64)`)로, 맞은 쪽에서 값을 꺼냅니다.
+- **`let rec … and …`(0.27.0):** `Lower`가 `CLetRecGroup`을 만듭니다. `Codegen`은 그룹의 클로저 블록을 모두 먼저 할당하고, 다른 함수를 가리키는 칸은 그다음에 채웁니다(서로를 가리키므로 한 번에 만들 수 없음). 자기 자신은 단일 `let rec`처럼 `%closure`입니다.
+- **`%`:** `arith.remsi`이고, `/`와 같은 두 검사(0, `MinValue % -1`)를 앞에 둡니다.
+
 ### D8. 내장 함수: C 런타임 + 클로저
 
 - 내장 함수 36개는 `runtime/builtins.c`의 C 함수 `calc_builtin_<이름>`로 구현합니다(단계 7). 인자 순서, 결과, 오류 메시지는 `Eval.callBuiltin`과 같습니다.

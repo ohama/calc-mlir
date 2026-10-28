@@ -31,11 +31,19 @@ let rec valueMatches value t =
         payload |> Option.forall (fun v -> valueMatches v e)
     | VData (typeName, _, _), TyCon (name, _) -> name.StartsWith(typeName + "@")
     | VTuple vs, TyTuple ts -> List.length vs = List.length ts && List.forall2 valueMatches vs ts
-    | (VClosure _ | VRecClosure _ | VBuiltin _ | VConstructor _), TyFun _ -> true
+    | (VClosure _ | VRecClosure _ | VRecGroup _ | VBuiltin _ | VConstructor _), TyFun _ -> true
     | _ -> false
 
 let inferred =
-    [ // unit, ;, 출력
+    [ // 작은 문법
+      "7 % 2", "int"
+      "fun x -> x |> toString", "'a -> string"
+      "fun f g -> f >> g", "('a -> 'b) -> ('b -> 'c) -> 'a -> 'c"
+      "function Some x -> x | None -> 0", "int option -> int"
+      "fun p -> match p with (x, 1) | (1, x) -> x | _ -> 0", "int * int -> int"
+      "let rec even n = if n = 0 then true else odd (n - 1) and odd n = even n in even", "int -> bool"
+      "let rec len xs = match xs with [] -> 0 | _ :: t -> 1 + len2 t and len2 ys = len ys in (len [1], len [\"a\"])", "int * int"
+      // unit, ;, 출력
       "()", "unit"
       "fun () -> 1", "unit -> int"
       "println", "'a -> unit"
@@ -124,6 +132,8 @@ let tests =
             expectTypeError "1 :: 2" "Type mismatch: expected int list but got int"
             expectTypeError "match Some 1 with Some \"a\" -> 1 | _ -> 0" "Type mismatch: expected int option but got string option"
             expectTypeError "match 1 with x when x -> 1" "Type mismatch: expected bool but got int"
+            expectTypeError "match (1, 2) with (x, 1) | (1, x) -> x | (\"a\", _) -> 0" "Type mismatch: expected int * int but got string * 'a"
+            expectTypeError "fun p -> match p with (x, 1) | (true, x) -> 0" "Type mismatch: expected bool but got int"
             expectTypeError "match 1 with 1 -> \"a\" | _ -> 2" "Type mismatch: expected string but got int"
             expectTypeError "match Some 1 with Some -> 0 | _ -> 1" "Constructor Some requires an argument"
             expectTypeError "match None with None 1 -> 0 | _ -> 1" "Constructor None takes no argument"

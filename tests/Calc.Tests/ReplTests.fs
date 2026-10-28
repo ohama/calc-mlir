@@ -37,6 +37,12 @@ let tests =
                   "let _ = a + 1;;", "- : int = 2\n"
                   "let () = ();;", "" ]
         }
+        test "let rec ... and ... 는 함수마다 val" {
+            expectSession
+                [ "let rec even n = if n = 0 then true else odd (n - 1)\nand odd n = if n = 0 then false else even (n - 1);;",
+                  "val even : int -> bool = <fun>\nval odd : int -> bool = <fun>\n"
+                  "(even 4, odd 4);;", "- : bool * bool = (true, false)\n" ]
+        }
         test "let 다형성이 입력을 넘어 유지됨" {
             expectSession
                 [ "let id y = y;;", "val id : 'a -> 'a = <fun>\n"

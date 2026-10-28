@@ -36,8 +36,11 @@ Result: 10
 | `unit`, 순서 실행 `;`, 출력 | `()`, `let f () = ...`, `println "a"; print 1`, `ignore e` |
 | 주석 | `// 줄 끝까지`, `(* 블록, (* 중첩 *) 가능 *)` |
 | REPL | `calc` (터미널), `# let x = 1;;` → `val x : int = 1` |
+| 나머지, 파이프, 합성 | `7 % 3`, `xs \|> map f \|> sum`, `(inc >> dbl) 5` |
+| `function`, or 패턴 | `function Some x -> x \| None -> 0`, `\| 1 \| 2 \| 3 -> "small"` |
+| mutual recursion | `let rec even n = ... and odd n = ...` |
 
-- 우선순위 (낮은 것부터): `;` < `let`/`if`/`fun`/`match` < `||` < `&&` < 비교 < `::` < `+ -` < `* /` < 단항 `-`, `not` < 함수 호출
+- 우선순위 (낮은 것부터): `;` < `let`/`if`/`fun`/`match` < `||` < `&&` < 비교, `|>`, `>>` < `::` < `+ -` < `* / %` < 단항 `-`, `not` < 함수 호출
 - **타입 추론** (Hindley–Milner, let-polymorphism): 실행 전에 타입을 추론하고, 맞지 않으면 평가하지 않습니다. 타입 오류는 문제가 된 식의 위치(줄, 열, `^`)를 가리킵니다.
   - `fun f x -> f (f x)`는 `('a -> 'a) -> 'a -> 'a`, `[1; true]`는 `Type mismatch: expected int list but got bool list`
   - `--no-typecheck`를 주면 추론을 건너뛰고 평가 중에 동적으로 검사합니다.
@@ -72,7 +75,7 @@ dotnet run --project src/Calc
 ```
 
 ```
-calc 0.26.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
+calc 0.27.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
 # let add a b = a + b;;
 val add : int -> int -> int = <fun>
 # add 1 2;;

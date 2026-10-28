@@ -66,6 +66,13 @@ let tests =
                 test input { Expect.equal (warnings input) expected "" }
         ]
 
+        test "or 패턴과 function" {
+            Expect.isEmpty (warnings "match true with true | false -> 1") "or 패턴이 모두 덮음"
+            Expect.isEmpty (warnings "type c = R | G | B in fun x -> match x with R | G -> 1 | B -> 2") ""
+            Expect.equal (warnings "match 1 with 1 | 2 -> 0") [ notExhaustive "0", Some (1, 1) ] ""
+            Expect.equal (warnings "let f = function Some x -> x in f") [ notExhaustive "None", Some (1, 9) ] "function 의 위치"
+        }
+
         test "가드가 있는 분기는 덮는 데 세지 않음 (OCaml, F# 와 같음)" {
             Expect.equal
                 (warnings "match 1 with | x when x > 0 -> 1")

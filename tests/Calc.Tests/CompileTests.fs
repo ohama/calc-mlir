@@ -307,6 +307,21 @@ let private runCases =
           "(() = (), [()], Some ())", ("(true, [()], Some ())\n", "", 0), "() 값"
           "match () with () -> \"u\"", ("\"u\"\n", "", 0), ""
         ]
+      "작은 문법: %, |>, >>, function, or 패턴, let rec ... and",
+        [
+          "(7 % 3, -7 % 3, 7 % -3, -7 % -3)", ("(1, -1, 1, -1)\n", "", 0), "부호는 왼쪽을 따름"
+          "5 % 0", ("", "Error: Attempted to divide by zero.\n", 1), ""
+          "(-2147483647 - 1) % -1", ("", "Error: Arithmetic operation resulted in an overflow.\n", 1), "srem 은 이 경우 정의되지 않은 동작이라 미리 검사"
+          "[1; 2; 3] |> map (fun x -> x * x) |> sum", ("14\n", "", 0), ""
+          "let inc x = x + 1 in let dbl x = x * 2 in ((inc >> dbl) 5, (dbl >> inc) 5)", ("(12, 11)\n", "", 0), ""
+          "map (function Some x -> x | None -> 0) [Some 1; None; Some 3]", ("[1; 0; 3]\n", "", 0), ""
+          "match [Some 3] with | [Some x] | [Some x; _] -> x | _ -> 0", ("3\n", "", 0), "or 패턴: 맞은 쪽에서 이름을 꺼냄"
+          "match (2, 3) with | (1, y) | (y, 3) when y > 5 -> y | _ -> -1", ("-1\n", "", 0), "가드가 실패하면 다음 분기"
+          "type c = Red | Green | Blue in let warm k = match k with Red | Green -> true | Blue -> false in (warm Red, warm Blue)", ("(true, false)\n", "", 0), ""
+          "let k = 100 in let rec f x = if x = 0 then k else g (x - 1) and g y = f y + 1 in f 5", ("105\n", "", 0), "서로 부르는 클로저, 바깥 변수 캡처"
+          "let rec even n = if n = 0 then true else odd (n - 1) and odd n = if n = 0 then false else even (n - 1) in even 1000000", ("true\n", "", 0), "깊이 100만"
+          "let rec f x = g x and g x = x + 1 in f = g", ("", "Error: Type error: expected int, bool, string, list, tuple or data but got function\n", 1), ""
+        ]
       "Match failure",
         [
           "match [1] with | [] -> 0", ("", "Error: Match failure: [1]\n", 1), ""

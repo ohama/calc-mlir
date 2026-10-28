@@ -597,6 +597,53 @@ let tests =
             }
         ]
 
+        testList "작은 문법: %, |>, >>, function, or 패턴, let rec ... and" [
+            test "% 는 * / 와 같은 자리" {
+                Expect.equal (parse "1 + 2 * 3 % 4") (Add (Number 1, Modulo (Multiply (Number 2, Number 3), Number 4))) ""
+            }
+            test "x |> f 는 x 를 먼저 계산 (let $pipe = x in f $pipe), 비교와 같은 자리에서 왼쪽부터" {
+                Expect.equal (parse "x |> f") (Let ("$pipe", Var "x", App (Var "f", Var "$pipe"))) ""
+                Expect.equal
+                    (parse "a + 1 |> f |> g")
+                    (Let ("$pipe", Let ("$pipe", Add (Var "a", Number 1), App (Var "f", Var "$pipe")), App (Var "g", Var "$pipe")))
+                    "+ 가 더 강하고, |> 는 왼쪽부터"
+            }
+            test "f >> g" {
+                Expect.equal
+                    (parse "f >> g")
+                    (Let ("$f", Var "f", Let ("$g", Var "g", Lambda ("$x", App (Var "$g", App (Var "$f", Var "$x"))))))
+                    ""
+            }
+            test "function 은 인자 하나를 받는 match" {
+                Expect.equal
+                    (parse "function 0 -> a | _ -> b")
+                    (Lambda ("$function", Match (Var "$function", [ PInt 0, None, Var "a"; PWildcard, None, Var "b" ])))
+                    ""
+            }
+            test "or 패턴: | 가 패턴에서 가장 약함, 괄호 안에서도" {
+                Expect.equal
+                    (parse "match x with 1 | 2 -> a | _ -> b")
+                    (Match (Var "x", [ POr (PInt 1, PInt 2), None, Var "a"; PWildcard, None, Var "b" ]))
+                    "분기 구분자와 섞이지 않음"
+                Expect.equal (parse "match x with _ :: _ | [] -> 0") (Match (Var "x", [ POr (PCons (PWildcard, PWildcard), PNil), None, Number 0 ])) ""
+                Expect.equal (parse "match x with Some (1 | 2) -> 0") (Match (Var "x", [ PCtor ("Some", Some (POr (PInt 1, PInt 2))), None, Number 0 ])) ""
+            }
+            test "or 패턴의 두 쪽은 같은 이름을 묶어야 함" {
+                expectParseError "match o with Some x | None -> 0" "Variable x must occur on both sides of this | pattern" 1 14
+            }
+            test "let rec ... and ... 는 LetRecs (하나면 예전처럼 LetRec)" {
+                Expect.equal
+                    (parse "let rec f x = g x and g y = y in f 1")
+                    (LetRecs ([ "f", "x", App (Var "g", Var "x"); "g", "y", Var "y" ], App (Var "f", Number 1)))
+                    ""
+                Expect.equal (parse "let rec f x = x and g y = y") (LetRecs ([ "f", "x", Var "x"; "g", "y", Var "y" ], Unit)) "최상위"
+                expectParseError "let rec f x = 1 and f y = 2 in 0" "Variable f is bound several times in this let rec" 1 1
+            }
+            test "and 는 키워드" {
+                expectParseError "let and = 1 in and" "parse error: unexpected 'and'" 1 5
+            }
+        ]
+
         testList "주석" [
             test "// 줄 주석과 (* *) 블록 주석 (중첩 가능)" {
                 Expect.equal (parse "1 // 끝까지\n+ (* 가운데 (* 중첩 *) *) 2") (Add (Number 1, Number 2)) ""

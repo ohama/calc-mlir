@@ -21,6 +21,7 @@ let private chain (declarations: TopItem list) (body: Expr) =
             match item with
             | TopLet (name, value, _) -> Let (name, value, rest)
             | TopLetRec (name, param, b, _) -> LetRec (name, param, b, rest)
+            | TopLetRecs (bindings, _) -> LetRecs (bindings, rest)
             | TopLetPattern (pattern, value, _) -> LetPattern (pattern, value, rest)
             | TopType (name, typeParams, ctors, _) -> TypeDecl (name, typeParams, ctors, rest)
             | TopExpr _ -> rest)
@@ -34,6 +35,7 @@ let rec private patternNames pattern =
     | PCons (h, t) -> patternNames h @ patternNames t
     | PTuple items -> List.collect patternNames items
     | PCtor (_, Some p) -> patternNames p
+    | POr (a, _) -> patternNames a
     | PWildcard | PInt _ | PBool _ | PString _ | PNil | PUnit | PCtor (_, None) -> []
 
 let private typeOf (expr: Expr) =
@@ -84,6 +86,12 @@ let private processItem (out: TextWriter) (input: string) (state: State) (item: 
         let v = Eval.VRecClosure (name, param, body, state.Env)
         out.WriteLine(sprintf "val %s : %s = %s" name t (Eval.formatValue v))
         { Declarations = declarations; Env = Map.add name v state.Env }
+    | TopLetRecs (bindings, _) ->
+        warn (chain declarations Unit)
+        let env = Eval.declareRecGroup state.Env bindings
+        for name, _, _ in bindings do
+            out.WriteLine(sprintf "val %s : %s = %s" name (typeOf (chain declarations (Var name))) (Eval.formatValue env[name]))
+        { Declarations = declarations; Env = env }
     | TopLetPattern (pattern, value, _) ->
         warn (chain declarations Unit)
         let types = patternNames pattern |> List.map (fun name -> name, typeOf (chain declarations (Var name)))

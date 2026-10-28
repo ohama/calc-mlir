@@ -54,6 +54,7 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Set<stri
     | Subtract (a, b) -> prim PSubtract [ a; b ]
     | Multiply (a, b) -> prim PMultiply [ a; b ]
     | Divide (a, b) -> prim PDivide [ a; b ]
+    | Modulo (a, b) -> prim PModulo [ a; b ]
     | Negate e -> prim PNegate [ e ]
     | Equal (a, b) -> prim PEqual [ a; b ]
     | NotEqual (a, b) -> CPrim (PNot, [ prim PEqual [ a; b ] ])
@@ -70,6 +71,13 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Set<stri
     | LetRec (name, param, body, inExpr) ->
         let closure = state.AddFunction(param, Some name, lower state ctors (scope |> Set.add name |> Set.add param) body)
         CLet (name, closure, lower state ctors (Set.add name scope) inExpr)
+    // 함수마다 클로저. 자기 자신은 %closure, 다른 함수는 캡처한 칸 (Codegen 이 나중에 채움)
+    | LetRecs (bindings, inExpr) ->
+        let groupScope = bindings |> List.fold (fun acc (name, _, _) -> Set.add name acc) scope
+        let closures =
+            [ for name, param, body in bindings ->
+                  name, state.AddFunction(param, Some name, lower state ctors (Set.add param groupScope) body) ]
+        CLetRecGroup (closures, lower state ctors groupScope inExpr)
     // 생성자를 바로 적용하면 그 자리에서 블록을 만듦 (인터프리터의 VConstructor 호출과 같은 결과)
     | App (Ctor name, a) when Map.tryFind name ctors = Some true -> CData (name, Some (lower state ctors scope a))
     // 인자가 다 모인 내장 함수는 런타임 함수를 바로 호출. 남는 인자는 결과에 차례로 적용

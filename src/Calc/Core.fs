@@ -13,6 +13,7 @@ type Prim =
     | PSubtract
     | PMultiply
     | PDivide
+    | PModulo
     | PNegate
     | PEqual
     | PLess
@@ -38,6 +39,8 @@ type CExpr =
     | CMakeClosure of funcName: string * captured: string list
     /// 클로저 간접 호출
     | CApply of CExpr * CExpr
+    /// let rec ... and ...: 그룹의 클로저(CMakeClosure)를 모두 만든 뒤 서로를 가리키는 칸을 채움
+    | CLetRecGroup of closures: (string * CExpr) list * body: CExpr
     /// [] (즉시값)
     | CNil
     /// head :: tail (블록 [헤더, head, tail])
@@ -70,6 +73,7 @@ let rec patternVars (pattern: Pattern) : Set<string> =
     | PCons (h, t) -> Set.union (patternVars h) (patternVars t)
     | PTuple items -> items |> List.map patternVars |> Set.unionMany
     | PCtor (_, Some p) -> patternVars p
+    | POr (a, _) -> patternVars a
     | PWildcard | PInt _ | PBool _ | PString _ | PNil | PUnit | PCtor (_, None) -> Set.empty
 
 /// 식의 자유 변수 (CMakeClosure 는 캡처하는 변수가 곧 자유 변수)
@@ -85,6 +89,9 @@ let rec freeVars (expr: CExpr) : Set<string> =
     | CPrim (_, args) -> args |> List.map freeVars |> Set.unionMany
     | CMakeClosure (_, captured) -> Set.ofList captured
     | CApply (f, a) -> Set.union (freeVars f) (freeVars a)
+    | CLetRecGroup (closures, body) ->
+        let names = closures |> List.map fst |> Set.ofList
+        Set.difference (Set.unionMany (freeVars body :: (closures |> List.map (snd >> freeVars)))) names
     | CNil -> Set.empty
     | CCons (h, t) -> Set.union (freeVars h) (freeVars t)
     | CTuple items -> items |> List.map freeVars |> Set.unionMany

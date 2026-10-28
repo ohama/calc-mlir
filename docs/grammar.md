@@ -22,12 +22,13 @@ Calc 언어의 어휘 구조, 구문, 의미를 정리한 문서입니다. 구�
 | `CTOR` | `[A-Z][A-Za-z0-9_]*`. 생성자 (타입 이름으로도 쓸 수 있음) | `Some`, `None`, `Node`, `X2` |
 | `TYVAR` | `'` 다음에 `IDENT` 모양. type variable | `'a`, `'key` |
 | `UNDERSCORE` | `_` (와일드카드 패턴, 쓰지 않는 인자) | |
-| 키워드 | `let` `rec` `in` `fun` `if` `then` `else` `true` `false` `not` `match` `with` `when` `type` `of` | |
+| 키워드 | `let` `rec` `and` `in` `fun` `function` `if` `then` `else` `true` `false` `not` `match` `with` `when` `type` `of` | |
 | `EQUALS` | `=` | |
 | `ARROW` | `->` | |
 | `NOTEQUAL` `LESS` `GREATER` `LESSEQUAL` `GREATEREQUAL` | `<>` `<` `>` `<=` `>=` | |
 | `AND` `OR` | `&&` `\|\|` | |
-| `PLUS` `MINUS` `STAR` `SLASH` | `+` `-` `*` `/` | |
+| `PLUS` `MINUS` `STAR` `SLASH` `PERCENT` | `+` `-` `*` `/` `%` | |
+| `PIPE` `COMPOSE` | `\|>` `>>` | |
 | `LPAREN` `RPAREN` | `(` `)` | |
 | `LBRACKET` `RBRACKET` `SEMI` | `[` `]` `;` | |
 | `SEMISEMI` | `;;` (최상위 항목 구분) | |
@@ -82,7 +83,7 @@ items   = ε
 afterDecl = ε | ";;" items | decl afterDecl ;
 decl    = "let" IDENT [ params ] "=" seq
         | "let" letPat "=" seq
-        | "let" "rec" IDENT params "=" seq
+        | "let" "rec" recBinding { "and" recBinding }
         | "type" [ typeParams ] typeName "=" [ "|" ] ctorDecl { "|" ctorDecl } ;
 
 seq     = expr [ ";" seq ] ;                             (* e1; e2: 순서 실행 *)
@@ -91,7 +92,8 @@ expr    = app
         | "let" IDENT "=" seq "in" seq
         | "let" letPat "=" seq "in" seq                  (* 튜플 분해, (), _ *)
         | "let" IDENT params "=" seq "in" seq            (* 함수 정의 *)
-        | "let" "rec" IDENT params "=" seq "in" seq      (* 재귀 함수 정의 *)
+        | "let" "rec" recBinding { "and" recBinding } "in" seq   (* 재귀 함수 정의, and 로 mutual recursion *)
+        | "function" [ "|" ] arm { "|" arm }             (* fun x -> match x with ... *)
         | "fun" params "->" seq                          (* 람다 *)
         | "if" expr "then" expr "else" expr
         | "match" expr "with" [ "|" ] arm { "|" arm }    (* 패턴 매칭 *)
@@ -116,7 +118,10 @@ atom    = NUMBER
 
 arm     = pattern [ "when" expr ] "->" seq ;
 
-pattern = ctorPat [ "::" pattern ] ;                     (* :: 는 오른쪽 결합 *)
+recBinding = IDENT params "=" seq ;
+
+pattern = consPat [ "|" pattern ] ;                      (* or 패턴: 가장 약함 *)
+consPat = ctorPat [ "::" consPat ] ;                     (* :: 는 오른쪽 결합 *)
 ctorPat = CTOR atomPat                                   (* Some x, Node (l, x, r) *)
         | atomPat ;
 atomPat = IDENT | "_" | CTOR
@@ -139,7 +144,8 @@ prodType   = appType { "*" appType } ;
 appType    = atomType { IDENT } ;                        (* int list option *)
 atomType   = IDENT | TYVAR | "(" type ")" ;
 
-binop   = "+" | "-" | "*" | "/"
+binop   = "+" | "-" | "*" | "/" | "%"
+        | "|>" | ">>"
         | "=" | "<>" | "<" | ">" | "<=" | ">="
         | "::"
         | "&&" | "||" ;
@@ -157,10 +163,10 @@ binop   = "+" | "-" | "*" | "/"
 | 1 | `let ... in`, `if ... then ... else`, `fun ... ->`, `match` 분기 `->` | — | `%nonassoc IN ELSE ARROW` |
 | 2 | `\|\|` | 왼쪽 | `%left OR` |
 | 3 | `&&` | 왼쪽 | `%left AND` |
-| 4 | `=` `<>` `<` `>` `<=` `>=` | 왼쪽 | `%left EQUALS NOTEQUAL ...` |
+| 4 | `=` `<>` `<` `>` `<=` `>=`, `\|>`, `>>` | 왼쪽 | `%left EQUALS NOTEQUAL ... PIPE COMPOSE` |
 | 5 | `::` | **오른쪽** | `%right CONS` |
 | 6 | `+` `-` (이항) | 왼쪽 | `%left PLUS MINUS` |
-| 7 | `*` `/` | 왼쪽 | `%left STAR SLASH` |
+| 7 | `*` `/` `%` | 왼쪽 | `%left STAR SLASH PERCENT` |
 | 8 | `-` (단항), `not` | — | `%nonassoc UMINUS NOT` |
 | 9 (가장 높음) | 함수 호출 `f x` | 왼쪽 | 문법 계층 (`app = app atom`) |
 
@@ -190,6 +196,25 @@ F#과 같은 순서입니다. 함수 호출은 어떤 연산자보다 먼저 묶
 | `f -1` | `f - 1` (뺄셈). 음수를 넘기려면 `f (-1)` |
 
 > **F#과 다른 점:** F#은 `f -1`처럼 `-` 뒤에 공백이 없으면 함수 호출로 해석하는 특별 규칙이 있습니다. 이 언어는 공백을 구분하지 않으므로 `f -1`은 항상 뺄셈입니다.
+
+### `%`, `|>`, `>>`, `function`, or 패턴, `let rec … and`
+
+| 문법 | 뜻 | 예 |
+|---|---|---|
+| `a % b` | 나머지. 부호는 `a`를 따름(.NET, C와 같음). `b`가 0이면 `Attempted to divide by zero.`, `Int32.MinValue % -1`은 `Arithmetic operation resulted in an overflow.` | `-7 % 3` → `-1` |
+| `x \|> f` | `f x`. `x`를 먼저 계산합니다(F#과 같음) | `[1; 2; 3] \|> map (fun x -> x * x) \|> sum` → `14` |
+| `f >> g` | `fun x -> g (f x)` | `(inc >> dbl) 5` → `12` |
+| `function` | 인자 하나를 받아 바로 `match`하는 함수 | `map (function Some x -> x \| None -> 0) xs` |
+| `p1 \| p2` | or 패턴. 왼쪽부터 처음 맞는 쪽. 두 쪽은 같은 이름을 묶어야 합니다 | `\| 1 \| 2 \| 3 -> "small"`, `\| (x, "a") \| (x, "b") -> x` |
+| `let rec f … and g …` | mutual recursion | `let rec even n = … odd (n - 1) and odd n = … even (n - 1)` |
+
+- **우선순위:** `|>`와 `>>`는 비교 연산자와 같은 자리에서 왼쪽부터 묶입니다(F#, OCaml과 같음). `%`는 `*`, `/`와 같은 자리입니다.
+- **`not`은 함수가 아닙니다.** 전위 연산자라서 `x |> not`은 쓸 수 없습니다. `x |> (fun b -> not b)`로 씁니다.
+- **or 패턴의 범위:** 패턴에서 가장 약해서 `h :: t | []`는 `(h :: t) | []`입니다. 괄호 안에서도 쓸 수 있습니다(`Some (1 | 2)`).
+- **or 패턴의 이름:** 두 쪽이 묶는 이름이 다르면 `Variable x must occur on both sides of this | pattern` 오류입니다(OCaml과 같음). 같은 이름은 두 쪽에서 타입이 같아야 합니다.
+- **가드:** 왼쪽 패턴이 맞아 묶은 값으로 가드가 실패하면, 오른쪽 패턴을 다시 시도하지 않고 다음 분기로 갑니다(OCaml과 같음).
+- **`let rec … and …`:** 그룹의 함수는 서로를 부를 수 있습니다. 타입 추론은 그룹 안에서 서로를 단형으로 보고, 그룹이 끝나면 함께 generalize합니다. 같은 이름을 두 번 정의하면 `Variable f is bound several times in this let rec` 오류입니다. 최상위 선언으로도 씁니다.
+- **`and`:** 이제 키워드라서 변수 이름으로 쓸 수 없습니다.
 
 ### 최상위 선언, `;;`, `;`
 
@@ -369,6 +394,12 @@ defaultValue 0 (tryFind (fun x -> x > 10) xs)
 | `e1; e2` | `Seq (e1, e2)` |
 | 최상위 `let x = e` (뒤 항목들 `rest`) | `Let ("x", e, rest)`. 끝이 선언이면 `rest`는 `Unit` |
 | `fun () -> e` | `Lambda ("()", Match (Var "()", [ (PUnit, None, e) ]))` (인자가 `()`인지 확인) |
+| `a % b` | `Modulo (a, b)` |
+| `x \|> f` | `Let ("$pipe", x, App (f, Var "$pipe"))` (F#처럼 `x`를 먼저 계산) |
+| `f >> g` | `Let ("$f", f, Let ("$g", g, Lambda ("$x", App (Var "$g", App (Var "$f", Var "$x")))))` |
+| `function p -> e \| ...` | `Lambda ("$function", Match (Var "$function", [ ... ]))` |
+| 패턴 `p1 \| p2` | `POr (p1, p2)` |
+| `let rec f x = a and g y = b in e` | `LetRecs ([ ("f", "x", a); ("g", "y", b) ], e)` (함수가 하나면 `LetRec`) |
 | `let x = e1 in e2` | `Let ("x", e1, e2)` |
 | `let f x = e1 in e2` | `Let ("f", Lambda ("x", e1), e2)` |
 | `let rec f x = e1 in e2` | `LetRec ("f", "x", e1, e2)` |

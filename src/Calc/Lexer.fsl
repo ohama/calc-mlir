@@ -34,7 +34,9 @@ rule tokenize = parse
     | "let"         { LET }
     | "in"          { IN }
     | "rec"         { REC }
+    | "function"    { FUNCTION }
     | "fun"         { FUN }
+    | "and"         { ANDKW }
     | "if"          { IF }
     | "then"        { THEN }
     | "else"        { ELSE }
@@ -57,6 +59,8 @@ rule tokenize = parse
                     { TYVAR ((lexeme lexbuf).Substring 1) }
     | "->"          { ARROW }
     | "<>"          { NOTEQUAL }
+    | "|>"          { PIPE }
+    | ">>"          { COMPOSE }
     | "<="          { LESSEQUAL }
     | ">="          { GREATEREQUAL }
     | '<'           { LESS }
@@ -75,6 +79,7 @@ rule tokenize = parse
     | '-'           { MINUS }
     | '*'           { STAR }
     | '/'           { SLASH }
+    | '%'           { PERCENT }
     | '('           { LPAREN }
     | ')'           { RPAREN }
     | eof           { EOF }

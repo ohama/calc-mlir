@@ -29,6 +29,8 @@ type Pattern =
     | PCtor of string * Pattern option
     /// ()
     | PUnit
+    /// p1 | p2: 왼쪽부터 처음 일치하는 쪽. 두 쪽이 묶는 이름은 같아야 함
+    | POr of Pattern * Pattern
 
 type Expr =
     | Number of int
@@ -42,6 +44,8 @@ type Expr =
     | Var of string
     | Let of string * Expr * Expr
     | LetRec of name: string * param: string * body: Expr * inExpr: Expr
+    /// let rec f x = ... and g y = ... in e (함수 둘 이상, mutual recursion). 하나면 LetRec
+    | LetRecs of bindings: (string * string * Expr) list * inExpr: Expr
     | Lambda of string * Expr
     | App of Expr * Expr
     | If of Expr * Expr * Expr
@@ -49,6 +53,8 @@ type Expr =
     | Subtract of Expr * Expr
     | Multiply of Expr * Expr
     | Divide of Expr * Expr
+    /// a % b: 나머지 (부호는 a 를 따름, .NET 과 같음)
+    | Modulo of Expr * Expr
     | Negate of Expr
     | Equal of Expr * Expr
     | NotEqual of Expr * Expr
@@ -78,6 +84,7 @@ type Expr =
 type TopItem =
     | TopLet of string * Expr * FSharp.Text.Lexing.Position
     | TopLetRec of string * string * Expr * FSharp.Text.Lexing.Position
+    | TopLetRecs of (string * string * Expr) list * FSharp.Text.Lexing.Position
     | TopLetPattern of Pattern * Expr * FSharp.Text.Lexing.Position
     | TopType of string * string list * (string * TypeExpr option) list * FSharp.Text.Lexing.Position
     | TopExpr of Expr

@@ -202,6 +202,21 @@ let private emitIfOf (fb: FunctionBuilder) (ty: string) (cond: string) (thenBran
 
 let private emitIf fb cond thenBranch elseBranch = emitIfOf fb "i64" cond thenBranch elseBranch
 
+/// 값 count 개를 내는 scf.if. 결과 이름은 %vN#0, %vN#1, ...
+let private emitIfMany (fb: FunctionBuilder) (count: int) (cond: string) (thenBranch: unit -> string list) (elseBranch: unit -> string list) =
+    let r = fb.Fresh()
+    let types = List.replicate count "i64" |> String.concat ", "
+    fb.Emit(sprintf "%s:%d = scf.if %s -> (%s) {" r count cond types)
+    fb.Indent()
+    fb.Emit(sprintf "scf.yield %s : %s" (thenBranch () |> String.concat ", ") types)
+    fb.Dedent()
+    fb.Emit("} else {")
+    fb.Indent()
+    fb.Emit(sprintf "scf.yield %s : %s" (elseBranch () |> String.concat ", ") types)
+    fb.Dedent()
+    fb.Emit("}")
+    [ for i in 0 .. count - 1 -> sprintf "%s#%d" r i ]
+
 /// cond 가 참이면 런타임 오류 함수를 부름 (돌아오지 않음)
 let private emitErrorIf (fb: FunctionBuilder) (cond: string) (runtimeFunction: string) =
     fb.Emit(sprintf "scf.if %s {" cond)
@@ -254,6 +269,7 @@ let rec private irrefutable (pattern: Ast.Pattern) =
     match pattern with
     | Ast.PVar _ | Ast.PWildcard | Ast.PUnit -> true
     | Ast.PTuple items -> List.forall irrefutable items
+    | Ast.POr (a, _) -> irrefutable a
     | _ -> false
 
 /// 식의 값을 담은 SSA 이름을 반환. env 는 변수 이름 → 그 값을 담은 SSA 이름
@@ -292,7 +308,7 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
         emitCall fb "calc_add" [ x; y ] "i64"
     | CPrim (PSubtract, [ a; b ]) -> intOp "arith.subi" a b
     | CPrim (PMultiply, [ a; b ]) -> intOp "arith.muli" a b
-    | CPrim (PDivide, [ a; b ]) ->
+    | CPrim ((PDivide | PModulo) as op, [ a; b ]) ->
         let x = untagInt fb (emitExpr fb env a)
         let y = untagInt fb (emitExpr fb env b)
         let isZero = fb.Fresh()
@@ -304,7 +320,8 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
         let isMinusOne = fb.Fresh()
         fb.Emit(sprintf "%s = arith.cmpi eq, %s, %s : i32" isMinusOne y (emitConst fb "i32" -1L))
         emitErrorIf fb (emitOp fb "arith.andi" isMin isMinusOne "i1") "calc_error_overflow"
-        retagInt fb (emitOp fb "arith.divsi" x y "i32")
+        // % 도 같은 두 검사 (.NET 은 MinValue % -1 에서도 OverflowException, LLVM srem 은 정의되지 않은 동작)
+        retagInt fb (emitOp fb (if op = PDivide then "arith.divsi" else "arith.remsi") x y "i32")
     | CPrim (PNegate, [ e ]) ->
         let x = untagInt fb (emitExpr fb env e)
         retagInt fb (emitOp fb "arith.subi" (emitConst fb "i32" 0L) x "i32")
@@ -348,6 +365,31 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
         let r = fb.Fresh()
         fb.Emit(sprintf "%s = llvm.call %s(%s, %s) : !llvm.ptr, (!llvm.ptr, i64) -> i64" r code block av)
         r
+    // 모든 클로저를 먼저 할당한 뒤 다른 함수를 가리키는 칸을 채움 (서로를 가리키므로 순서대로 만들 수 없음)
+    | CLetRecGroup (closures, body) ->
+        let groupNames = closures |> List.map fst |> Set.ofList
+        let blocks =
+            [ for name, closure in closures ->
+                  match closure with
+                  | CMakeClosure (funcName, captured) ->
+                      let size = emitConst fb "i64" (int64 (8 * (2 + captured.Length)))
+                      let block = fb.Fresh()
+                      fb.Emit(sprintf "%s = llvm.call @calc_alloc(%s) : (i64) -> !llvm.ptr" block size)
+                      fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" (emitConst fb "i64" (closureHeader captured.Length)) block)
+                      let code = fb.Fresh()
+                      fb.Emit(sprintf "%s = llvm.mlir.addressof @%s%s : !llvm.ptr" code fb.Strings.Prefix funcName)
+                      fb.Emit(sprintf "llvm.store %s, %s : !llvm.ptr, !llvm.ptr" code (emitSlot fb block 1))
+                      let value = fb.Fresh()
+                      fb.Emit(sprintf "%s = llvm.ptrtoint %s : !llvm.ptr to i64" value block)
+                      name, block, value, captured
+                  | other -> failwithf "Codegen: let rec group expects closures, got %A" other ]
+        let groupEnv = blocks |> List.fold (fun acc (name, _, value, _) -> Map.add name value acc) env
+        for _, block, _, captured in blocks do
+            captured
+            |> List.iteri (fun i c ->
+                let v = if groupNames.Contains c then groupEnv[c] else emitExpr fb env (CVar c)
+                fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" v (emitSlot fb block (2 + i))))
+        emitExpr fb groupEnv body
     | CNil -> emitConst fb "i64" nilValue
     // 인터프리터처럼 head 를 먼저 계산
     | CCons (h, t) ->
@@ -416,6 +458,10 @@ and private emitTest (fb: FunctionBuilder) (pattern: Ast.Pattern) (v: string) : 
         else emitIfOf fb "i1" isCons (fun () -> fields [ h, 1; t, 2 ]) (fun () -> emitConst fb "i1" 0L)
     // 타입 검사를 통과했으므로 원소 수는 항상 같음
     | Ast.PTuple items -> fields (items |> List.mapi (fun i p -> p, 1 + i))
+    // 왼쪽이 맞으면 true, 아니면 오른쪽
+    | Ast.POr (a, b) ->
+        let c = emitTest fb a v
+        emitIfOf fb "i1" c (fun () -> emitConst fb "i1" 1L) (fun () -> emitTest fb b v)
     // 타입 검사를 통과했으므로 v 는 같은 타입의 생성자 값. 이름 포인터가 같으면 같은 생성자 (이름은 모듈에 하나)
     | Ast.PCtor (ctor, argPattern) ->
         let isCtor = fb.Fresh()
@@ -434,6 +480,17 @@ and private emitBind (fb: FunctionBuilder) (pattern: Ast.Pattern) (v: string) (e
     | Ast.PCons (h, t) -> List.fold field env [ h, 1; t, 2 ]
     | Ast.PTuple items -> List.fold field env (items |> List.mapi (fun i p -> p, 1 + i))
     | Ast.PCtor (_, Some p) -> field env (p, 2)
+    // 맞은 쪽(왼쪽부터)에서 이름마다 값을 꺼냄: 이름 수만큼 값을 내는 scf.if
+    | Ast.POr (a, b) ->
+        let names = patternVars a |> Set.toList
+        if names.IsEmpty then env
+        else
+            let c = emitTest fb a v
+            let valuesFrom p () =
+                let bound = emitBind fb p v Map.empty
+                names |> List.map (fun n -> bound[n])
+            let results = emitIfMany fb names.Length c (valuesFrom a) (valuesFrom b)
+            List.fold2 (fun acc n r -> Map.add n r acc) env names results
     | _ -> env
 
 /// 최상위 함수 하나: 입구에서 캡처한 값을 꺼내 환경을 만들고 본문을 생성

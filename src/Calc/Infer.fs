@@ -318,6 +318,15 @@ and private inferPatternNode (st: State) (ctx: Context) pattern : Type * (string
         t, [ name, t ]
     | PWildcard -> newVar st, []
     | PUnit -> tUnit, []
+    // 두 쪽의 타입이 같고, 같은 이름은 같은 타입
+    | POr (a, b) ->
+        let ta, bindsA = inferPattern st ctx a
+        let tb, bindsB = inferPattern st ctx b
+        locate b (fun () -> unifyAt ta tb)
+        let typesB = Map.ofList bindsB
+        for name, t in bindsA do
+            locate b (fun () -> unifyAt t typesB[name])
+        ta, bindsA
     | PInt _ -> tInt, []
     | PBool _ -> tBool, []
     | PString _ -> tString, []
@@ -398,6 +407,18 @@ and private inferNode (st: State) (ctx: Context) expr : Type =
         st.Level <- st.Level - 1
         generalize st tf
         infer st (withVars [ name, tf ] ctx) inExpr
+    // let rec ... and ...: 그룹 안에서는 서로 단형, 끝나면 함께 generalize
+    | LetRecs (bindings, inExpr) ->
+        st.Level <- st.Level + 1
+        let fnTypes = bindings |> List.map (fun (name, _, _) -> name, newVar st)
+        let groupCtx = withVars fnTypes ctx
+        for (_, param, body), (_, tf) in List.zip bindings fnTypes do
+            let tp = newVar st
+            let tb = infer st (withVars [ param, tp ] groupCtx) body
+            locate body (fun () -> unifyAt tf (TyFun (tp, tb)))
+        st.Level <- st.Level - 1
+        fnTypes |> List.iter (snd >> generalize st)
+        infer st (withVars fnTypes ctx) inExpr
     | Lambda (param, body) ->
         let tp = newVar st
         TyFun (tp, infer st (withVars [ param, tp ] ctx) body)
@@ -421,7 +442,8 @@ and private inferNode (st: State) (ctx: Context) expr : Type =
     | Add (a, b) -> sameIntOrString a b
     | Subtract (a, b)
     | Multiply (a, b)
-    | Divide (a, b) ->
+    | Divide (a, b)
+    | Modulo (a, b) ->
         ints a b
         tInt
     | Negate e ->
@@ -514,6 +536,7 @@ let rec private applyDefaults (st: State) t =
 type private Pat =
     | Any
     | Con of string * Pat list
+    | Or of Pat * Pat
 
 let rec private toPat pattern =
     match pattern with
@@ -528,6 +551,7 @@ let rec private toPat pattern =
     | PCtor (name, None) -> Con (name, [])
     | PCtor (name, Some p) -> Con (name, [ toPat p ])
     | PUnit -> Con ("()", [])
+    | POr (a, b) -> Or (toPat a, toPat b)
 
 /// 타입의 생성자 전부 (이름, 하위 타입). 값이 무한히 많은 타입(int, string)과 정해지지 않은 타입은 None
 let private signature (st: State) (t: Type) : (string * Type list) list option =
@@ -551,6 +575,12 @@ let private signature (st: State) (t: Type) : (string * Type list) list option =
 
 /// 행렬 rows(각 행은 열마다 패턴)이 덮지 못하는 값의 예. 모두 덮으면 None
 let rec private missing (st: State) (rows: Pat list list) (types: Type list) : Pat list option =
+    // 첫 열의 p1 | p2 는 행 두 개로 펼침
+    let rec expand row =
+        match row with
+        | Or (a, b) :: tail -> expand (a :: tail) @ expand (b :: tail)
+        | _ -> [ row ]
+    let rows = List.collect expand rows
     match types with
     | [] -> if List.isEmpty rows then Some [] else None
     | t :: rest ->
@@ -612,6 +642,7 @@ let rec private patToString (prec: int) (p: Pat) =
     | Con (name, []) -> name
     | Con (name, [ arg ]) -> paren (prec > 1) (name + " " + patToString 2 arg)
     | Con (name, args) -> name + " " + (args |> List.map (patToString 2) |> String.concat " ")
+    | Or (a, b) -> paren (prec > 0) (patToString 0 a + " | " + patToString 0 b)
 
 let private checkMatches (st: State) : Warning list =
     [ for t, cases, position, kind in st.Matches do

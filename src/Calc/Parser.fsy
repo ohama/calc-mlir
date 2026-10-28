@@ -19,6 +19,19 @@ let paramBody (param: string) (body: Expr) =
 let makeLambda (parameters: string list) (body: Expr) =
     List.foldBack (fun p acc -> Lambda(p, paramBody p acc)) parameters body
 
+/// let rec ... and ...: 같은 이름을 두 번 정의하면 오류
+let checkRecBindings (pos: FSharp.Text.Lexing.Position) (bindings: (string * string * Expr) list) =
+    match bindings |> List.countBy (fun (name, _, _) -> name) |> List.tryFind (fun (_, n) -> n > 1) with
+    | Some (name, _) -> Errors.syntaxError (sprintf "Variable %s is bound several times in this let rec" name) pos
+    | None -> bindings
+
+/// x |> f  ==  let $pipe = x in f $pipe (F# 처럼 x 를 먼저 계산)
+let makePipe (x: Expr) (f: Expr) = Let("$pipe", x, App(f, Var "$pipe"))
+
+/// f >> g  ==  let $f = f in let $g = g in fun $x -> $g ($f $x)
+let makeCompose (f: Expr) (g: Expr) =
+    Let("$f", f, Let("$g", g, Lambda("$x", App(Var "$g", App(Var "$f", Var "$x")))))
+
 /// 최상위 항목들을 식 하나로: 선언은 뒤 항목 전체를 본문으로 하는 let, 식은 e; (나머지). 끝이 선언이면 ()
 let rec makeProgram (items: TopItem list) : Expr =
     let located (pos: FSharp.Text.Lexing.Position) (e: Expr) =
@@ -30,6 +43,7 @@ let rec makeProgram (items: TopItem list) : Expr =
     | TopExpr e :: rest -> Seq(e, makeProgram rest)
     | TopLet (name, value, pos) :: rest -> located pos (Let(name, value, makeProgram rest))
     | TopLetRec (name, param, body, pos) :: rest -> located pos (LetRec(name, param, body, makeProgram rest))
+    | TopLetRecs (bindings, pos) :: rest -> located pos (LetRecs(bindings, makeProgram rest))
     | TopLetPattern (pattern, value, pos) :: rest -> located pos (LetPattern(pattern, value, makeProgram rest))
     | TopType (name, typeParams, ctors, pos) :: rest -> located pos (TypeDecl(name, typeParams, ctors, makeProgram rest))
 
@@ -50,9 +64,29 @@ let rec patternVars pattern =
     | PCtor (_, Some p) -> patternVars p
     | PCtor (_, None) -> []
     | PWildcard | PInt _ | PBool _ | PString _ | PNil | PUnit -> []
+    // 두 쪽이 같은 이름을 묶음 (checkPattern 이 확인)
+    | POr (a, _) -> patternVars a
+
+/// p1 | p2 의 두 쪽은 같은 이름을 묶어야 함 (OCaml 과 같은 규칙)
+let rec checkOrPatterns (pos: FSharp.Text.Lexing.Position) pattern =
+    match pattern with
+    | POr (a, b) ->
+        checkOrPatterns pos a
+        checkOrPatterns pos b
+        let left, right = Set.ofList (patternVars a), Set.ofList (patternVars b)
+        match Set.toList (Set.union (Set.difference left right) (Set.difference right left)) with
+        | name :: _ -> Errors.syntaxError (sprintf "Variable %s must occur on both sides of this | pattern" name) pos
+        | [] -> ()
+    | PCons (h, t) ->
+        checkOrPatterns pos h
+        checkOrPatterns pos t
+    | PTuple items -> List.iter (checkOrPatterns pos) items
+    | PCtor (_, Some p) -> checkOrPatterns pos p
+    | _ -> ()
 
 /// 한 패턴 안에서 같은 이름을 두 번 묶으면 오류 (F# 와 같음). pos 는 패턴의 시작 위치
 let checkPattern (pos: FSharp.Text.Lexing.Position) pattern =
+    checkOrPatterns pos pattern
     let names = patternVars pattern
     match names |> List.countBy id |> List.tryFind (fun (_, n) -> n > 1) with
     | Some (name, _) -> Errors.syntaxError (sprintf "Duplicate variable in pattern: %s" name) pos
@@ -75,7 +109,7 @@ let makeTuple (items: TypeExpr list) =
 %token <string> IDENT
 %token <string> CTOR TYVAR
 %token <string> STRING
-%token LET REC IN EQUALS FUN ARROW
+%token LET REC IN EQUALS FUN FUNCTION ANDKW ARROW
 %token IF THEN ELSE TRUE FALSE
 %token NOTEQUAL LESS GREATER LESSEQUAL GREATEREQUAL
 %token AND OR NOT
@@ -83,7 +117,7 @@ let makeTuple (items: TypeExpr list) =
 %token COMMA UNDERSCORE
 %token TYPE OF
 %token NOBAR BELOWSEMI
-%token PLUS MINUS STAR SLASH LPAREN RPAREN
+%token PLUS MINUS STAR SLASH PERCENT PIPE COMPOSE LPAREN RPAREN
 %token EOF
 
 // 아래로 갈수록 우선순위가 높음.
@@ -107,10 +141,11 @@ let makeTuple (items: TypeExpr list) =
 %nonassoc IN ELSE ARROW
 %left OR
 %left AND
-%left EQUALS NOTEQUAL LESS GREATER LESSEQUAL GREATEREQUAL
+// |> 와 >> 는 비교와 같은 자리 (F#, OCaml 과 같음): x + 1 |> f == f (x + 1), xs |> map f |> sum 은 왼쪽부터
+%left EQUALS NOTEQUAL LESS GREATER LESSEQUAL GREATEREQUAL PIPE COMPOSE
 %right CONS
 %left PLUS MINUS
-%left STAR SLASH
+%left STAR SLASH PERCENT
 %nonassoc UMINUS NOT
 
 %start start startItems
@@ -148,6 +183,8 @@ TopDecl:
     | LET LetPattern EQUALS SeqExpr { TopLetPattern($2, $4, parseState.InputStartPosition 1) }
     | LET REC IDENT Params EQUALS SeqExpr
                                     { TopLetRec($3, List.head $4, paramBody (List.head $4) (makeLambda (List.tail $4) $6), parseState.InputStartPosition 1) }
+    | LET REC RecBinding ANDKW RecBindings
+                                    { TopLetRecs(checkRecBindings (parseState.InputStartPosition 1) ($3 :: $5), parseState.InputStartPosition 1) }
     | TYPE TypeParams TypeName EQUALS OptBar CtorDecls
                                     { TopType($3, $2, checkCtors (parseState.InputStartPosition 6) $6, parseState.InputStartPosition 1) }
 
@@ -173,6 +210,9 @@ Expr:
                                     { at parseState (TypeDecl($3, $2, checkCtors (parseState.InputStartPosition 6) $6, $8)) }
     | LET REC IDENT Params EQUALS SeqExpr IN SeqExpr
                                     { at parseState (LetRec($3, List.head $4, paramBody (List.head $4) (makeLambda (List.tail $4) $6), $8)) }
+    | LET REC RecBinding ANDKW RecBindings IN SeqExpr
+                                    { at parseState (LetRecs(checkRecBindings (parseState.InputStartPosition 1) ($3 :: $5), $7)) }
+    | FUNCTION OptBar Arms          { at parseState (Lambda("$function", at parseState (Match(Var "$function", $3)))) }
     | FUN Params ARROW SeqExpr      { at parseState (makeLambda $2 $4) }
     | IF Expr THEN Expr ELSE Expr   { at parseState (If($2, $4, $6)) }
     | MATCH Expr WITH OptBar Arms   { at parseState (Match($2, $5)) }
@@ -181,6 +221,9 @@ Expr:
     | Expr MINUS Expr               { at parseState (Subtract($1, $3)) }
     | Expr STAR Expr                { at parseState (Multiply($1, $3)) }
     | Expr SLASH Expr               { at parseState (Divide($1, $3)) }
+    | Expr PERCENT Expr             { at parseState (Modulo($1, $3)) }
+    | Expr PIPE Expr                { at parseState (makePipe $1 $3) }
+    | Expr COMPOSE Expr             { at parseState (makeCompose $1 $3) }
     | MINUS Expr %prec UMINUS       { at parseState (Negate $2) }
     | Expr EQUALS Expr              { at parseState (Equal($1, $3)) }
     | Expr NOTEQUAL Expr            { at parseState (NotEqual($1, $3)) }
@@ -236,10 +279,15 @@ Arm:
     | Pattern WHEN Expr ARROW SeqExpr
                                     { (checkPattern (parseState.InputStartPosition 1) $1, Some $3, $5) }
 
+// | 패턴이 가장 약함: A :: xs | [] == (A :: xs) | []
 // :: 패턴은 오른쪽 결합 (h :: t :: rest == h :: (t :: rest))
 // 생성자 패턴이 :: 보다 강함: Some x :: rest == (Some x) :: rest
 Pattern:
-    | CtorPattern CONS Pattern      { at parseState (PCons($1, $3)) }
+    | ConsPattern                   { $1 }
+    | ConsPattern BAR Pattern       { at parseState (POr($1, $3)) }
+
+ConsPattern:
+    | CtorPattern CONS ConsPattern  { at parseState (PCons($1, $3)) }
     | CtorPattern                   { $1 }
 
 CtorPattern:
@@ -324,3 +372,11 @@ Param:
 Params:
     | Param                         { [ $1 ] }
     | Param Params                  { $1 :: $2 }
+
+// let rec 의 함수 하나: f x y = body
+RecBinding:
+    | IDENT Params EQUALS SeqExpr   { ($1, List.head $2, paramBody (List.head $2) (makeLambda (List.tail $2) $4)) }
+
+RecBindings:
+    | RecBinding                    { [ $1 ] }
+    | RecBinding ANDKW RecBindings  { $1 :: $3 }
