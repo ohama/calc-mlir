@@ -10,8 +10,11 @@
 | 4 | [setup-expecto-with-dotnet-test](setup-expecto-with-dotnet-test.md) | Expecto를 dotnet test로 돌리려면 GenerateProgramFile=false와 YoloDev 어댑터가 필요하다. 어댑터가 없으면 0개 실행으로 성공한다 | 2026-10-27 |
 | 5 | [read-version-from-fsproj](read-version-from-fsproj.md) | fsproj <Version> 하나로 버전을 관리한다. +git 해시 접미사와 GetEntryAssembly 함정에 주의한다 | 2026-10-27 |
 | 6 | [write-fscheck-properties-for-parser](write-fscheck-properties-for-parser.md) | 문자열을 거치는 속성 테스트는 렉서가 표현할 수 있는 값만 생성한다. 기본 정수 범위가 작으니 경계값은 따로 테스트한다 | 2026-10-27 |
+| 7 | [parse-function-application-in-fsyacc](parse-function-application-in-fsyacc.md) | 연산자 없이 붙여 쓰는 함수 호출(f x y)은 우선순위 선언으로 표현할 수 없다. AppExpr/Atom 문법 계층으로 표현한다 | 2026-10-27 |
+| 8 | [implement-closures-and-let-rec](implement-closures-and-let-rec.md) | 함수 값은 정의 시점의 환경을 저장한 클로저다. let rec은 호출할 때 자기 자신을 환경에 넣는다 | 2026-10-27 |
+| 9 | [handle-deep-recursion-stack-overflow](handle-deep-recursion-stack-overflow.md) | 인터프리터의 재귀는 .NET 스택을 쓰고 StackOverflow는 잡을 수 없다. 큰 스택의 스레드에서 평가한다 | 2026-10-27 |
 
-추천 읽는 순서: 3 → 2 → 1 (렉서 → 파서 우선순위 → 우선순위 함정), 4 → 6 (테스트), 5 (릴리스)
+추천 읽는 순서: 3 → 2 → 1 → 7 (렉서 → 파서 우선순위 → 우선순위 함정 → 함수 호출), 8 → 9 (함수 평가와 재귀 한계), 4 → 6 (테스트), 5 (릴리스)
 
 ---
-총 6개 | 업데이트: 2026-10-27
+총 9개 | 업데이트: 2026-10-27
