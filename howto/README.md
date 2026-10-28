@@ -59,8 +59,9 @@
 | 51 | [51-scope-annotation-type-variables-by-let-level](51-scope-annotation-type-variables-by-let-level.md) | 타입 표기의 'a 표를 전체에 하나 두면 generalize된 변수가 다시 unify된다. let 정의마다 범위를 열고 그 level에서 변수를 만든다. 인자 표기의 let은 범위를 열지 않음 | [61914f3](https://github.com/ohama/calc-mlir/commit/61914f3) v0.29.0 | 2026-10-28 |
 | 52 | [52-write-standard-library-as-prelude-in-the-language](52-write-standard-library-as-prelude-in-the-language.md) | 내장 함수를 F#과 C에 따로 두지 않고 언어로 쓴 prelude를 let 사슬로 붙인다. 쓰는 정의만 이름을 따라 고르고, tail recursion으로 쓰고, 예외가 필요한 함수는 남긴다. 느려진 만큼 잰다 | [83c6071](https://github.com/ohama/calc-mlir/commit/83c6071) v0.30.0 | 2026-10-28 |
 | 53 | [53-enable-fsharp-tailcalls-in-debug-for-interpreters](53-enable-fsharp-tailcalls-in-debug-for-interpreters.md) | F#은 Release에서만 .tail 호출을 내서, 인터프리터의 tail recursion이 Debug에서만 깊이 100만에 죽는다. <Tailcalls>true</Tailcalls>로 두 구성을 맞춘다 | [83c6071](https://github.com/ohama/calc-mlir/commit/83c6071) v0.30.0 | 2026-10-28 |
+| 54 | [54-guarantee-tail-calls-with-musttail-in-mlir](54-guarantee-tail-calls-with-musttail-in-mlir.md) | -O2가 해 주는 tail call은 보장이 아니다(-O0에서 죽음). tail position의 호출을 musttail로 부르고 바로 ret하고, 그 분기는 scf.if 대신 블록과 cond_br로 만든다. -O0 테스트로 고정 | [0b5f95e](https://github.com/ohama/calc-mlir/commit/0b5f95e) v0.31.0 | 2026-10-28 |
 
-추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 → 16 → 43 → 46 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match → 오류 위치 → 최상위 선언과 ; → 두 번째 시작 기호), 45 (REPL), 17 → 18 → 19 (패턴 매칭, 생성자, ADT), 20 → 21 → 22 → 41 → 42 → 49 → 51 (타입 추론, 오류 위치, 빠진 분기, 쓰이지 않는 분기, 타입 표기), 8 → 9 → 53 → 13 → 14 → 15 → 52 (함수 평가, 재귀 한계, Debug의 tail call, 내장 함수, prelude), 23 → 24 → 25 → 26 → 27 → 28 → 29 → 30 → 31 → 32 → 33 → 34 → 35 → 36 → 37 → 38 → 39 → 40 → 47 → 48 (네이티브 컴파일러), 4 → 6 → 44 → 50 (테스트), 5 (릴리스)
+추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 → 16 → 43 → 46 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match → 오류 위치 → 최상위 선언과 ; → 두 번째 시작 기호), 45 (REPL), 17 → 18 → 19 (패턴 매칭, 생성자, ADT), 20 → 21 → 22 → 41 → 42 → 49 → 51 (타입 추론, 오류 위치, 빠진 분기, 쓰이지 않는 분기, 타입 표기), 8 → 9 → 53 → 13 → 14 → 15 → 52 (함수 평가, 재귀 한계, Debug의 tail call, 내장 함수, prelude), 23 → 24 → 25 → 26 → 27 → 28 → 29 → 30 → 31 → 32 → 33 → 34 → 35 → 36 → 37 → 38 → 39 → 40 → 47 → 48 → 54 (네이티브 컴파일러), 4 → 6 → 44 → 50 (테스트), 5 (릴리스)
 
 ---
-총 53개 | 업데이트: 2026-10-28
+총 54개 | 업데이트: 2026-10-28
