@@ -49,7 +49,11 @@ type private State =
       /// (패턴, 가드가 있는지, 분기의 위치)
       Matches: List<Type * (Pattern * bool * (int * int) option) list * (int * int) option * string>
       /// e1; e2 에서 버리는 e1 의 타입과 위치
-      Discarded: List<Type * (int * int) option> }
+      Discarded: List<Type * (int * int) option>
+      /// 타입 표기의 'a 가 가리키는 변수. let 정의마다 범위 하나 (단계, 이름 → 변수), 안쪽 범위가 앞
+      mutable TypeVarScopes: (int * Dictionary<string, Type>) list
+      /// 타입 표기에 쓴 'a 와 그 변수, 처음 쓴 위치. 추론이 끝난 뒤 다른 타입으로 정해졌는지 확인
+      NamedVars: List<string * Type * (int * int) option> }
 
 type private Context =
     { Vars: Map<string, Type>
@@ -291,22 +295,49 @@ let private initialContext (st: State) =
 
 // ---- 추론 ----
 
-/// type 선언의 TypeExpr 를 Type 으로. params 는 선언의 타입 변수
-let rec private convertType (ctx: Context) (typeParams: Map<string, Type>) te =
+/// type 선언이나 타입 표기의 TypeExpr 를 Type 으로. typeVar 는 'a 가 가리키는 타입
+let rec private convertType (ctx: Context) (typeVar: string -> Type) te =
     match te with
     | TName (name, args) ->
         match Map.tryFind name ctx.Types with
         | Some (unique, arity) when arity = List.length args ->
-            TyCon (unique, args |> List.map (convertType ctx typeParams))
+            TyCon (unique, args |> List.map (convertType ctx typeVar))
         | Some (_, arity) ->
             typeError (sprintf "Type %s expects %d type argument(s) but got %d" name arity (List.length args))
         | None -> typeError (sprintf "Unknown type: %s" name)
-    | TVar name ->
-        match Map.tryFind name typeParams with
-        | Some t -> t
-        | None -> typeError (sprintf "Unbound type variable: '%s" name)
-    | TTuple items -> TyTuple (items |> List.map (convertType ctx typeParams))
-    | TFun (a, b) -> TyFun (convertType ctx typeParams a, convertType ctx typeParams b)
+    | TVar name -> typeVar name
+    | TTuple items -> TyTuple (items |> List.map (convertType ctx typeVar))
+    | TFun (a, b) -> TyFun (convertType ctx typeVar a, convertType ctx typeVar b)
+
+/// 타입 표기의 'a: 바깥 범위까지 찾아보고, 없으면 가장 안쪽 범위(지금 let 정의)의 단계에서 새 변수.
+/// OCaml 처럼 일반화를 강제하지 않음: let f (x: 'a) = x + 1 은 int -> int (대신 경고)
+let private namedTypeVar (st: State) (node: obj) (name: string) =
+    let found =
+        st.TypeVarScopes
+        |> List.tryPick (fun (_, vars) ->
+            match vars.TryGetValue name with
+            | true, t -> Some t
+            | _ -> None)
+    match found with
+    | Some t -> t
+    | None ->
+        let level, vars = List.head st.TypeVarScopes
+        let t = newVarAt st level None
+        vars[name] <- t
+        st.NamedVars.Add((name, t, Errors.positionOf node))
+        t
+
+/// let 정의의 값을 추론하는 동안 'a 의 범위 하나를 엶 (단계를 올린 뒤에 부름).
+/// 타입을 적은 매개변수가 만든 let x = (x : t) 는 열지 않음: fun (x: 'a) (y: 'a) 의 두 'a 는 같음
+let private withTypeVarScope (st: State) (opens: bool) (action: unit -> 'a) : 'a =
+    if not opens then action ()
+    else
+        let saved = st.TypeVarScopes
+        st.TypeVarScopes <- (st.Level, Dictionary()) :: saved
+        try
+            action ()
+        finally
+            st.TypeVarScopes <- saved
 
 /// 패턴의 타입과, 패턴이 묶는 이름들 (단형)
 let rec private inferPattern (st: State) (ctx: Context) pattern : Type * (string * Type) list =
@@ -395,7 +426,11 @@ and private inferNode (st: State) (ctx: Context) expr : Type =
     | Let (name, value, body) ->
         // let 다형성: 값의 타입을 한 단계 안에서 추론하고, 그 단계에서 생긴 변수를 ∀ 로 만듦
         st.Level <- st.Level + 1
-        let tv = infer' value
+        let isParam =
+            match value with
+            | Annot (Var v, _) -> v = name
+            | _ -> false
+        let tv = withTypeVarScope st (not isParam) (fun () -> infer' value)
         st.Level <- st.Level - 1
         generalize st tv
         infer st (withVars [ name, tv ] ctx) body
@@ -403,7 +438,7 @@ and private inferNode (st: State) (ctx: Context) expr : Type =
         st.Level <- st.Level + 1
         let tf = newVar st
         let tp = newVar st
-        let tb = infer st (withVars [ name, tf; param, tp ] ctx) body
+        let tb = withTypeVarScope st true (fun () -> infer st (withVars [ name, tf; param, tp ] ctx) body)
         unifyAt tf (TyFun (tp, tb))
         st.Level <- st.Level - 1
         generalize st tf
@@ -413,10 +448,12 @@ and private inferNode (st: State) (ctx: Context) expr : Type =
         st.Level <- st.Level + 1
         let fnTypes = bindings |> List.map (fun (name, _, _) -> name, newVar st)
         let groupCtx = withVars fnTypes ctx
-        for (_, param, body), (_, tf) in List.zip bindings fnTypes do
-            let tp = newVar st
-            let tb = infer st (withVars [ param, tp ] groupCtx) body
-            locate body (fun () -> unifyAt tf (TyFun (tp, tb)))
+        // 그룹 전체가 'a 의 범위 하나
+        withTypeVarScope st true (fun () ->
+            for (_, param, body), (_, tf) in List.zip bindings fnTypes do
+                let tp = newVar st
+                let tb = infer st (withVars [ param, tp ] groupCtx) body
+                locate body (fun () -> unifyAt tf (TyFun (tp, tb))))
         st.Level <- st.Level - 1
         fnTypes |> List.iter (snd >> generalize st)
         infer st (withVars fnTypes ctx) inExpr
@@ -488,7 +525,7 @@ and private inferNode (st: State) (ctx: Context) expr : Type =
         result
     | LetPattern (pattern, value, body) ->
         st.Level <- st.Level + 1
-        let tv = infer' value
+        let tv = withTypeVarScope st true (fun () -> infer' value)
         let tp, binds = inferPattern st ctx pattern
         expect value tp tv
         st.Level <- st.Level - 1
@@ -506,7 +543,11 @@ and private inferNode (st: State) (ctx: Context) expr : Type =
         let declCtx = { ctx with Types = Map.add name (unique, List.length typeParams) ctx.Types }
         let result = TyCon (unique, paramVars |> List.map snd)
         let ctorArgs =
-            ctors |> List.map (fun (ctor, argType) -> ctor, argType |> Option.map (convertType declCtx (Map.ofList paramVars)))
+            let typeParam name =
+                match List.tryFind (fun (p, _) -> p = name) paramVars with
+                | Some (_, t) -> t
+                | None -> typeError (sprintf "Unbound type variable: '%s" name)
+            ctors |> List.map (fun (ctor, argType) -> ctor, argType |> Option.map (convertType declCtx typeParam))
         let paramTypeVars =
             paramVars |> List.map (fun (_, t) -> match t with | TyVar v -> v | _ -> failwith "unreachable")
         st.DataTypes[unique] <- (paramTypeVars, ctorArgs)
@@ -517,6 +558,10 @@ and private inferNode (st: State) (ctx: Context) expr : Type =
                 | None -> ctor, result
                 | Some t -> ctor, TyFun (t, result))
         infer st (withVars ctorTypes declCtx) body
+    | Annot (e, te) ->
+        let t = convertType ctx (namedTypeVar st expr) te
+        expect e t (infer' e)
+        t
 
 /// 아직 정해지지 않은 허용 목록 변수는 첫 번째 허용 타입으로 정함 (F# 가 + 를 int 로 정하는 것과 같음)
 let rec private applyDefaults (st: State) t =
@@ -703,7 +748,14 @@ let private checkMatches (st: State) : Warning list =
 
 /// 식 전체의 타입과, 모든 값을 덮지 못하는 패턴 매칭의 경고. 타입이 맞지 않으면 TypeError
 let typecheckWithWarnings (expr: Expr) : Type * Warning list =
-    let st = { Level = 0; NextId = 0; DataTypes = Dictionary(); Matches = List(); Discarded = List() }
+    let st =
+        { Level = 0
+          NextId = 0
+          DataTypes = Dictionary()
+          Matches = List()
+          Discarded = List()
+          TypeVarScopes = [ 0, Dictionary() ]
+          NamedVars = List() }
     let t = infer st (initialContext st) expr
     applyDefaults st t
     let discarded =
@@ -714,7 +766,21 @@ let typecheckWithWarnings (expr: Expr) : Type * Warning list =
                   yield
                       { Message = sprintf "this expression has type %s and its value is ignored (use ignore or let _ = ...)" (typeToString other)
                         Position = position } ]
-    t, checkMatches st @ discarded |> List.sortBy (fun w -> w.Position)
+    // 'a 로 적었는데 다른 타입으로 정해짐 (F# FS0064). OCaml 은 경고하지 않음
+    let constrained =
+        [ for name, t, position in st.NamedVars do
+              let shown =
+                  match prune t with
+                  | TyVar { Allowed = None } -> None
+                  | TyVar { Allowed = Some allowed } -> Some (String.concat " or " allowed)
+                  | other -> Some (typeToString other)
+              match shown with
+              | Some what ->
+                  yield
+                      { Message = sprintf "the type variable '%s has been constrained to be type %s" name what
+                        Position = position }
+              | None -> () ]
+    t, checkMatches st @ discarded @ constrained |> List.sortBy (fun w -> w.Position)
 
 /// 식 전체의 타입. 타입이 맞지 않으면 TypeError
 let typecheck (expr: Expr) : Type = fst (typecheckWithWarnings expr)

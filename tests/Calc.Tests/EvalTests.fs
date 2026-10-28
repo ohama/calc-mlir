@@ -312,7 +312,15 @@ let cases =
       // 안쪽 type 선언의 같은 이름 생성자는 다른 타입이라 일치하지 않음
       "type t = A in let v = A in type u = A in match v with A -> 1 | _ -> 2", VInt 2
       // type 선언 밖에서는 생성자를 쓸 수 없지만 값은 남아 있음
-      "let v = (type t = A in A) in v = v", VBool true ]
+      "let v = (type t = A in A) in v = v", VBool true
+      // 타입 표기: 실행에는 영향 없음
+      "(1 + 2 : int)", VInt 3
+      "let f (x: int) (y: string) : string = y + toString x in f 1 \"a\"", VString "a1"
+      "let id (x: 'a) : 'a = x in (id 1, id \"a\")", VTuple [ VInt 1; VString "a" ]
+      "let rec fact (n: int) : int = if n = 0 then 1 else n * fact (n - 1) in fact 5", VInt 120
+      "let xs : int list = [] in 1 :: xs", VList [ VInt 1 ]
+      "(fun (_ : int) -> 0) 5", VInt 0
+      "type ('a, 'b) pair = P of 'a * 'b in match (P (1, \"x\") : (int, string) pair) with P (a, _) -> a", VInt 1 ]
 
 /// 오류 메시지가 정확히 일치하는지 확인
 let expectError input message =

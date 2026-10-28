@@ -163,8 +163,8 @@ let tests =
         test "문자열 끝의 \\ 는 닫는 \" 를 이스케이프" {
             expectLexError "\"abc\\\"" "Unterminated string" 1 1
         }
-        test ": 하나는 알 수 없는 문자" {
-            expectLexError "1 : 2" "Unexpected character: :" 1 3
+        test ": 는 타입 표기, :: 는 cons (가장 긴 토큰)" {
+            Expect.equal (tokens "(x : 'a) :: :::") [ LPAREN; IDENT "x"; COLON; TYVAR "a"; RPAREN; CONS; CONS; COLON; EOF ] ""
         }
         test "& 하나는 알 수 없는 문자" {
             expectLexError "1 & 2" "Unexpected character: &" 1 3

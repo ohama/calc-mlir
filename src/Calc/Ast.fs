@@ -1,8 +1,8 @@
 module Ast
 
-/// type 선언에 적는 타입. 실행 중 타입 검사에는 쓰지 않고, 생성자 인자 수(튜플 원소 수)만 사용
+/// type 선언과 타입 표기 (e : t) 에 적는 타입. 실행 중 타입 검사에는 쓰지 않고, 생성자 인자 수(튜플 원소 수)만 사용
 type TypeExpr =
-    /// int, string, 'a list (인자는 앞에 씀)
+    /// int, string, 'a list, (int, string) pair (인자는 앞에 씀)
     | TName of string * TypeExpr list
     /// 'a
     | TVar of string
@@ -79,6 +79,9 @@ type Expr =
     | Ctor of string
     /// type 'a name = C1 | C2 of t | ... in body
     | TypeDecl of name: string * typeParams: string list * ctors: (string * TypeExpr option) list * body: Expr
+    /// (e : t): e 의 타입이 t 여야 함. 실행할 때는 e 와 같음.
+    /// 매개변수 표기 fun (x: t) -> body 는 fun x -> let x = (x : t) in body, 반환 타입 표기 let f x : t = e 는 let f x = (e : t)
+    | Annot of Expr * TypeExpr
 
 /// 프로그램의 최상위 항목: in 없는 선언 또는 식. 위치는 선언의 시작 (풀어 쓴 let 노드에 기록)
 type TopItem =

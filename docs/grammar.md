@@ -34,6 +34,7 @@ Calc 언어의 어휘 구조, 구문, 의미를 정리한 문서입니다. 구�
 | `SEMISEMI` | `;;` (최상위 항목 구분) | |
 | `COMMA` | `,` | |
 | `CONS` | `::` | |
+| `COLON` | `:` (타입 표기) | |
 | `BAR` | `\|` | |
 | `EOF` | 입력의 끝 | |
 
@@ -81,7 +82,7 @@ items   = ε
         | seq [ ";;" items ]
         | decl afterDecl ;
 afterDecl = ε | ";;" items | decl afterDecl ;
-decl    = "let" IDENT [ params ] "=" seq
+decl    = "let" IDENT [ params ] [ ":" type ] "=" seq
         | "let" letPat "=" seq
         | "let" "rec" recBinding { "and" recBinding }
         | "type" [ typeParams ] typeName "=" [ "|" ] ctorDecl { "|" ctorDecl } ;
@@ -89,9 +90,9 @@ decl    = "let" IDENT [ params ] "=" seq
 seq     = expr [ ";" seq ] ;                             (* e1; e2: 순서 실행 *)
 
 expr    = app
-        | "let" IDENT "=" seq "in" seq
+        | "let" IDENT [ ":" type ] "=" seq "in" seq
         | "let" letPat "=" seq "in" seq                  (* 튜플 분해, (), _ *)
-        | "let" IDENT params "=" seq "in" seq            (* 함수 정의 *)
+        | "let" IDENT params [ ":" type ] "=" seq "in" seq   (* 함수 정의, 반환 타입 표기 *)
         | "let" "rec" recBinding { "and" recBinding } "in" seq   (* 재귀 함수 정의, and 로 mutual recursion *)
         | "function" [ "|" ] arm { "|" arm }             (* fun x -> match x with ... *)
         | "fun" params "->" seq                          (* 람다 *)
@@ -112,13 +113,14 @@ atom    = NUMBER
         | CTOR                                           (* 생성자 *)
         | "(" ")"                                        (* unit *)
         | "(" expr ")"
+        | "(" expr ":" type ")"                          (* 타입 표기 *)
         | "(" expr ";" seq ")"                           (* 괄호 안의 순서 실행 *)
         | "(" expr "," expr { "," expr } ")"             (* 튜플 *)
         | "[" [ expr { ";" expr } ] "]" ;                (* 리스트 리터럴 *)
 
 arm     = pattern [ "when" expr ] "->" seq ;
 
-recBinding = IDENT params "=" seq ;
+recBinding = IDENT params [ ":" type ] "=" seq ;
 
 pattern = consPat [ "|" pattern ] ;                      (* or 패턴: 가장 약함 *)
 consPat = ctorPat [ "::" consPat ] ;                     (* :: 는 오른쪽 결합 *)
@@ -134,14 +136,16 @@ tuplePat = "(" pattern "," pattern { "," pattern } ")" ;
 letPat  = tuplePat | "(" ")" | "_" ;
 
 params  = param { param } ;
-param   = IDENT | "_" | "(" ")" ;                      (* () 는 unit 인자 *)
+param   = IDENT | "_" | "(" ")"                        (* () 는 unit 인자 *)
+        | "(" ( IDENT | "_" ) ":" type ")" ;            (* 타입을 적은 인자 *)
 
 typeParams = TYVAR | "(" TYVAR { "," TYVAR } ")" ;     (* 'a tree, ('k, 'v) map *)
 typeName   = IDENT | CTOR ;
 ctorDecl   = CTOR [ "of" type ] ;
 type       = prodType [ "->" type ] ;                    (* -> 는 오른쪽 결합 *)
 prodType   = appType { "*" appType } ;
-appType    = atomType { IDENT } ;                        (* int list option *)
+appType    = atomType { IDENT }                          (* int list option *)
+           | "(" type "," type { "," type } ")" IDENT { IDENT } ;   (* (int, string) pair *)
 atomType   = IDENT | TYVAR | "(" type ")" ;
 
 binop   = "+" | "-" | "*" | "/" | "%"
@@ -360,6 +364,29 @@ sum (Node (Node (Leaf, 1, Leaf), 2, Node (Leaf, 3, Leaf)))   (* 6 *)
 - 같은 이름의 생성자를 안쪽 `type`에서 다시 선언하면 안쪽 것이 가립니다. 바깥 타입의 값은 안쪽 생성자 패턴과 일치하지 않습니다.
 - 대문자 이름은 `let`이나 `fun`으로 묶을 수 없습니다. `let X = 1 in X`는 parse error입니다.
 
+### 타입 표기
+
+식, 함수 인자, 반환 타입, `let` 값에 타입을 적을 수 있습니다(OCaml과 같은 문법). 타입 추론이 적은 타입과 추론한 타입을 unify합니다. 실행에는 영향이 없습니다.
+
+```
+(xs : int list)                                          (* 식: 괄호가 필요함 *)
+fun (x: int) (y: string) -> y + toString x               (* 인자 *)
+let f (x: int) : string = toString x in f 1              (* 인자와 반환 타입 *)
+let rec fact (n: int) : int = if n = 0 then 1 else n * fact (n - 1) in fact 5
+let names : string list = [] in names                    (* let 값 *)
+type ('a, 'b) pair = P of 'a * 'b in (P (1, "a") : (int, string) pair)
+```
+
+- **타입 문법:** `type` 선언의 `of` 뒤와 같습니다. 타입 인자가 여럿이면 `(int, string) pair`처럼 괄호로 묶어 앞에 씁니다.
+- **식 표기는 괄호 안에서만:** `(e : t)`. 괄호 없는 `e : t`는 parse error입니다(OCaml과 같음, F#과 다름).
+- **맞지 않으면 타입 오류:** `("a" : int)`는 `Type mismatch: expected int but got string`이고, 위치는 표기한 식(`"a"`)을 가리킵니다. 반환 타입이 맞지 않으면 함수 본문을 가리킵니다.
+- **타입 이름:** 알려진 타입이어야 합니다. `(1 : foo)`는 `Unknown type: foo`, `([] : list)`는 `Type list expects 1 type argument(s) but got 0`입니다. 위치는 타입을 가리킵니다.
+- **type variable `'a`:** 표기에서는 "아직 모르는 타입"이라는 뜻입니다. polymorphic하라고 강제하지 않습니다(OCaml과 같음).
+  - **범위:** 한 `let` 정의(값, 인자, 반환 타입, 안쪽 `let`) 안에서 같은 이름은 같은 타입입니다. `fun (x: 'a) (y: 'a) -> (x, y)`는 `'a -> 'a -> 'a * 'a`입니다. 안쪽 `let`은 바깥에서 쓴 `'a`를 같은 것으로 보고, 바깥에 없는 이름은 안쪽 정의의 것입니다.
+  - **generalization:** 정의가 끝나면 보통 type variable처럼 generalize합니다. `let id (x: 'a) : 'a = x in (id 1, id "a")`는 `int * string`입니다.
+  - **다른 타입으로 정해지면 경고:** `let f (x: 'a) = x + 1`은 `int -> int`가 되고 `Warning: the type variable 'a has been constrained to be type int`를 냅니다(F# FS0064와 같음. OCaml은 경고하지 않음). 아래 "6. 타입 추론"을 참고하세요.
+- **풀어 쓰기:** 인자 표기 `fun (x: t) -> e`는 `fun x -> let x = (x : t) in e`, 반환 타입 표기 `let f x : t = e`는 `let f x = (e : t)`입니다. 컴파일러는 표기를 지우고 같은 코드를 만듭니다.
+
 ### `option`
 
 `'a option = None | Some of 'a`는 선언 없이 쓸 수 있습니다(처음 환경에 들어 있음). 값이 없을 수 있는 결과에 씁니다.
@@ -425,6 +452,11 @@ defaultValue 0 (tryFind (fun x -> x > 10) xs)
 | 패턴 `None` / `Some p` | `PCtor ("None", None)` / `PCtor ("Some", Some p)` |
 | `type 'a t = A \| B of 'a * int in e` | `TypeDecl ("t", ["a"], [ ("A", None); ("B", Some (TTuple [TVar "a"; TName ("int", [])])) ], e)` |
 | 타입 `int list` / `'a` / `a * b` / `a -> b` | `TName ("list", [TName ("int", [])])` / `TVar "a"` / `TTuple [a; b]` / `TFun (a, b)` |
+| `(e : t)` | `Annot (e, t)` |
+| `fun (x: t) -> e` | `Lambda ("x", Let ("x", Annot (Var "x", t), e))` |
+| `let f x : t = e1 in e2` | `Let ("f", Lambda ("x", Annot (e1, t)), e2)` |
+| `let x : t = e1 in e2` | `Let ("x", Annot (e1, t), e2)` |
+| 타입 `(int, string) pair` | `TName ("pair", [TName ("int", []); TName ("string", [])])` |
 | `(e)` | `e` (괄호는 AST에 남지 않음) |
 
 ## 4. 의미 (평가 규칙)
@@ -756,7 +788,7 @@ Error: parse error: unexpected '+' (line 1, column 5)
 | 자기 자신을 포함하는 타입 (`fun x -> x x`) | `Type mismatch: cannot construct infinite type 'a = 'a -> 'b` |
 | 정의되지 않은 변수, 생성자 | `Unbound variable: x`, `Unknown constructor: X` |
 | 생성자 패턴의 인자 유무 | `Constructor Some requires an argument`, `Constructor None takes no argument` |
-| `type` 선언의 타입 | `Unknown type: foo`, `Unbound type variable: 'b`, `Duplicate type variable: 'a`, `Type list expects 1 type argument(s) but got 0` |
+| `type` 선언과 타입 표기의 타입 | `Unknown type: foo`, `Unbound type variable: 'b`(`type` 선언만), `Duplicate type variable: 'a`, `Type list expects 1 type argument(s) but got 0` |
 
 - **위치:** 오류에는 문제가 된 식이나 패턴의 위치가 붙습니다(OCaml처럼). `calc`는 파서 오류와 같은 형식으로 위치와 `^`를 출력합니다.
 
@@ -827,6 +859,20 @@ Warning: this match case is unused (line 1, column 42)
 $ calc -e "1; 2"
 Warning: this expression has type int and its value is ignored (use ignore or let _ = ...) (line 1, column 1)
 ```
+
+### 타입 변수가 다른 타입으로 정해짐 경고
+
+타입 표기에 쓴 `'a`가 추론이 끝난 뒤 구체적인 타입으로 정해지면 경고합니다(F# FS0064와 같음). `'a`라고 적었지만 polymorphic하지 않다는 뜻입니다. 위치는 그 `'a`를 처음 쓴 타입 표기입니다.
+
+```
+$ calc -e "let f (x: 'a) = x + 1 in f 2"
+Warning: the type variable 'a has been constrained to be type int (line 1, column 11)
+  1 | let f (x: 'a) = x + 1 in f 2
+    |           ^
+```
+
+- `+`, `<`처럼 allowed list가 있는 연산자로 정해졌는데 끝까지 하나로 정해지지 않았으면 `int or string`으로 보여 줍니다.
+- 다른 `'b`와 같은 타입이 된 경우(`fun (x: 'a) (y: 'b) -> [x; y]`)는 경고하지 않습니다.
 
 ### soundness와 남은 실행 중 오류
 

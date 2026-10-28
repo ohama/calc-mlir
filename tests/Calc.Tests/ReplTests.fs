@@ -37,6 +37,14 @@ let tests =
                   "let _ = a + 1;;", "- : int = 2\n"
                   "let () = ();;", "" ]
         }
+        test "타입 표기와 'a 경고" {
+            expectSession
+                [ "let f (x: int) : string = toString x;;", "val f : int -> string = <fun>\n"
+                  "let xs : string list = [];;", "val xs : string list = []\n"
+                  "let g (x: 'a) = x + 1;;",
+                  "Warning: the type variable 'a has been constrained to be type int (line 1, column 11)\n  1 | let g (x: 'a) = x + 1;;\n    |           ^\nval g : int -> int = <fun>\n"
+                  "(f 1 : string);;", "- : string = \"1\"\n" ]
+        }
         test "let rec ... and ... 는 함수마다 val" {
             expectSession
                 [ "let rec even n = if n = 0 then true else odd (n - 1)\nand odd n = if n = 0 then false else even (n - 1);;",

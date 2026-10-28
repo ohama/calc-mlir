@@ -35,6 +35,9 @@ let tests =
                   "match 1 with x when x -> 1", "Type mismatch: expected bool but got int", (1, 21)
                   "match 1 with 1 -> \"a\" | _ -> 2", "Type mismatch: expected string but got int", (1, 30)
                   "y + 1", "Unbound variable: y", (1, 1)
+                  "(\"a\" : int)", "Type mismatch: expected int but got string", (1, 2)
+                  "let f (x: int) : string =\n  x in f", "Type mismatch: expected string but got int", (2, 3)
+                  "(1 : foo)", "Unknown type: foo", (1, 6)
                   "(1, Nome)", "Unknown constructor: Nome", (1, 5) ] ->
                 test (input.Replace("\n", "\\n")) {
                     Expect.equal (errorAt input) (message, Some position) ""
@@ -115,6 +118,19 @@ let tests =
                     [ notExhaustive "None", Some (1, 1); unused, Some (1, 33) ]
                     "위치 순서"
             }
+        ]
+
+        testList "타입 변수가 다른 타입으로 정해짐 (F# FS0064)" [
+            let constrained name what = sprintf "the type variable '%s has been constrained to be type %s" name what
+            for input, expected in
+                [ "let f (x: 'a) = x + 1 in f", [ constrained "a" "int", Some (1, 11) ]
+                  "fun (x: 'a) (y: 'b) -> if true then x else 1", [ constrained "a" "int", Some (1, 9) ]
+                  "let f (x: 'a) : 'a list = [x; 1] in f", [ constrained "a" "int", Some (1, 11) ]
+                  "let f (x: 'a) (y: 'a) = x < y in f", [ constrained "a" "int", Some (1, 11) ] // 결과 타입이 int 로 정해짐
+                  "let f (x: 'a) (y: 'a) = x < y in ()", [ constrained "a" "int or string", Some (1, 11) ]
+                  "let id (x: 'a) : 'a = x in id 1", []
+                  "let f (x: 'a) (y: 'b) = (x, y) in f 1 true", [] ] do
+                yield test input { Expect.equal (warnings input) expected "" }
         ]
 
         test "모두 덮으면 경고 없음" {

@@ -105,6 +105,19 @@ let inferred =
       "type 'a box = Box of 'a in fun b -> match b with Box x -> x", "'a box -> 'a"
       // 같은 이름의 다른 type 은 구분됨 (실패하는 경우는 아래 오류 목록)
       "type t = A in let v = A in type t = B in v", "t"
+      // 타입 표기
+      "(fun x -> x : int -> int)", "int -> int"
+      "fun (x: string) -> x", "string -> string"
+      "let f (x: int) y : string = y in f", "int -> string -> string"
+      "let x : int list = [] in x", "int list"
+      "let id (x: 'a) : 'a = x in (id 1, id \"a\")", "int * string"
+      "fun (x: 'a) (y: 'a) -> (x, y)", "'a -> 'a -> 'a * 'a"
+      "let rec len (xs: 'a list) : int = match xs with [] -> 0 | _ :: t -> 1 + len t in len", "'a list -> int"
+      "let f (x: 'a) = let g (y: 'a) = (x, y) in g in f", "'a -> 'a -> 'a * 'a"
+      "let f (x: 'a) = let id (y: 'b) = y in (id 1, id true, x) in f", "'a -> int * bool * 'a"
+      "type ('a, 'b) pair = P of 'a * 'b in fun (p: (int, 'b) pair) -> p", "(int, 'a) pair -> (int, 'a) pair"
+      "(None : int option)", "int option"
+      "(fun (x: 'a) -> x + 1)", "int -> int"
       // = 는 모든 타입 (함수 비교는 실행 중 오류로 남음, OCaml 과 같음)
       "(fun x -> x) = (fun x -> x)", "bool" ]
 
@@ -151,6 +164,14 @@ let tests =
             expectTypeError "fst (1, 2, 3)" "Type mismatch: expected 'a * 'b but got int * int * int"
             expectTypeError "Some 1 = None 1" "Type mismatch: expected function but got 'a option"
             expectTypeError "defaultValue \"a\" (Some 1)" "Type mismatch: expected string option but got int option"
+            // 타입 표기
+            expectTypeError "(\"a\" : int)" "Type mismatch: expected int but got string"
+            expectTypeError "let f (x: int) : string = x in f" "Type mismatch: expected string but got int"
+            expectTypeError "fun (x: int) -> x + \"a\"" "Type mismatch: expected int but got string"
+            expectTypeError "let f (x: 'a) (y: 'a) = (x, y) in f 1 \"a\"" "Type mismatch: expected int but got string"
+            expectTypeError "(1 : foo)" "Unknown type: foo"
+            expectTypeError "([] : list)" "Type list expects 1 type argument(s) but got 0"
+            expectTypeError "(1 : (int, int) option)" "Type option expects 1 type argument(s) but got 2"
         ]
 
         test "모든 내장 함수와 생성자에 타입이 있음" {

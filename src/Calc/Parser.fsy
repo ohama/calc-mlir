@@ -11,13 +11,31 @@ let at (parseState: FSharp.Text.Parsing.IParseState) (node: 'a) : 'a =
     node
 
 /// 매개변수 () 는 이름 "()" 로 받고 본문에서 unit 패턴으로 확인: fun () -> e  ==  fun "()" -> match "()" with () -> e
-/// (타입이 unit 으로 정해짐. "()" 는 렉서가 만들 수 없는 이름이라 사용자 이름과 겹치지 않음)
-let paramBody (param: string) (body: Expr) =
-    if param = "()" then Match(Var "()", [ PUnit, None, body ]) else body
+/// (타입이 unit 으로 정해짐. "()" 는 렉서가 만들 수 없는 이름이라 사용자 이름과 겹치지 않음).
+/// 타입을 적은 매개변수 (x: t) 는 본문 앞에서 다시 묶음: fun (x: t) -> e  ==  fun x -> let x = (x : t) in e
+let paramBody (param: string, annot: Expr option) (body: Expr) =
+    match annot with
+    | Some a -> Let(param, a, body)
+    | None when param = "()" -> Match(Var "()", [ PUnit, None, body ])
+    | None -> body
 
 /// fun x y -> body  ==  fun x -> fun y -> body
-let makeLambda (parameters: string list) (body: Expr) =
-    List.foldBack (fun p acc -> Lambda(p, paramBody p acc)) parameters body
+let makeLambda (parameters: (string * Expr option) list) (body: Expr) =
+    List.foldBack (fun (p, a) acc -> Lambda(p, paramBody (p, a) acc)) parameters body
+
+/// let rec f x y = body 의 (f 의 매개변수, 본문)
+let recFunction (parameters: (string * Expr option) list) (body: Expr) =
+    let first = List.head parameters
+    fst first, paramBody first (makeLambda (List.tail parameters) body)
+
+/// 반환 타입 표기: let f x : t = e  ==  let f x = (e : t). 위치는 타입의 시작 (경고가 가리킴)
+let annotate (annot: (TypeExpr * FSharp.Text.Lexing.Position) option) (e: Expr) =
+    match annot with
+    | Some (t, pos) ->
+        let node = Annot(e, t)
+        Errors.recordPosition (box node) pos
+        node
+    | None -> e
 
 /// let rec ... and ...: 같은 이름을 두 번 정의하면 오류
 let checkRecBindings (pos: FSharp.Text.Lexing.Position) (bindings: (string * string * Expr) list) =
@@ -115,7 +133,7 @@ let makeTuple (items: TypeExpr list) =
 %token AND OR NOT
 %token MATCH WITH WHEN BAR CONS LBRACKET RBRACKET SEMI SEMISEMI
 %token COMMA UNDERSCORE
-%token TYPE OF
+%token TYPE OF COLON
 %token NOBAR BELOWSEMI
 %token PLUS MINUS STAR SLASH PERCENT PIPE COMPOSE LPAREN RPAREN
 %token EOF
@@ -177,12 +195,13 @@ AfterDecl:
     | TopDecl AfterDecl             { $1 :: $2 }
 
 TopDecl:
-    | LET IDENT EQUALS SeqExpr      { TopLet($2, $4, parseState.InputStartPosition 1) }
-    | LET IDENT Params EQUALS SeqExpr
-                                    { TopLet($2, makeLambda $3 $5, parseState.InputStartPosition 1) }
+    | LET IDENT OptAnnot EQUALS SeqExpr
+                                    { TopLet($2, annotate $3 $5, parseState.InputStartPosition 1) }
+    | LET IDENT Params OptAnnot EQUALS SeqExpr
+                                    { TopLet($2, makeLambda $3 (annotate $4 $6), parseState.InputStartPosition 1) }
     | LET LetPattern EQUALS SeqExpr { TopLetPattern($2, $4, parseState.InputStartPosition 1) }
-    | LET REC IDENT Params EQUALS SeqExpr
-                                    { TopLetRec($3, List.head $4, paramBody (List.head $4) (makeLambda (List.tail $4) $6), parseState.InputStartPosition 1) }
+    | LET REC IDENT Params OptAnnot EQUALS SeqExpr
+                                    { let param, body = recFunction $4 (annotate $5 $7) in TopLetRec($3, param, body, parseState.InputStartPosition 1) }
     | LET REC RecBinding ANDKW RecBindings
                                     { TopLetRecs(checkRecBindings (parseState.InputStartPosition 1) ($3 :: $5), parseState.InputStartPosition 1) }
     | TYPE TypeParams TypeName EQUALS OptBar CtorDecls
@@ -201,15 +220,16 @@ SeqExpr:
 
 Expr:
     | AppExpr                       { $1 }
-    | LET IDENT EQUALS SeqExpr IN SeqExpr { at parseState (Let($2, $4, $6)) }
-    | LET IDENT Params EQUALS SeqExpr IN SeqExpr
-                                    { at parseState (Let($2, makeLambda $3 $5, $7)) }
+    | LET IDENT OptAnnot EQUALS SeqExpr IN SeqExpr
+                                    { at parseState (Let($2, annotate $3 $5, $7)) }
+    | LET IDENT Params OptAnnot EQUALS SeqExpr IN SeqExpr
+                                    { at parseState (Let($2, makeLambda $3 (annotate $4 $6), $8)) }
     | LET LetPattern EQUALS SeqExpr IN SeqExpr
                                     { at parseState (LetPattern($2, $4, $6)) }
     | TYPE TypeParams TypeName EQUALS OptBar CtorDecls IN SeqExpr
                                     { at parseState (TypeDecl($3, $2, checkCtors (parseState.InputStartPosition 6) $6, $8)) }
-    | LET REC IDENT Params EQUALS SeqExpr IN SeqExpr
-                                    { at parseState (LetRec($3, List.head $4, paramBody (List.head $4) (makeLambda (List.tail $4) $6), $8)) }
+    | LET REC IDENT Params OptAnnot EQUALS SeqExpr IN SeqExpr
+                                    { let param, body = recFunction $4 (annotate $5 $7) in at parseState (LetRec($3, param, body, $9)) }
     | LET REC RecBinding ANDKW RecBindings IN SeqExpr
                                     { at parseState (LetRecs(checkRecBindings (parseState.InputStartPosition 1) ($3 :: $5), $7)) }
     | FUNCTION OptBar Arms          { at parseState (Lambda("$function", at parseState (Match(Var "$function", $3)))) }
@@ -249,6 +269,8 @@ Atom:
     | CTOR                          { at parseState (Ctor $1) }
     | LPAREN RPAREN                 { Unit }
     | LPAREN Expr RPAREN            { $2 }
+    | LPAREN Expr COLON TypeExpr RPAREN
+                                    { annotate (Some ($4, parseState.InputStartPosition 4)) $2 }
     | LPAREN Expr SEMI SeqExpr RPAREN
                                     { at parseState (Seq($2, $4)) }
     | LPAREN Expr COMMA TupleItems RPAREN
@@ -358,17 +380,34 @@ TypeProd:
 TypeApp:
     | TypeAtom                      { $1 }
     | TypeApp IDENT                 { TName($2, [ $1 ]) }
+    | LPAREN TypeExpr COMMA TypeArgs RPAREN IDENT
+                                    { TName($6, $2 :: $4) }
+
+// (int, string) pair 의 타입 인자
+TypeArgs:
+    | TypeExpr                      { [ $1 ] }
+    | TypeExpr COMMA TypeArgs       { $1 :: $3 }
 
 TypeAtom:
     | IDENT                         { TName($1, []) }
     | TYVAR                         { TVar $1 }
     | LPAREN TypeExpr RPAREN        { $2 }
 
-// _ 는 쓰지 않는 인자. 식에서 _ 를 쓸 수 없으므로 "_" 라는 이름으로 묶어도 참조되지 않음
+// _ 는 쓰지 않는 인자. 식에서 _ 를 쓸 수 없으므로 "_" 라는 이름으로 묶어도 참조되지 않음.
+// (x: t) 는 타입을 적은 인자: (이름, Some (x : t))
 Param:
-    | IDENT                         { $1 }
-    | UNDERSCORE                    { "_" }
-    | LPAREN RPAREN                 { "()" }
+    | IDENT                         { ($1, None) }
+    | UNDERSCORE                    { ("_", None) }
+    | LPAREN RPAREN                 { ("()", None) }
+    | LPAREN IDENT COLON TypeExpr RPAREN
+                                    { ($2, Some (annotate (Some ($4, parseState.InputStartPosition 4)) (at parseState (Var $2)))) }
+    | LPAREN UNDERSCORE COLON TypeExpr RPAREN
+                                    { ("_", Some (annotate (Some ($4, parseState.InputStartPosition 4)) (Var "_"))) }
+
+// 반환 타입 또는 값의 타입: let f x : int = ..., let x : int = ...
+OptAnnot:
+    |                               { None }
+    | COLON TypeExpr                { Some ($2, parseState.InputStartPosition 2) }
 
 Params:
     | Param                         { [ $1 ] }
@@ -376,7 +415,8 @@ Params:
 
 // let rec 의 함수 하나: f x y = body
 RecBinding:
-    | IDENT Params EQUALS SeqExpr   { ($1, List.head $2, paramBody (List.head $2) (makeLambda (List.tail $2) $4)) }
+    | IDENT Params OptAnnot EQUALS SeqExpr
+                                    { let param, body = recFunction $2 (annotate $3 $5) in ($1, param, body) }
 
 RecBindings:
     | RecBinding                    { [ $1 ] }

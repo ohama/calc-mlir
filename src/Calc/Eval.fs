@@ -351,6 +351,7 @@ let rec evalIn (env: Env) expr =
     | Bool b -> VBool b
     | Str s -> VString s
     | Unit -> VUnit
+    | Annot (e, _) -> evalIn env e
     | Seq (first, rest) ->
         evalIn env first |> ignore
         evalIn env rest

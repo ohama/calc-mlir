@@ -44,6 +44,7 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Set<stri
     | Bool b -> CBool b
     | Str s -> CString s
     | Unit -> CUnit
+    | Annot (e, _) -> lower state ctors scope e
     // e1; e2 == let $seq = e1 in e2 (이름은 렉서가 만들 수 없어서 겹치지 않음)
     | Seq (first, rest) -> CLet ("$seq", lower state ctors scope first, lower state ctors scope rest)
     | Var name when isBuiltin name -> builtinValue state name

@@ -644,6 +644,47 @@ let tests =
             }
         ]
 
+        testList "타입 표기" [
+            test "(e : t) 는 Annot, 괄호가 필요함" {
+                Expect.equal (parse "(x : int)") (Annot (Var "x", TName ("int", []))) ""
+                Expect.equal
+                    (parse "(f : int -> int list)")
+                    (Annot (Var "f", TFun (TName ("int", []), TName ("list", [ TName ("int", []) ]))))
+                    ""
+                Expect.equal (parse "(p : (int, 'a) pair)") (Annot (Var "p", TName ("pair", [ TName ("int", []); TVar "a" ]))) "타입 인자 여럿"
+                Expect.equal
+                    (parse "(p : (int, string) pair list)")
+                    (Annot (Var "p", TName ("list", [ TName ("pair", [ TName ("int", []); TName ("string", []) ]) ])))
+                    ""
+            }
+            test "매개변수 (x: t) 는 본문 앞에서 let x = (x : t)" {
+                Expect.equal
+                    (parse "fun (x: int) y -> x")
+                    (Lambda ("x", Let ("x", Annot (Var "x", TName ("int", [])), Lambda ("y", Var "x"))))
+                    ""
+                Expect.equal (parse "fun (_: int) -> 0") (Lambda ("_", Let ("_", Annot (Var "_", TName ("int", [])), Number 0))) ""
+            }
+            test "반환 타입과 값의 타입" {
+                Expect.equal
+                    (parse "let f x : int = x in f")
+                    (Let ("f", Lambda ("x", Annot (Var "x", TName ("int", []))), Var "f"))
+                    ""
+                Expect.equal (parse "let x : int = 1 in x") (Let ("x", Annot (Number 1, TName ("int", [])), Var "x")) ""
+                Expect.equal (parse "let x : int = 1") (Let ("x", Annot (Number 1, TName ("int", [])), Unit)) "최상위"
+                Expect.equal
+                    (parse "let rec f (n: int) : int = n in f")
+                    (LetRec ("f", "n", Let ("n", Annot (Var "n", TName ("int", [])), Annot (Var "n", TName ("int", []))), Var "f"))
+                    ""
+                Expect.equal
+                    (parse "let rec f x : int = g x and g y : int = y in f")
+                    (LetRecs ([ "f", "x", Annot (App (Var "g", Var "x"), TName ("int", [])); "g", "y", Annot (Var "y", TName ("int", [])) ], Var "f"))
+                    ""
+            }
+            test "괄호 없는 e : t 는 오류 (OCaml 과 같음)" {
+                expectParseError "1 : int" "parse error: unexpected ':'" 1 3
+            }
+        ]
+
         testList "주석" [
             test "// 줄 주석과 (* *) 블록 주석 (중첩 가능)" {
                 Expect.equal (parse "1 // 끝까지\n+ (* 가운데 (* 중첩 *) *) 2") (Add (Number 1, Number 2)) ""

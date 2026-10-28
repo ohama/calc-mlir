@@ -4,6 +4,20 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.29.0] - 2026-10-28
+
+### 추가
+- 타입 표기(OCaml과 같은 문법). 타입 추론이 적은 타입과 추론한 타입을 unify합니다. 인터프리터와 컴파일러는 표기를 지우고 실행합니다.
+  - 식 `(e : t)`(괄호가 필요함), 인자 `fun (x: int) (_: string) -> ...`, 반환 타입 `let f x : int = ...`, `let rec f (n: int) : int = ...`, 값 `let xs : int list = []`. 최상위 선언, `let rec … and`, REPL에서도 씁니다.
+  - 타입 인자가 여럿인 타입 `(int, string) pair`를 `type` 선언과 표기에서 쓸 수 있습니다.
+  - 맞지 않으면 `Type mismatch`이고 위치는 표기한 식을 가리킵니다. 모르는 타입은 `Unknown type: foo`이고 위치는 타입을 가리킵니다.
+  - `'a`는 "아직 모르는 타입"이고, 한 `let` 정의 안에서 같은 이름은 같은 타입입니다. polymorphic을 강제하지 않습니다(OCaml과 같음).
+- 경고: 타입 표기의 `'a`가 다른 타입으로 정해지면 `Warning: the type variable 'a has been constrained to be type int`(F# FS0064와 같음)
+- 테스트 41개 추가 (총 853개)
+
+### 변경
+- `:`가 토큰(`COLON`)이 되었습니다. 예전에는 `Unexpected character: :`였습니다.
+
 ## [0.28.0] - 2026-10-28
 
 ### 추가
