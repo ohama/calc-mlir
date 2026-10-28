@@ -4,6 +4,16 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.16.0] - 2026-10-28
+
+### 추가
+- 네이티브 컴파일러 단계 1: 정수와 불리언 연산을 컴파일합니다.
+  - `+ - * /`, 단항 `-`: 32비트에서 한 바퀴 돌고 나눗셈은 0 쪽으로 버립니다(인터프리터와 같음).
+  - 비교(`= <> < > <= >=`), `not`, 단락 평가하는 `&&`·`||`, `if`(`scf.if`)
+  - 0으로 나누기와 `Int32.MinValue / -1`은 인터프리터와 같은 메시지(`Error: Attempted to divide by zero.`, `Error: Arithmetic operation resulted in an overflow.`)와 종료 코드 1로 끝납니다.
+- 런타임 함수 `calc_add`, `calc_eq`, `calc_compare`(태그를 보고 동작을 고름), `calc_error_divide_by_zero`, `calc_error_overflow`
+- 컴파일러 테스트 10개 추가 (총 655개). 차등 테스트는 실행 중 오류 예제까지 비교하고(stderr, 종료 코드), 예제를 병렬로 컴파일합니다. 비교하는 예제는 2개에서 43개로 늘었습니다.
+
 ## [0.15.0] - 2026-10-28
 
 ### 추가

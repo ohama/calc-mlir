@@ -2,7 +2,7 @@
 
 Calc 언어를 인터프리터(`Eval`) 대신 **네이티브 실행 파일로 컴파일**하기 위한 설계 문서입니다. 구현은 간단한 것부터 단계별로 진행합니다(8장). 각 단계는 그 자체로 동작하고 테스트되는 상태로 끝납니다.
 
-**진행 상황**: 단계 0 완료 (정수·불리언 리터럴을 컴파일해서 실행). 다음은 단계 1.
+**진행 상황**: 단계 1 완료 (정수·불리언 연산, 비교, 단락 평가, `if`). 다음은 단계 2(`let`).
 
 이 문서의 MLIR 예제와 도구 동작은 모두 아래 환경에서 직접 실행해서 확인했습니다.
 
@@ -235,6 +235,8 @@ void  *calc_alloc(int64_t bytes);             // GC_MALLOC
 value  calc_apply(value closure, value arg);
 void   calc_print_result(value v);            // Eval.formatValue 와 같은 형식
 void   calc_error(const char *message);       // "Error: ..." 출력, exit(1)
+void   calc_error_divide_by_zero(void);       // 인터프리터(.NET)와 같은 문장 (단계 1)
+void   calc_error_overflow(void);             // Int32.MinValue / -1 (단계 1)
 void   calc_match_failure(value v);
 value  calc_add(value a, value b);            // int 또는 string
 value  calc_eq(value a, value b);             // 구조적 비교
