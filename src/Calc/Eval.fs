@@ -56,6 +56,15 @@ let rec valueEquals a b =
     | VList _, v -> typeError "list" v
     | v, _ -> typeError "int, bool, string or list" v
 
+/// < > <= >= 와 sort 의 순서. int 끼리 또는 string 끼리 (문자 코드 순서)
+let compareValues a b =
+    match a, b with
+    | VInt x, VInt y -> compare x y
+    | VString x, VString y -> System.String.CompareOrdinal(x, y)
+    | VInt _, v -> typeError "int" v
+    | VString _, v -> typeError "string" v
+    | v, _ -> typeError "int or string" v
+
 // ---- 내장 함수 ----
 
 let private str value =
@@ -67,6 +76,16 @@ let private int' value =
     match value with
     | VInt n -> n
     | v -> typeError "int" v
+
+let private list' value =
+    match value with
+    | VList items -> items
+    | v -> typeError "list" v
+
+let private bool' value =
+    match value with
+    | VBool b -> b
+    | v -> typeError "bool" v
 
 /// 이름과 인자 수
 let builtinArity =
@@ -85,10 +104,26 @@ let builtinArity =
         "join", 2
         "toString", 1
         "toInt", 1
+        // 리스트
+        "head", 1
+        "tail", 1
+        "isEmpty", 1
+        "nth", 2
+        "reverse", 1
+        "append", 2
+        "range", 2
+        "sum", 1
+        "sort", 1
+        "map", 2
+        "filter", 2
+        "fold", 3
+        "exists", 2
+        "forall", 2
     ]
 
 /// 인자가 다 모인 내장 함수를 실행. 문자열 위치와 길이는 UTF-16 코드 단위 (.NET string 과 같음)
-let callBuiltin name args =
+/// apply 는 map, filter 같은 고차 함수가 사용자 함수를 호출할 때 사용 (evalIn 보다 먼저 정의되므로 인자로 받음)
+let callBuiltin (apply: Value -> Value -> Value) name args =
     let ordinal = System.StringComparison.Ordinal
     match name, args with
     | "length", [ VString s ] -> VInt s.Length
@@ -129,6 +164,39 @@ let callBuiltin name args =
                                     System.Globalization.CultureInfo.InvariantCulture) with
         | true, n -> VInt n
         | false, _ -> failwithf "toInt: invalid integer: %s" (quote s)
+    // 리스트: 고차 함수는 F# List 처럼 함수가 먼저, 나머지는 리스트가 먼저
+    | "head", [ xs ] ->
+        match list' xs with
+        | h :: _ -> h
+        | [] -> failwith "head: empty list"
+    | "tail", [ xs ] ->
+        match list' xs with
+        | _ :: t -> VList t
+        | [] -> failwith "tail: empty list"
+    | "isEmpty", [ xs ] -> VBool (List.isEmpty (list' xs))
+    | "nth", [ xs; i ] ->
+        let xs, i = list' xs, int' i
+        if i < 0 || i >= List.length xs then
+            failwithf "nth: index out of range (length %d, index %d)" (List.length xs) i
+        List.item i xs
+    | "reverse", [ xs ] -> VList (List.rev (list' xs))
+    | "append", [ xs; ys ] -> VList (list' xs @ list' ys)
+    | "range", [ a; b ] -> VList ([ int' a .. int' b ] |> List.map VInt)
+    // List.sum 은 오버플로를 검사(OverflowException)하므로, 값이 한 바퀴 도는 언어의 + 와 맞추려고 fold 사용
+    | "sum", [ xs ] -> VInt (list' xs |> List.fold (fun acc x -> acc + int' x) 0)
+    | "sort", [ xs ] ->
+        let xs = list' xs
+        // 비교 함수 안에서 난 예외는 List.sortWith 가 InvalidOperationException 으로 감싸므로,
+        // 정렬 전에 모든 원소가 첫 원소와 비교 가능한지 확인해서 타입 오류를 그대로 냄
+        match xs with
+        | first :: _ -> xs |> List.iter (fun x -> compareValues first x |> ignore)
+        | [] -> ()
+        VList (List.sortWith compareValues xs)
+    | "map", [ f; xs ] -> VList (list' xs |> List.map (apply f))
+    | "filter", [ f; xs ] -> VList (list' xs |> List.filter (fun x -> bool' (apply f x)))
+    | "fold", [ f; acc; xs ] -> list' xs |> List.fold (fun acc x -> apply (apply f acc) x) acc
+    | "exists", [ f; xs ] -> VBool (list' xs |> List.exists (fun x -> bool' (apply f x)))
+    | "forall", [ f; xs ] -> VBool (list' xs |> List.forall (fun x -> bool' (apply f x)))
     | _ -> failwithf "Unknown builtin: %s" name
 
 /// 처음 환경. 내장 함수는 보통 변수처럼 let 으로 가릴 수 있음
@@ -204,8 +272,7 @@ and evalString env expr =
 /// < > <= >= 는 int 끼리 또는 string 끼리 (문자 코드 순서) 비교
 and evalCompare env a b =
     match evalIn env a with
-    | VInt x -> compare x (evalInt env b)
-    | VString x -> System.String.CompareOrdinal(x, evalString env b)
+    | VInt _ | VString _ as x -> compareValues x (evalIn env b)
     | v -> typeError "int or string" v
 
 and evalList env expr =
@@ -226,7 +293,7 @@ and apply fv av =
         evalIn env body
     | VBuiltin (name, args) ->
         let args = args @ [ av ]
-        if List.length args = builtinArity.[name] then callBuiltin name args
+        if List.length args = builtinArity.[name] then callBuiltin apply name args
         else VBuiltin (name, args)
     | v -> typeError "function" v
 

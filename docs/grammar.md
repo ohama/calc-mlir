@@ -329,7 +329,7 @@ type Value =
 - **리스트 원소 타입은 검사하지 않음**: `[1; true]`도 만들 수 있습니다. 비교할 때 원소끼리 타입이 다르면 오류입니다.
   - `[1] = [true]`는 `Type error: expected int but got bool`입니다.
   - 길이가 다르면 원소를 비교하지 않고 `false`입니다. 그래서 `[fun x -> x] = []`는 오류 없이 `false`입니다.
-- **리스트 내장 함수는 `length`뿐**: 합, `map` 같은 연산은 `let rec`과 `match`로 직접 정의합니다.
+- **리스트 처리는 내장 함수 또는 `match`로**: `map`, `filter`, `fold` 등은 아래 "내장 함수"에 있습니다. 직접 정의해도 됩니다. 같은 이름으로 정의하면 내장 함수가 가려집니다.
 
   ```
   let rec map f xs = match xs with [] -> [] | h :: t -> f h :: map f t in
@@ -343,6 +343,8 @@ type Value =
 ### 내장 함수
 
 처음 환경에 들어 있는 함수입니다. 문법상으로는 보통 변수이므로 따로 키워드가 없습니다.
+
+#### 문자열
 
 | 함수 | 타입 | 예 | 결과 |
 |---|---|---|---|
@@ -373,6 +375,31 @@ type Value =
   - `toString`은 문자열은 그대로 돌려주고, 나머지 값은 출력 형태로 바꿉니다. 리스트 안의 문자열은 따옴표가 붙습니다(`toString ["a"]`는 `"[\"a\"]"`).
   - `toInt`는 선택적인 `-`/`+` 부호와 숫자만 받습니다. 공백이 있거나(`" 4"`) `int` 범위를 넘으면 오류입니다.
 
+#### 리스트
+
+| 함수 | 타입 | 예 | 결과 |
+|---|---|---|---|
+| `head xs`, `tail xs` | list → 원소, list → list | `head [1; 2]`, `tail [1; 2]` | `1`, `[2]` |
+| `isEmpty xs` | list → bool | `isEmpty []` | `true` |
+| `nth xs i` | list → int → 원소 | `nth [10; 20] 1` | `20` (0부터 셈) |
+| `reverse xs` | list → list | `reverse [1; 2; 3]` | `[3; 2; 1]` |
+| `append xs ys` | list → list → list | `append [1] [2; 3]` | `[1; 2; 3]` |
+| `range a b` | int → int → list | `range 1 5` | `[1; 2; 3; 4; 5]` (`b` 포함, `a > b`면 `[]`) |
+| `sum xs` | list → int | `sum [1; 2; 3]` | `6` |
+| `sort xs` | list → list | `sort [3; 1; 2]` | `[1; 2; 3]` |
+| `map f xs` | 함수 → list → list | `map (fun x -> x * 2) [1; 2]` | `[2; 4]` |
+| `filter f xs` | 함수 → list → list | `filter (fun x -> x > 1) [1; 2; 3]` | `[2; 3]` |
+| `fold f acc xs` | 함수 → 초기값 → list → 값 | `fold (fun acc x -> acc + x) 0 [1; 2; 3]` | `6` |
+| `exists f xs`, `forall f xs` | 함수 → list → bool | `exists (fun x -> x = 2) [1; 2]` | `true` |
+
+- **인자 순서**: 고차 함수(`map`, `filter`, `fold`, `exists`, `forall`)는 F#의 `List` 모듈처럼 **함수가 먼저, 리스트가 마지막**입니다. 그래서 `let inc = map (fun x -> x + 1) in inc [1; 2]`처럼 부분 적용하기 좋습니다. 나머지는 문자열 함수처럼 다루는 리스트가 먼저입니다(`nth xs i`, `append xs ys`).
+- **`fold`**: F#의 `List.fold`와 같이 왼쪽부터 접고, 함수는 `fun acc x -> ...` 순서로 인자를 받습니다. `fold (fun acc x -> x :: acc) [] [1; 2; 3]`은 `[3; 2; 1]`입니다.
+- **조건 함수**: `filter`, `exists`, `forall`에 넘긴 함수는 bool을 반환해야 합니다. 아니면 `Type error: expected bool but got <타입>`입니다.
+- **`sum`**: 원소는 모두 int여야 합니다. `+`와 같이 오버플로를 검사하지 않고 값이 한 바퀴 돕니다(`sum [2147483647; 1]`은 `-2147483648`).
+- **`sort`**: `<`와 같은 순서를 씁니다. 원소가 모두 int이거나 모두 string이어야 합니다. 섞여 있으면 정렬 전에 `Type error`를 냅니다.
+- **`exists`/`forall`**: 결과가 정해지면 나머지 원소에는 함수를 호출하지 않습니다. 빈 리스트에서 `exists`는 `false`, `forall`은 `true`입니다.
+- **`range`**: 결과 리스트를 한 번에 만듭니다. 아주 큰 범위는 메모리를 그만큼 씁니다.
+
 ## 5. 오류
 
 | 단계 | 원인 | 메시지 |
@@ -390,6 +417,8 @@ type Value =
 | 평가 | `substr`의 범위가 문자열 밖 | `substr: index out of range (length 5, start 3, count 5)` |
 | 평가 | `replace`의 찾을 문자열이 빈 문자열 | `replace: empty search string` |
 | 평가 | `toInt`가 정수로 읽을 수 없는 문자열 | `toInt: invalid integer: "abc"` |
+| 평가 | 빈 리스트에 `head`/`tail` | `head: empty list`, `tail: empty list` |
+| 평가 | `nth`의 위치가 리스트 밖 | `nth: index out of range (length 1, index 1)` |
 | 평가 | 재귀가 너무 깊음 | `Stack overflow.` (프로세스 종료, 잡을 수 없음) |
 
 파서 오류 메시지에는 아직 위치(줄, 열) 정보가 없습니다.

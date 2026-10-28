@@ -176,7 +176,55 @@ let cases =
           VList [ VBool true; VBool false ]
       // 내장 함수 이름은 let 으로 가릴 수 있음
       "let length = 5 in length", VInt 5
-      "let upper s = s + \"!\" in upper \"a\"", VString "a!" ]
+      "let upper s = s + \"!\" in upper \"a\"", VString "a!"
+      // 리스트 내장 함수
+      "head [1; 2]", VInt 1
+      "tail [1; 2]", VList [ VInt 2 ]
+      "tail [1]", VList []
+      "isEmpty []", VBool true
+      "isEmpty [1]", VBool false
+      "nth [10; 20; 30] 0", VInt 10
+      "nth [10; 20; 30] 2", VInt 30
+      "reverse [1; 2; 3]", VList [ VInt 3; VInt 2; VInt 1 ]
+      "reverse []", VList []
+      "append [1] [2; 3]", VList [ VInt 1; VInt 2; VInt 3 ]
+      "append [] []", VList []
+      "range 1 5", VList [ VInt 1; VInt 2; VInt 3; VInt 4; VInt 5 ]
+      "range 3 3", VList [ VInt 3 ]
+      "range 5 1", VList []
+      "range (-1) 1", VList [ VInt -1; VInt 0; VInt 1 ]
+      "sum [1; 2; 3]", VInt 6
+      "sum []", VInt 0
+      // + 와 같이 오버플로는 한 바퀴 돎
+      "sum [2147483647; 1]", VInt -2147483648
+      "sort [3; 1; 2; 1]", VList [ VInt 1; VInt 1; VInt 2; VInt 3 ]
+      "sort [\"b\"; \"B\"; \"a\"]", VList [ VString "B"; VString "a"; VString "b" ]
+      "sort []", VList []
+      "map (fun x -> x * 2) [1; 2; 3]", VList [ VInt 2; VInt 4; VInt 6 ]
+      "map upper [\"a\"; \"b\"]", VList [ VString "A"; VString "B" ]
+      "map (fun x -> x) []", VList []
+      "filter (fun x -> x > 1) [1; 2; 3]", VList [ VInt 2; VInt 3 ]
+      "filter (fun x -> false) [1; 2]", VList []
+      "fold (fun acc x -> acc + x) 0 [1; 2; 3]", VInt 6
+      "fold (fun acc x -> x :: acc) [] [1; 2; 3]", VList [ VInt 3; VInt 2; VInt 1 ]
+      "fold (fun acc x -> acc + x) \"\" [\"a\"; \"b\"]", VString "ab"
+      "fold (fun acc x -> acc - x) 10 [1; 2]", VInt 7
+      "exists (fun x -> x = 2) [1; 2]", VBool true
+      "exists (fun x -> x = 3) [1; 2]", VBool false
+      "exists (fun x -> true) []", VBool false
+      "forall (fun x -> x > 0) [1; 2]", VBool true
+      "forall (fun x -> x > 1) [1; 2]", VBool false
+      "forall (fun x -> false) []", VBool true
+      "sum (map (fun x -> x * x) (range 1 10))", VInt 385
+      "let inc = map (fun x -> x + 1) in inc [1; 2]", VList [ VInt 2; VInt 3 ]
+      "let evens = filter (fun x -> x / 2 * 2 = x) in evens (range 1 6)", VList [ VInt 2; VInt 4; VInt 6 ]
+      "map (fun x -> x * 10) (filter (fun x -> x > 2) [1; 3; 5])", VList [ VInt 30; VInt 50 ]
+      "let rec fact n = if n = 0 then 1 else n * fact (n - 1) in map fact (range 0 5)",
+          VList [ VInt 1; VInt 1; VInt 2; VInt 6; VInt 24; VInt 120 ]
+      "join \",\" (map toString (range 1 3))", VString "1,2,3"
+      "length (range 1 100000)", VInt 100000
+      // 사용자가 정의한 map 이 내장 map 을 가림
+      "let map f xs = 0 in map 1 2", VInt 0 ]
 
 /// 오류 메시지가 정확히 일치하는지 확인
 let expectError input message =
@@ -283,6 +331,41 @@ let tests =
             // 인자를 다 받기 전에는 실행하지 않음 (오류도 나중에)
             expectError "let f = substr 1 in f 2 3" "Type error: expected string but got int"
         ]
+
+        testList "리스트 내장 함수 오류" [
+            expectError "head []" "head: empty list"
+            expectError "tail []" "tail: empty list"
+            expectError "head 1" "Type error: expected list but got int"
+            expectError "nth [10] 1" "nth: index out of range (length 1, index 1)"
+            expectError "nth [10] (-1)" "nth: index out of range (length 1, index -1)"
+            expectError "nth [] 0" "nth: index out of range (length 0, index 0)"
+            expectError "append [1] 2" "Type error: expected list but got int"
+            expectError "range 1 true" "Type error: expected int but got bool"
+            expectError "sum [1; true]" "Type error: expected int but got bool"
+            expectError "sum [\"a\"]" "Type error: expected int but got string"
+            // List.sortWith 가 감싼 예외가 아니라 원래 타입 오류
+            expectError "sort [1; \"a\"]" "Type error: expected int but got string"
+            expectError "sort [\"a\"; 1]" "Type error: expected string but got int"
+            expectError "sort [true]" "Type error: expected int or string but got bool"
+            expectError "sort [[1]; [2]]" "Type error: expected int or string but got list"
+            expectError "map 1 [1]" "Type error: expected function but got int"
+            expectError "map (fun x -> x) 1" "Type error: expected list but got int"
+            expectError "filter (fun x -> x) [1]" "Type error: expected bool but got int"
+            expectError "exists (fun x -> 1) [1]" "Type error: expected bool but got int"
+            expectError "forall (fun x -> \"a\") [1]" "Type error: expected bool but got string"
+            expectError "fold (fun acc x -> acc + x) 0 [true]" "Type error: expected int but got bool"
+        ]
+
+        test "exists 와 forall 은 결과가 정해지면 멈춤" {
+            Expect.equal (calc "exists (fun x -> 10 / x = 10) [1; 0]") (VBool true) ""
+            Expect.equal (calc "forall (fun x -> 10 / x = 5) [1; 0]") (VBool false) ""
+        }
+
+        test "map 은 원소 순서대로 함수를 호출" {
+            // 두 번째 원소에서 오류가 나면 그 오류가 보임
+            Expect.throwsT<DivideByZeroException>
+                (fun () -> calc "map (fun x -> 10 / x) [1; 0; 2]" |> ignore) ""
+        }
 
         test "내장 함수 값" {
             Expect.equal (formatValue (calc "length")) "<fun>" ""
@@ -417,6 +500,26 @@ let tests =
             testProperty "substr s 0 (length s) = s" <| fun (NonNull (s: string)) ->
                 let lit = formatValue (VString s)
                 calc (sprintf "substr %s 0 (length %s)" lit lit) = VString s
+
+            testProperty "range a b 는 F# [a .. b] 와 같음" <| fun (a: int) (b: int) ->
+                let a, b = a % 50, b % 50
+                calc (sprintf "range (%d) (%d)" a b) = VList ([ a .. b ] |> List.map VInt)
+
+            testProperty "sum (range 1 n) = n(n+1)/2" <| fun (NonNegativeInt n) ->
+                calc (sprintf "sum (range 1 %d)" n) = VInt (n * (n + 1) / 2)
+
+            testProperty "reverse (reverse xs) = xs" <| fun (xs: NonNegativeInt list) ->
+                let src = "[" + (xs |> List.map (fun (NonNegativeInt n) -> string n) |> String.concat "; ") + "]"
+                calc (sprintf "reverse (reverse %s)" src) = calc src
+
+            testProperty "sort 는 F# List.sort 와 같음" <| fun (xs: NonNegativeInt list) ->
+                let ns = xs |> List.map (fun (NonNegativeInt n) -> n)
+                let src = "[" + (ns |> List.map string |> String.concat "; ") + "]"
+                calc (sprintf "sort %s" src) = VList (List.sort ns |> List.map VInt)
+
+            testProperty "fold 로 만든 length 는 length 와 같음" <| fun (xs: NonNegativeInt list) ->
+                let src = "[" + (xs |> List.map (fun (NonNegativeInt n) -> string n) |> String.concat "; ") + "]"
+                calc (sprintf "fold (fun acc x -> acc + 1) 0 %s" src) = calc (sprintf "length %s" src)
 
             testProperty "if 는 조건에 따라 분기" <| fun (c: bool) (NonNegativeInt a) (NonNegativeInt b) ->
                 let cond = if c then "true" else "false"

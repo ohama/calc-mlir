@@ -4,6 +4,20 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.10.0] - 2026-10-28
+
+### 추가
+- 리스트 내장 함수 14개
+  - 기본: `head`, `tail`, `isEmpty`, `nth`, `reverse`, `append`, `range`, `sum`, `sort`
+  - 고차 함수: `map`, `filter`, `fold`, `exists`, `forall`. F# `List`처럼 함수가 먼저, 리스트가 마지막입니다.
+- 평가 오류 `head: empty list`, `tail: empty list`, `nth: index out of range (...)`
+- `Eval.compareValues`: `<` 등과 `sort`가 함께 쓰는 순서
+- 테스트 71개 추가 (총 403개)
+
+### 변경
+- `Eval.callBuiltin`이 첫 인자로 `apply`를 받습니다. 고차 내장 함수가 사용자 함수를 호출하는 데 씁니다.
+- `docs/grammar.md`, `docs/testing.md`, `README.md`에 리스트 내장 함수를 반영했습니다.
+
 ## [0.9.0] - 2026-10-28
 
 ### 추가

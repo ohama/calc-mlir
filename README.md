@@ -26,6 +26,7 @@ Result: 10
 | 재귀 함수 | `let rec fact n = if n <= 1 then 1 else n * fact (n - 1) in fact 10` |
 | 문자열 (`+`로 연결, 비교) | `"Hello, " + name`, `"a" < "b"` |
 | 문자열 내장 함수 | `length`, `substr`, `upper`, `split`, `join`, `toInt`, `toString` 등 14개 |
+| 리스트 내장 함수 | `map`, `filter`, `fold`, `range`, `sum`, `sort`, `head`, `nth` 등 14개 |
 | 리스트와 `match` | `[1; 2; 3]`, `0 :: xs`, `match xs with [] -> 0 \| h :: t -> h` |
 
 - 우선순위 (낮은 것부터): `let`/`if`/`fun`/`match` < `||` < `&&` < 비교 < `::` < `+ -` < `* /` < 단항 `-`, `not` < 함수 호출

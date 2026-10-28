@@ -123,6 +123,8 @@ Result: 11
 | `"B" < "a"` | 문자열 비교 (문자 코드 순서) | `Less (Str "B", Str "a")` | `true` |
 | `join "-" (split "2026-10-28" "-")` | 내장 함수 | | `"2026-10-28"` |
 | `let first = substr "hello" 0 in first 2` | 내장 함수 부분 적용 | | `"he"` |
+| `sum (map (fun x -> x * x) (range 1 10))` | 리스트 내장 함수 | | `385` |
+| `fold (fun acc x -> x :: acc) [] [1; 2; 3]` | `fold` (왼쪽부터) | | `[3; 2; 1]` |
 
 ## 오류 처리 확인
 
@@ -146,6 +148,7 @@ Result: 11
 | `"abc` | 렉서 (닫히지 않은 문자열) | `Error: Unterminated string` |
 | `"a" + 1` | 평가 (타입) | AST 출력 후 `Error: Type error: expected string but got int` |
 | `toInt "abc"` | 평가 (내장 함수) | AST 출력 후 `Error: toInt: invalid integer: "abc"` |
+| `head []` | 평가 (내장 함수) | AST 출력 후 `Error: head: empty list` |
 | `let rec loop n = if n = 0 then 0 else loop (n - 1) in loop 1000000` | 평가 (재귀가 너무 깊음) | `Stack overflow.` 후 프로세스 종료 (종료 코드 134) |
 
 모든 경우 종료 코드는 `1`입니다. 종료 코드는 `echo $?`로 확인할 수 있습니다.
@@ -155,7 +158,7 @@ Result: 11
 | 명령 | 기대 출력 | 종료 코드 |
 |---|---|---|
 | `--help`, `-h` | `USAGE: calc [--help] [--expr=<expr>] [--version]`로 시작하는 사용법 | 0 |
-| `--version`, `-v` | `calc 0.9.0` (`Calc.fsproj`의 `<Version>`) | 0 |
+| `--version`, `-v` | `calc 0.10.0` (`Calc.fsproj`의 `<Version>`) | 0 |
 | `-e "(2+3)*4"` | `Result: 20` | 0 |
 | `--expr=7/2` | `Result: 3` | 0 |
 | `--expr "-5 + 2"` | `Result: -3` (`-`로 시작하는 식도 값으로 처리됨) | 0 |
