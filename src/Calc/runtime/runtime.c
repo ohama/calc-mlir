@@ -19,6 +19,8 @@ void calc_print_result(value v) {
         printf("%d\n", CALC_INT_VAL(v));
     } else if (CALC_IS_BOOL(v)) {
         printf("%s\n", CALC_BOOL_VAL(v) ? "true" : "false");
+    } else if (CALC_IS_PTR(v) && CALC_KIND(v) == CALC_KIND_CLOSURE) {
+        printf("<fun>\n");
     } else {
         calc_error("calc_print_result: unsupported value");
     }
@@ -40,6 +42,10 @@ value calc_add(value a, value b) {
 }
 
 value calc_eq(value a, value b) {
+    /* 함수끼리는 비교할 수 없음 (타입 검사는 통과하므로 실행 중 오류, 인터프리터와 같은 문장) */
+    if (CALC_IS_PTR(a) && CALC_KIND(a) == CALC_KIND_CLOSURE) {
+        calc_error("Type error: expected int, bool, string, list, tuple or data but got function");
+    }
     /* int 와 bool 은 즉시값이라 단어가 같으면 같은 값 */
     if ((CALC_IS_INT(a) || CALC_IS_BOOL(a)) && (CALC_IS_INT(b) || CALC_IS_BOOL(b))) {
         return a == b ? CALC_TRUE : CALC_FALSE;

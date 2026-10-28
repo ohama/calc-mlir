@@ -16,6 +16,13 @@ typedef int64_t value;
 #define CALC_IS_BOOL(v) (((v) & CALC_TAG_MASK) == CALC_TAG_BOOL)
 #define CALC_INT_VAL(v) ((int32_t)((v) >> 3))
 #define CALC_BOOL_VAL(v) ((int)((v) >> 3))
+#define CALC_IS_PTR(v) (((v) & CALC_TAG_MASK) == 0)
+
+/* 힙 블록: 첫 단어가 헤더 = 종류 | (뒤따르는 단어 수 << 8). Codegen.closureHeader 와 같음 */
+#define CALC_KIND_CLOSURE 1 /* [헤더, 코드 포인터, 캡처한 값...] */
+#define CALC_HEADER(v) (((int64_t *)(v))[0])
+#define CALC_KIND(v) (CALC_HEADER(v) & 0xff)
+
 #define CALC_TRUE ((value)11)
 #define CALC_FALSE ((value)3)
 

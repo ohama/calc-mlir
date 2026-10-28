@@ -2,7 +2,7 @@
 
 Calc 언어를 인터프리터(`Eval`) 대신 **네이티브 실행 파일로 컴파일**하기 위한 설계 문서입니다. 구현은 간단한 것부터 단계별로 진행합니다(8장). 각 단계는 그 자체로 동작하고 테스트되는 상태로 끝납니다.
 
-**진행 상황**: 단계 2 완료 (정수·불리언 연산, 비교, 단락 평가, `if`, `let`). 다음은 단계 3(함수와 클로저).
+**진행 상황**: 단계 3 완료 (정수·불리언 연산, 비교, 단락 평가, `if`, `let`, 함수와 클로저, `let rec`). 다음은 단계 4(문자열).
 
 지금 코드가 실제로 하는 일(예제 하나로 따라가는 흐름, 진입점, 런타임 링크)은 [compiler-architecture.md](compiler-architecture.md)에 있습니다.
 
@@ -76,8 +76,8 @@ clang -O2 -Wno-override-module prog.ll runtime.c \
 
 | 파일 | 내용 |
 |---|---|
-| `src/Calc/Core.fs` | Core IR 타입 (5장). 단계 3에서 추가 |
-| `src/Calc/Lower.fs` | `Ast.Expr` → Core IR. 단계 3에서 추가 (그전에는 `Codegen`이 `Ast.Expr`를 바로 받음) |
+| `src/Calc/Core.fs` | Core IR 타입 (5장), `NotSupported`, 자유 변수 |
+| `src/Calc/Lower.fs` | `Ast.Expr` → Core IR: 연산을 `Prim`으로, `&&`/`||`를 `if`로, 클로저 변환 |
 | `src/Calc/Codegen.fs` | Core IR → MLIR 텍스트 |
 | `src/Calc/Toolchain.fs` | 도구 찾기, 외부 프로세스 실행, 오류 전달 |
 | `src/Calc/runtime/runtime.c`, `runtime.h` | C 런타임 (6장). 빌드 출력 폴더의 `runtime/`으로 복사 (`CopyToOutputDirectory`) |
@@ -190,7 +190,7 @@ clang -O2 -Wno-override-module prog.ll runtime.c \
 | `+`, `-`, `*` 오버플로 | `i32` 연산이라 한 바퀴 돎 (인터프리터와 같음) |
 | `head []`, `nth`, `substr`, `toInt`, `Match failure` | 인터프리터와 같은 메시지 |
 | 함수끼리 `=` | 인터프리터와 같은 `Type error: ...` (타입 추론이 허용하는 유일한 실행 중 타입 오류) |
-| 깊은 재귀 | 링크할 때 스택 크기를 키움(`-Wl,-stack_size`). 꼬리 호출은 최적화 단계 |
+| 깊은 재귀 | 링크할 때 메인 스레드 스택을 512MB로 키움(`-Wl,-stack_size,0x20000000`, macOS). 인터프리터의 큰 스택 스레드와 같은 크기이고 재귀 깊이 100만을 확인함. 꼬리 호출은 최적화 단계 |
 
 ### D10. 결과 출력
 
@@ -198,34 +198,33 @@ clang -O2 -Wno-override-module prog.ll runtime.c \
 
 ## 5. Core IR
 
-`Lower`가 만드는 중간 표현입니다. 클로저 변환이 끝나서 **모든 함수가 최상위**에 있고, 변수는 지역 변수, 함수 인자, 클로저 필드 중 하나입니다.
+`Lower`가 만드는 중간 표현입니다(`src/Calc/Core.fs`). 클로저 변환이 끝나서 **모든 함수가 최상위**에 있습니다. 아래는 단계 3까지 구현한 모양이고, 문자열·리스트·패턴은 해당 단계에서 경우를 더합니다.
 
 ```fsharp
-type Var =
-    | Local of string                 // let 으로 묶은 SSA 값
-    | Arg                             // 현재 함수의 인자
-    | Self                            // 현재 클로저 (let rec 의 자기 자신)
-    | Captured of index: int          // 클로저에 저장한 자유 변수
-
 type CExpr =
     | CInt of int
     | CBool of bool
-    | CString of string               // 전역 상수로
-    | CNil
-    | CVar of Var
+    | CVar of string                  // 지역 변수, 인자, 캡처한 변수, 자기 자신
     | CLet of string * CExpr * CExpr
-    | CIf of CExpr * CExpr * CExpr
+    | CIf of CExpr * CExpr * CExpr    // && 와 || 도 여기로
     | CPrim of Prim * CExpr list      // 인라인 연산 또는 런타임 호출
-    | CMakeClosure of funcName: string * captured: CExpr list
+    | CMakeClosure of funcName: string * captured: string list
     | CApply of CExpr * CExpr         // 클로저 간접 호출
-    | CMatch of CExpr * (CPattern * CExpr option * CExpr) list
-    | ...
 
-type CFunction = { Name: string; Body: CExpr; CapturedNames: string list }
-type CProgram = { Functions: CFunction list; Main: CExpr; Ctors: CtorInfo list }
+type CFunction =
+    { Name: string                    // lambda_0, lambda_1, ...
+      Param: string
+      Self: string option             // let rec 의 이름. 본문에서 클로저 자신
+      Captured: string list           // 클로저의 칸 순서 (이름 순으로 정렬)
+      Body: CExpr }
+
+type CProgram = { Functions: CFunction list; Main: CExpr }
 ```
 
-`Prim`의 각 경우는 "인라인 `arith`로 만들지" 또는 "런타임 함수를 부를지"를 정합니다.
+- **변수 표현을 바꾼 이유:** 처음 설계에서는 변수를 `Local | Arg | Self | Captured of index`로 나누려 했습니다. 구현에서는 이름(`CVar of string`) 하나로 두었습니다. 대신 `Codegen`이 함수 입구에서 캡처한 값을 클로저에서 꺼내고, 자기 자신과 인자와 함께 이름 → SSA 환경에 넣습니다. 그러면 함수 본문도 `let`과 같은 환경 방식으로 생성됩니다.
+- **환경에서의 우선순위:** 인자 > 자기 자신 > 캡처한 변수 순입니다. `let rec f f = f`에서 본문의 `f`는 인자입니다(인터프리터와 같음).
+- **캡처할 변수:** 본문(이미 `Core`로 바뀐 것)의 자유 변수에서 인자와 자기 자신을 뺀 것입니다. 안쪽 함수의 `CMakeClosure`는 캡처하는 변수가 곧 자유 변수입니다.
+- **`Prim`:** 각 경우는 "인라인 `arith`로 만들지" 또는 "런타임 함수를 부를지"를 정합니다.
 
 ## 6. C 런타임
 
@@ -343,7 +342,7 @@ llvm.func @main() -> i32 {
 }
 ```
 
-실행 결과 `42`입니다. `calc_alloc`을 `GC_MALLOC`으로 구현하고 `-lgc`로 링크해도 같은 결과입니다. 이 예제의 클로저 블록에는 헤더가 없습니다. 실제 구현은 D3의 헤더를 앞에 둡니다.
+실행 결과 `42`입니다. `calc_alloc`을 `GC_MALLOC`으로 구현하고 `-lgc`로 링크해도 같은 결과입니다. 이 예제의 클로저 블록에는 헤더가 없습니다. 실제 구현(단계 3)은 블록이 `[헤더, 코드 포인터, 캡처한 값...]`이고, 헤더는 `1 | (뒤따르는 단어 수 << 8)`입니다. 런타임은 헤더를 보고 함수 값을 `<fun>`으로 출력하고, 함수끼리 `=` 비교는 인터프리터와 같은 타입 오류로 끝냅니다.
 
 ## 8. 단계별 구현 계획
 

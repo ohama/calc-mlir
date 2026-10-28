@@ -2,7 +2,7 @@
 
 `calc --compile`이 소스 코드에서 실행 파일을 만드는 과정을 예제 하나로 따라갑니다. 설계의 이유와 단계별 계획은 [compiler-design.md](compiler-design.md)에 있습니다. 이 문서는 **지금 코드가 실제로 하는 일**을 설명합니다.
 
-이 문서의 출력은 모두 단계 2(0.17.0) 기준이며 직접 실행해서 얻었습니다. 환경은 macOS arm64, Homebrew LLVM 22.1.7, bdw-gc 8.2.12입니다.
+이 문서의 출력은 모두 직접 실행해서 얻었습니다. 2장의 예제는 단계 2(0.17.0), 6장의 클로저는 단계 3 기준입니다. 환경은 macOS arm64, Homebrew LLVM 22.1.7, bdw-gc 8.2.12입니다.
 
 ## 1. 큰 그림
 
@@ -14,8 +14,11 @@
                                    │
               ┌────────────────────┴─────────────────────┐
               ▼ (기본)                                     ▼ (--compile / --emit-mlir)
-        Eval.eval                                   Codegen.emitProgram
-        "Result: 3240"                              MLIR 텍스트 (문자열)
+        Eval.eval                                   Lower.lowerProgram
+        "Result: 3240"                              Core IR (클로저 변환)
+                                                          │  Codegen.emitProgram
+                                                          ▼
+                                                    MLIR 텍스트 (문자열)
                                                           │  Toolchain.build
                                                           ▼
                      ┌──────────── 외부 도구 (Homebrew LLVM) ────────────┐
@@ -29,7 +32,8 @@
 |---|---|---|
 | 파싱 | `Lexer.fsl`, `Parser.fsy` | 소스 → `Ast.Expr` (인터프리터와 같음) |
 | 타입 검사 | `Infer.fs` | 통과한 프로그램만 컴파일 (`--no-typecheck`와 함께 쓸 수 없음) |
-| 코드 생성 | `Codegen.fs` | `Ast.Expr` → MLIR 텍스트. 지원하지 않는 기능은 `NotSupported` |
+| 낮추기 | `Core.fs`, `Lower.fs` | `Ast.Expr` → Core IR. 연산을 `Prim`으로, `&&`/`||`를 `if`로, 클로저 변환(함수를 최상위로). 지원하지 않는 기능은 `NotSupported` |
+| 코드 생성 | `Codegen.fs` | Core IR → MLIR 텍스트 |
 | 빌드 | `Toolchain.fs` | 도구 찾기, 임시 폴더에서 외부 도구 세 개를 차례로 실행 |
 | 런타임 | `runtime/runtime.c`, `runtime.h` | 초기화, 결과 출력, 오류 종료, 다형 연산(`calc_add`, `calc_eq`, `calc_compare`) |
 | 진입 | `Program.fs`의 `compile` | 위 단계를 잇고, 오류를 인터프리터와 같은 형식(`Error: ...`)으로 출력 |
@@ -75,6 +79,7 @@ Type: int
 ```mlir
 // (가) 런타임 함수 선언: 본문 없음 → C 런타임이 정의
 llvm.func @calc_init()
+llvm.func @calc_alloc(i64) -> !llvm.ptr        // 단계 3부터
 llvm.func @calc_print_result(i64)
 llvm.func @calc_error_divide_by_zero()
 llvm.func @calc_error_overflow()
@@ -238,11 +243,74 @@ U _GC_init  U _GC_malloc  U _printf  U _fprintf  U _exit ← 실행할 때 동�
 | `runtime.c`를 컴파일할 때마다 다시 컴파일 | 한 번 컴파일에 걸리는 약 0.25초에 포함 | `runtime.o`/`.a`를 미리 만들어 두기 |
 | 런타임 호출은 최적화를 막음 | 위 어셈블리에서 `calc_compare` 호출이 남음 | 타입별 특수화(설계 단계 9) |
 
-## 6. 단계 3에서 바뀌는 것
+## 6. 함수와 클로저 (단계 3)
 
-- **(나):** `@calc_main` 하나에서 함수 여러 개로 늘어납니다. 클로저마다 `@lambda_N`이 생기고, 그사이에 `Core.fs`와 `Lower.fs`(자유 변수 분석, 클로저 변환)가 들어갑니다.
-- **런타임:** `calc_alloc`(Boehm GC 할당)과 `calc_apply`를 실제로 쓰기 시작합니다.
-- **(다)와 링크:** `main`과 링크 방식은 그대로입니다.
+```
+let k = 10 in let add = fun x -> x + k in add 32
+```
+
+### Lower: 클로저 변환
+
+`fun x -> x + k`를 최상위 함수로 옮깁니다. 본문의 자유 변수 중 인자를 뺀 `k`가 캡처할 변수입니다.
+
+```
+Functions = [ { Name = "lambda_0"; Param = "x"; Self = None; Captured = ["k"];
+                Body = CPrim (PAdd, [CVar "x"; CVar "k"]) } ]
+Main      = CLet ("k", CInt 10,
+              CLet ("add", CMakeClosure ("lambda_0", ["k"]),
+                CApply (CVar "add", CInt 32)))
+```
+
+### Codegen: 함수 하나와 클로저 블록
+
+모든 함수 값은 클로저이고, 호출 규약은 `(클로저, 인자) -> 결과` 하나입니다.
+
+```mlir
+llvm.func @lambda_0(%closure: !llvm.ptr, %arg: i64) -> i64 {
+  %v2 = llvm.getelementptr %closure[2] : (!llvm.ptr) -> !llvm.ptr, i64
+  %v1 = llvm.load %v2 : !llvm.ptr -> i64                // 입구에서 k 를 꺼냄
+  %v3 = llvm.call @calc_add(%arg, %v1) : (i64, i64) -> i64
+  llvm.return %v3 : i64
+}
+
+llvm.func @calc_main() -> i64 {
+  %v1 = arith.constant 81 : i64                         // k = 10
+  %v2 = arith.constant 24 : i64                         // 3 단어
+  %v3 = llvm.call @calc_alloc(%v2) : (i64) -> !llvm.ptr // GC_MALLOC
+  %v4 = arith.constant 513 : i64                        // 헤더 = 1 | (2 << 8)
+  llvm.store %v4, %v3 : i64, !llvm.ptr                  // [0] 헤더
+  %v5 = llvm.mlir.addressof @lambda_0 : !llvm.ptr
+  ...                                                   // [1] 코드 포인터, [2] k
+  %v8 = llvm.ptrtoint %v3 : !llvm.ptr to i64            // add (포인터, 하위 3비트 000)
+  %v9 = arith.constant 257 : i64                        // 32
+  %v10 = llvm.inttoptr %v8 : i64 to !llvm.ptr
+  %v12 = llvm.getelementptr %v10[1] : (!llvm.ptr) -> !llvm.ptr, i64
+  %v11 = llvm.load %v12 : !llvm.ptr -> !llvm.ptr        // 코드 포인터
+  %v13 = llvm.call %v11(%v10, %v9) : !llvm.ptr, (!llvm.ptr, i64) -> i64   // 간접 호출
+  llvm.return %v13 : i64
+}
+```
+
+- **클로저 블록:** `[헤더, 코드 포인터, 캡처한 값...]`이고 `calc_alloc`(Boehm GC)으로 할당합니다. 해제 코드는 없습니다.
+- **값으로서의 클로저:** 블록 주소를 그대로 `i64`로 씁니다. 8바이트 정렬이라 하위 3비트가 `000`이고, 런타임은 이것으로 정수·불리언과 구분합니다.
+- **헤더:** 런타임이 헤더의 종류(1)를 보고 함수 값을 `<fun>`으로 출력합니다. 함수끼리 `=`로 비교하면 인터프리터와 같은 타입 오류로 끝냅니다.
+- **`let rec f x = ...`:** 본문의 `f`는 `%closure` 자신(`llvm.ptrtoint %closure`)입니다. 자기 자신을 캡처하지 않으므로 순환 참조를 만들 필요가 없습니다.
+
+`clang -O2`는 클로저를 만든 직후의 호출을 알아봅니다. 저장한 코드 포인터와 `k`를 다시 읽지 않고 그대로 쓰고, `lambda_0`을 펼쳐 넣습니다.
+
+```llvm
+define i64 @calc_main() {
+  %1 = tail call ptr @calc_alloc(i64 24)
+  store i64 513, ptr %1
+  ...                                       ; 코드 포인터와 k 저장
+  %4 = tail call i64 @calc_add(i64 257, i64 81)   ; add 32 → calc_add(32, 10)
+  ret i64 %4
+}
+```
+
+### 깊은 재귀
+
+`clang`에 `-Wl,-stack_size,0x20000000`을 넘겨 메인 스레드 스택을 512MB로 만듭니다. 인터프리터가 평가에 쓰는 큰 스택 스레드와 같은 크기입니다. 기본 8MB에서는 깊이 100만 재귀가 세그폴트(종료 코드 139)로 죽고, 512MB에서는 끝까지 갑니다. 이 옵션은 macOS `ld` 전용입니다.
 
 ## 관련 문서
 

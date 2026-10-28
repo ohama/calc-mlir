@@ -99,6 +99,8 @@ let build (tools: Tools) (mlir: string) (output: string) (keepTemps: bool) : str
               "-I" + Path.Combine(tools.GcPrefix, "include")
               "-L" + Path.Combine(tools.GcPrefix, "lib")
               "-lgc"
+              // 깊은 재귀: 메인 스레드 스택을 512MB 로 (인터프리터의 큰 스택 스레드와 같은 크기, macOS ld)
+              "-Wl,-stack_size,0x20000000"
               "-o"
               Path.GetFullPath output ]
         if keepTemps then Some dir else None

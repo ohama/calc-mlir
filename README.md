@@ -66,7 +66,7 @@ echo "1 < 2" | dotnet run --project src/Calc
 | `--expr <expr>`, `-e <expr>` | 식을 계산합니다. 생략하면 표준 입력에서 읽습니다. |
 | `--version`, `-v` | 버전을 출력합니다. |
 | `--no-typecheck` | 타입 추론을 건너뛰고 평가합니다. |
-| `--compile <path>`, `--emit-mlir` | 네이티브 실행 파일을 만들거나 MLIR을 출력합니다. 실험 중이며 지금은 정수, 불리언, `if`, `let`만 지원합니다([설계](docs/compiler-design.md)). |
+| `--compile <path>`, `--emit-mlir` | 네이티브 실행 파일을 만들거나 MLIR을 출력합니다. 실험 중이며 지금은 정수, 불리언, `if`, `let`, 함수와 클로저만 지원합니다([설계](docs/compiler-design.md)). |
 | `--help`, `-h` | 사용법을 출력합니다. |
 
 성공하면 종료 코드 0, 렉서·파서·평가 오류가 나면 `Error: ...`를 표준 에러로 출력하고 종료 코드 1을 반환합니다.
@@ -91,7 +91,9 @@ Error: parse error: unexpected '+' (line 1, column 5)
 │   ├── Errors.fs             # 렉서·파서 오류 (SyntaxError, 위치 포함)
 │   ├── Eval.fs               # 평가기 (Value, Env, eval)
 │   ├── Infer.fs              # Hindley–Milner 타입 추론 (typecheck)
-│   ├── Codegen.fs            # 컴파일러: AST → MLIR 텍스트
+│   ├── Core.fs               # 컴파일러: 중간 표현(Core IR)
+│   ├── Lower.fs              # 컴파일러: AST → Core IR, 클로저 변환
+│   ├── Codegen.fs            # 컴파일러: Core IR → MLIR 텍스트
 │   ├── Toolchain.fs          # 컴파일러: mlir-opt, mlir-translate, clang 실행
 │   ├── runtime/              # 컴파일한 프로그램의 C 런타임 (Boehm GC)
 │   ├── Parser.fsy            # fsyacc 문법 → Parser.fs (빌드 시 생성)
@@ -118,7 +120,7 @@ Error: parse error: unexpected '+' (line 1, column 5)
 | [docs/build.md](docs/build.md) | 빌드, 실행, 빌드 과정과 파일 순서, 문법 충돌 확인 |
 | [docs/testing.md](docs/testing.md) | 자동 테스트(Expecto) 실행과 추가 방법, 수동 테스트 표 |
 | [docs/grammar.md](docs/grammar.md) | 토큰, EBNF, 우선순위, AST 대응, 평가 규칙, 오류 |
-| [docs/compiler-design.md](docs/compiler-design.md) | MLIR/LLVM 네이티브 컴파일 설계와 단계별 계획 (단계 2 완료) |
+| [docs/compiler-design.md](docs/compiler-design.md) | MLIR/LLVM 네이티브 컴파일 설계와 단계별 계획 (단계 3 완료) |
 | [docs/compiler-architecture.md](docs/compiler-architecture.md) | 컴파일러 구조와 흐름: 예제 하나로 따라가는 MLIR → LLVM IR → 실행 파일, 진입점 `main`, 런타임 링크 |
 | [howto/](howto/README.md) | 개발하면서 부딪힌 문제와 해결 방법 |
 | [CHANGELOG.md](CHANGELOG.md) | 버전별 변경 사항 |

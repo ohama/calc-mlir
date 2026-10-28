@@ -55,7 +55,7 @@ dotnet src/Calc/bin/Debug/net10.0/Calc.dll --expr "2 + 3"
 | 옵션 | 짧은 형식 | 설명 |
 |---|---|---|
 | `--expr <expr>` | `-e <expr>` | 주어진 식을 계산합니다. `--expr=<expr>` 형식도 됩니다. 생략하면 표준 입력에서 읽습니다. |
-| `--version` | `-v` | 버전을 출력하고 종료합니다 (예: `calc 0.17.0`). |
+| `--version` | `-v` | 버전을 출력하고 종료합니다 (예: `calc 0.18.0`). |
 | `--no-typecheck` | | 타입 추론을 건너뛰고 바로 평가합니다. 타입은 평가 중에 동적으로 검사됩니다. |
 | `--emit-mlir` | | 평가하지 않고, 컴파일러가 만든 MLIR을 출력합니다. |
 | `--compile <path>` | | 평가하지 않고, 네이티브 실행 파일을 `<path>`에 만듭니다. `--compile=<path>` 형식도 됩니다. |
@@ -80,7 +80,7 @@ dotnet src/Calc/bin/Debug/net10.0/Calc.dll --expr "2 + 3"
 그다음 F# 컴파일러가 `Calc.fsproj`에 적힌 순서대로 컴파일합니다.
 
 ```
-Ast.fs → Errors.fs → Eval.fs → Infer.fs → Codegen.fs → Toolchain.fs → Parser.fsi → Parser.fs → Lexer.fs → Program.fs
+Ast.fs → Errors.fs → Eval.fs → Infer.fs → Core.fs → Lower.fs → Codegen.fs → Toolchain.fs → Parser.fsi → Parser.fs → Lexer.fs → Program.fs
 ```
 
 F#은 앞에 나온 파일만 참조할 수 있습니다. 그래서 순서가 중요합니다.
@@ -89,7 +89,7 @@ F#은 앞에 나온 파일만 참조할 수 있습니다. 그래서 순서가 �
 - `Eval`은 `Ast`의 `Expr`를 평가합니다.
 - `Infer`는 `Ast`의 `Expr` 타입을 추론합니다. `Eval`과는 서로 참조하지 않습니다.
 - `Program`은 파싱한 다음 `Infer.typecheck`로 타입을 확인하고 `Eval.eval`로 평가합니다.
-- `Codegen`은 `Ast.Expr`를 MLIR 텍스트로 만들고, `Toolchain`은 외부 도구로 실행 파일을 만듭니다.
+- `Lower`는 `Ast.Expr`를 Core IR로 바꾸고(클로저 변환), `Codegen`은 Core IR을 MLIR 텍스트로 만들고, `Toolchain`은 외부 도구로 실행 파일을 만듭니다.
 - `Parser`는 `Ast`의 `Expr` 타입을 사용합니다.
 - `Lexer`는 `Parser`가 정의한 토큰(`NUMBER`, `PLUS` 등)을 사용합니다.
 - `Program`은 `Lexer`와 `Parser`를 모두 사용합니다.
@@ -120,7 +120,7 @@ rm -f src/Calc/{Lexer,Parser}.fs{,i}
 
 ## 네이티브 컴파일 (실험 중)
 
-`--compile`은 MLIR과 LLVM으로 실행 파일을 만듭니다. 설계와 단계별 계획은 [compiler-design.md](compiler-design.md)에 있습니다. 지금은 **정수와 불리언**(리터럴, `+ - * /`, 단항 `-`, 비교, `&& || not`, `if`)과 `let`을 컴파일합니다. 실행 결과와 실행 중 오류(`Error: Attempted to divide by zero.`, 종료 코드 1)는 인터프리터와 같습니다. 다른 기능이 있으면 `Error: Not supported by the compiler yet: <기능>`으로 멈춥니다.
+`--compile`은 MLIR과 LLVM으로 실행 파일을 만듭니다. 설계와 단계별 계획은 [compiler-design.md](compiler-design.md)에 있습니다. 지금은 **정수와 불리언**(리터럴, `+ - * /`, 단항 `-`, 비교, `&& || not`, `if`), `let`, 함수(`fun`, 호출, 커링, `let f x =`, `let rec`, 클로저)를 컴파일합니다. 실행 결과와 실행 중 오류(`Error: Attempted to divide by zero.`, 종료 코드 1)는 인터프리터와 같습니다. 다른 기능이 있으면 `Error: Not supported by the compiler yet: <기능>`으로 멈춥니다.
 
 ### 준비
 

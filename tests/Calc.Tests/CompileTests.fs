@@ -47,7 +47,7 @@ let private compilable (input: string) =
         Codegen.emitProgram ast |> ignore
         true
     with
-    | Codegen.NotSupported _
+    | Core.NotSupported _
     | Infer.TypeError _ -> false
 
 /// 인터프리터로 실행했을 때 calc 가 내는 것과 같은 (표준 출력, 표준 에러, 종료 코드)
@@ -66,7 +66,10 @@ let private runtimeErrorCases =
       "if 1 / 0 = 0 then 1 else 2"
       "1 + 2 / 0"
       "let x = 1 / 0 in 5"
-      "let d = 5 - 5 in if d = 0 then 10 / d else 1" ]
+      "let d = 5 - 5 in if d = 0 then 10 / d else 1"
+      "let f x = 10 / x in f 0"
+      "let rec down n = if n = 0 then 1 / n else down (n - 1) in down 100"
+      "(fun x -> x) = (fun x -> x)" ]
 
 [<Tests>]
 let tests =
@@ -87,8 +90,19 @@ let tests =
             }
             test "지원하지 않는 기능은 NotSupported" {
                 Expect.throwsC
-                    (fun () -> Codegen.emitProgram (Program.parse "fun x -> x") |> ignore)
-                    (fun ex -> Expect.equal ex.Message "Not supported by the compiler yet: Lambda" "")
+                    (fun () -> Codegen.emitProgram (Program.parse "\"a\"") |> ignore)
+                    (fun ex -> Expect.equal ex.Message "Not supported by the compiler yet: Str" "")
+            }
+            test "클로저는 calc_alloc 으로 할당하고 간접 호출" {
+                let mlir = Codegen.emitProgram (Program.parse "let k = 10 in let add = fun x -> x + k in add 32")
+                Expect.stringContains mlir "llvm.func @lambda_0(%closure: !llvm.ptr, %arg: i64) -> i64" ""
+                Expect.stringContains mlir "llvm.call @calc_alloc(" ""
+                Expect.stringContains mlir "llvm.mlir.addressof @lambda_0" ""
+                Expect.stringContains mlir ": !llvm.ptr, (!llvm.ptr, i64) -> i64" "간접 호출"
+            }
+            test "클로저 헤더: 종류 1, 뒤따르는 단어 수" {
+                Expect.equal (Codegen.closureHeader 0) 0x101L "코드 포인터만"
+                Expect.equal (Codegen.closureHeader 2) 0x301L "코드 포인터 + 캡처 2개"
             }
             test "내장 함수는 아직 NotSupported" {
                 Expect.throwsC
@@ -110,6 +124,34 @@ let tests =
                 Expect.stringContains mlir "llvm.call @calc_error_divide_by_zero()" ""
                 Expect.stringContains mlir "llvm.call @calc_error_overflow()" ""
                 Expect.stringContains mlir "arith.divsi" ""
+            }
+        ]
+
+        testList "클로저 변환" [
+            let lowered input = Lower.lowerProgram (Program.parse input)
+            test "자유 변수를 캡처" {
+                let p = lowered "let k = 1 in let j = 2 in fun x -> x + k + j"
+                Expect.equal p.Functions.Length 1 ""
+                let f = p.Functions.Head
+                Expect.equal (f.Name, f.Param, f.Captured, f.Self) ("lambda_0", "x", [ "j"; "k" ], None) "정렬된 순서"
+                Expect.equal p.Main (Core.CLet ("k", Core.CInt 1, Core.CLet ("j", Core.CInt 2, Core.CMakeClosure ("lambda_0", [ "j"; "k" ])))) ""
+            }
+            test "인자와 안쪽 let 은 캡처하지 않음" {
+                let f = (lowered "fun x -> let y = x in y").Functions.Head
+                Expect.isEmpty f.Captured ""
+            }
+            test "let rec 의 자기 자신은 캡처하지 않음" {
+                let f = (lowered "let rec fact n = if n = 0 then 1 else n * fact (n - 1) in fact 5").Functions.Head
+                Expect.equal (f.Self, f.Captured) (Some "fact", []) ""
+            }
+            test "커링: 안쪽 함수가 바깥 인자를 캡처" {
+                let p = lowered "fun a -> fun b -> a + b"
+                // 안쪽 함수가 먼저 만들어짐
+                Expect.equal (p.Functions |> List.map (fun f -> f.Name, f.Param, f.Captured)) [ "lambda_0", "b", [ "a" ]; "lambda_1", "a", [] ] ""
+            }
+            test "&& 와 || 는 if 로" {
+                Expect.equal (lowered "true && false").Main (Core.CIf (Core.CBool true, Core.CBool false, Core.CBool false)) ""
+                Expect.equal (lowered "true || false").Main (Core.CIf (Core.CBool true, Core.CBool true, Core.CBool false)) ""
             }
         ]
 
@@ -173,6 +215,33 @@ let tests =
             test "let 의 값은 쓰이지 않아도 계산 (인터프리터와 같음)" {
                 Expect.equal (compileAndRun "let x = 1 / 0 in 5") ("", "Error: Attempted to divide by zero.\n", 1) ""
             }
+            test "클로저: 정적 범위" {
+                Expect.equal (compileAndRun "let k = 10 in let add = fun x -> x + k in add 32") ("42\n", "", 0) ""
+                Expect.equal (compileAndRun "let x = 1 in let f = fun y -> x + y in let x = 100 in f 1") ("2\n", "", 0) "정의할 때의 x"
+            }
+            test "커링과 고차 함수" {
+                Expect.equal (compileAndRun "let add x y = x + y in let inc = add 1 in inc 41") ("42\n", "", 0) "부분 적용"
+                Expect.equal (compileAndRun "let twice f x = f (f x) in twice (fun x -> x * 3) 7") ("63\n", "", 0) ""
+                Expect.equal
+                    (compileAndRun "let compose f g = fun x -> f (g x) in let inc x = x + 1 in let dbl x = x * 2 in (compose inc dbl) 5")
+                    ("11\n", "", 0)
+                    ""
+            }
+            test "let rec" {
+                Expect.equal (compileAndRun "let rec fact n = if n = 0 then 1 else n * fact (n - 1) in fact 10") ("3628800\n", "", 0) ""
+                Expect.equal (compileAndRun "let rec fib n = if n < 2 then n else fib (n - 1) + fib (n - 2) in fib 20") ("6765\n", "", 0) ""
+                Expect.equal (compileAndRun "let rec f f = f in f 5") ("5\n", "", 0) "인자가 자기 자신을 가림"
+            }
+            test "재귀 깊이 100만 (512MB 스택)" {
+                Expect.equal (compileAndRun "let rec f n = if n = 0 then 0 else 1 + f (n - 1) in f 1000000") ("1000000\n", "", 0) ""
+            }
+            test "함수 값" {
+                Expect.equal (compileAndRun "fun x -> x") ("<fun>\n", "", 0) "인터프리터와 같은 출력"
+                Expect.equal
+                    (compileAndRun "(fun x -> x) = (fun x -> x)")
+                    ("", "Error: Type error: expected int, bool, string, list, tuple or data but got function\n", 1)
+                    "함수끼리 비교는 실행 중 오류"
+            }
             test "단락 평가: 오른쪽은 계산하지 않음" {
                 Expect.equal (compileAndRun "false && 1 / 0 = 0") ("false\n", "", 0) ""
                 Expect.equal (compileAndRun "true || 1 / 0 = 0") ("true\n", "", 0) ""
@@ -188,7 +257,7 @@ let tests =
             let actual = inputs |> Array.ofList |> Array.Parallel.map compileAndRun
             for input, result in Array.zip (Array.ofList inputs) actual do
                 Expect.equal result (interpret input) input
-            // 단계가 올라갈수록 늘어남 (단계 2: 정수, 불리언, if, let)
-            Expect.isGreaterThanOrEqual inputs.Length 56 "컴파일한 예제 수"
+            // 단계가 올라갈수록 늘어남 (단계 3: 정수, 불리언, if, let, 함수와 클로저)
+            Expect.isGreaterThanOrEqual inputs.Length 79 "컴파일한 예제 수"
         }
     ]
