@@ -55,8 +55,11 @@ dotnet src/Calc/bin/Debug/net10.0/Calc.dll --expr "2 + 3"
 | 옵션 | 짧은 형식 | 설명 |
 |---|---|---|
 | `--expr <expr>` | `-e <expr>` | 주어진 식을 계산합니다. `--expr=<expr>` 형식도 됩니다. 생략하면 표준 입력에서 읽습니다. |
-| `--version` | `-v` | 버전을 출력하고 종료합니다 (예: `calc 0.14.0`). |
+| `--version` | `-v` | 버전을 출력하고 종료합니다 (예: `calc 0.15.0`). |
 | `--no-typecheck` | | 타입 추론을 건너뛰고 바로 평가합니다. 타입은 평가 중에 동적으로 검사됩니다. |
+| `--emit-mlir` | | 평가하지 않고, 컴파일러가 만든 MLIR을 출력합니다. |
+| `--compile <path>` | | 평가하지 않고, 네이티브 실행 파일을 `<path>`에 만듭니다. `--compile=<path>` 형식도 됩니다. |
+| `--keep-temps` | | `--compile`과 함께 쓰면 중간 파일(`.mlir`, `.ll`)을 지우지 않고 폴더 경로를 출력합니다. |
 | `--help` | `-h` | 사용법을 출력하고 종료합니다. |
 
 `--version`이 출력하는 버전은 `Calc.fsproj`의 `<Version>` 값을 실행 중에 어셈블리에서 읽어 옵니다. 그래서 버전 번호는 fsproj 한 곳만 고치면 됩니다.
@@ -77,7 +80,7 @@ dotnet src/Calc/bin/Debug/net10.0/Calc.dll --expr "2 + 3"
 그다음 F# 컴파일러가 `Calc.fsproj`에 적힌 순서대로 컴파일합니다.
 
 ```
-Ast.fs → Errors.fs → Eval.fs → Infer.fs → Parser.fsi → Parser.fs → Lexer.fs → Program.fs
+Ast.fs → Errors.fs → Eval.fs → Infer.fs → Codegen.fs → Toolchain.fs → Parser.fsi → Parser.fs → Lexer.fs → Program.fs
 ```
 
 F#은 앞에 나온 파일만 참조할 수 있습니다. 그래서 순서가 중요합니다.
@@ -86,6 +89,7 @@ F#은 앞에 나온 파일만 참조할 수 있습니다. 그래서 순서가 �
 - `Eval`은 `Ast`의 `Expr`를 평가합니다.
 - `Infer`는 `Ast`의 `Expr` 타입을 추론합니다. `Eval`과는 서로 참조하지 않습니다.
 - `Program`은 파싱한 다음 `Infer.typecheck`로 타입을 확인하고 `Eval.eval`로 평가합니다.
+- `Codegen`은 `Ast.Expr`를 MLIR 텍스트로 만들고, `Toolchain`은 외부 도구로 실행 파일을 만듭니다.
 - `Parser`는 `Ast`의 `Expr` 타입을 사용합니다.
 - `Lexer`는 `Parser`가 정의한 토큰(`NUMBER`, `PLUS` 등)을 사용합니다.
 - `Program`은 `Lexer`와 `Parser`를 모두 사용합니다.
@@ -113,3 +117,33 @@ dotnet clean src/Calc
 ```sh
 rm -f src/Calc/{Lexer,Parser}.fs{,i}
 ```
+
+## 네이티브 컴파일 (실험 중)
+
+`--compile`은 MLIR과 LLVM으로 실행 파일을 만듭니다. 설계와 단계별 계획은 [compiler-design.md](compiler-design.md)에 있습니다. 지금은 **정수와 불리언 리터럴만** 컴파일합니다. 다른 기능이 있으면 `Error: Not supported by the compiler yet: <기능>`으로 멈춥니다.
+
+### 준비
+
+```sh
+brew install llvm bdw-gc
+```
+
+Homebrew LLVM은 PATH에 넣지 않아도 됩니다. 컴파일러가 도구를 찾는 순서는 다음과 같습니다.
+
+1. 환경 변수 `CALC_LLVM_BIN` (`mlir-opt`, `mlir-translate`, `clang`가 있는 폴더)
+2. `/opt/homebrew/opt/llvm/bin`
+3. `PATH`
+
+Boehm GC 위치는 `CALC_GC_PREFIX`(기본 `/opt/homebrew/opt/bdw-gc`)로 바꿀 수 있습니다. 도구가 없으면 무엇이 없는지와 설치 방법을 출력합니다.
+
+### 사용
+
+```sh
+dotnet run --project src/Calc -- --compile ./answer -e "42"
+./answer                      # 42
+
+dotnet run --project src/Calc -- --emit-mlir -e "42"     # 생성한 MLIR 보기
+```
+
+컴파일 과정은 `mlir-opt`(scf/cf/arith → llvm 방언) → `mlir-translate`(LLVM IR) → `clang`(C 런타임 `runtime/runtime.c`와 `-lgc` 링크)입니다. `--keep-temps`를 주면 중간 파일을 볼 수 있습니다.
+

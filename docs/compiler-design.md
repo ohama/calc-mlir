@@ -2,6 +2,8 @@
 
 Calc 언어를 인터프리터(`Eval`) 대신 **네이티브 실행 파일로 컴파일**하기 위한 설계 문서입니다. 구현은 간단한 것부터 단계별로 진행합니다(8장). 각 단계는 그 자체로 동작하고 테스트되는 상태로 끝납니다.
 
+**진행 상황**: 단계 0 완료 (정수·불리언 리터럴을 컴파일해서 실행). 다음은 단계 1.
+
 이 문서의 MLIR 예제와 도구 동작은 모두 아래 환경에서 직접 실행해서 확인했습니다.
 
 ## 1. 목표와 범위
@@ -72,14 +74,14 @@ clang -O2 -Wno-override-module prog.ll runtime.c \
 
 | 파일 | 내용 |
 |---|---|
-| `src/Calc/Core.fs` | Core IR 타입 (5장) |
-| `src/Calc/Lower.fs` | `Ast.Expr` → Core IR |
+| `src/Calc/Core.fs` | Core IR 타입 (5장). 단계 3에서 추가 |
+| `src/Calc/Lower.fs` | `Ast.Expr` → Core IR. 단계 3에서 추가 (그전에는 `Codegen`이 `Ast.Expr`를 바로 받음) |
 | `src/Calc/Codegen.fs` | Core IR → MLIR 텍스트 |
 | `src/Calc/Toolchain.fs` | 도구 찾기, 외부 프로세스 실행, 오류 전달 |
-| `runtime/runtime.c`, `runtime/runtime.h` | C 런타임 (6장). 빌드 출력 폴더로 복사 (`CopyToOutputDirectory`) |
+| `src/Calc/runtime/runtime.c`, `runtime.h` | C 런타임 (6장). 빌드 출력 폴더의 `runtime/`으로 복사 (`CopyToOutputDirectory`) |
 | `tests/Calc.Tests/CompileTests.fs` | 차등 테스트 (9장) |
 
-컴파일 순서: `Ast → Errors → Eval → Infer → Core → Lower → Codegen → Toolchain → Parser → Lexer → Program`
+컴파일 순서: `Ast → Errors → Eval → Infer → (Core → Lower) → Codegen → Toolchain → Parser → Lexer → Program`
 
 ## 4. 핵심 결정
 

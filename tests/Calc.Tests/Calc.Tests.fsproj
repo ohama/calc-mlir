@@ -12,6 +12,7 @@
     <Compile Include="ParserTests.fs" />
     <Compile Include="EvalTests.fs" />
     <Compile Include="InferTests.fs" />
+    <Compile Include="CompileTests.fs" />
     <Compile Include="Main.fs" />
   </ItemGroup>
 

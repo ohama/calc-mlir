@@ -4,6 +4,22 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.15.0] - 2026-10-28
+
+### 추가
+- 네이티브 컴파일러 단계 0 ([docs/compiler-design.md](docs/compiler-design.md)): 정수와 불리언 리터럴을 MLIR → LLVM → 실행 파일로 컴파일합니다.
+  - `--compile <path>`: 실행 파일을 만듭니다. 실행하면 인터프리터의 `Result:`와 같은 형식으로 값을 출력합니다.
+  - `--emit-mlir`: 생성한 MLIR을 출력합니다.
+  - `--keep-temps`: 중간 파일(`.mlir`, `.ll`)을 남깁니다.
+  - 지원하지 않는 기능은 `Not supported by the compiler yet: <기능>`으로 멈춥니다.
+  - 타입 추론을 통과한 프로그램만 컴파일합니다(`--no-typecheck`와 함께 쓸 수 없음).
+- `Codegen.fs`(AST → MLIR 텍스트, 태그가 붙은 64비트 값 표현), `Toolchain.fs`(도구 찾기와 실행), `src/Calc/runtime/`(C 런타임, Boehm GC)
+- 도구 위치: `CALC_LLVM_BIN`, `CALC_GC_PREFIX`, 기본은 Homebrew 경로. 필요: `brew install llvm bdw-gc`
+- 컴파일러 차등 테스트(`CompileTests.fs`): 실행 파일의 출력을 인터프리터 결과와 비교합니다. 도구가 없으면 건너뜁니다. 테스트 7개 추가 (총 645개)
+
+### 변경
+- `docs/build.md`, `docs/testing.md`, `README.md`에 컴파일 옵션과 준비 방법을 반영했습니다.
+
 ## [0.14.0] - 2026-10-28
 
 ### 추가

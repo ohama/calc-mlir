@@ -32,6 +32,7 @@ dotnet run --project tests/Calc.Tests -- --debug            # 각 테스트 시�
 | `LexerTests.fs` | `Lexer` | 토큰 순서, 공백과 줄바꿈 무시, 키워드와 식별자, 비교·논리 연산자, `->`, 리스트 토큰(`[` `]` `;` `::` `|`), 문자열과 이스케이프, 닫히지 않은 문자열, 빈 입력, 알 수 없는 문자 오류 |
 | `ParserTests.fs` | `Parser` | 우선순위, 결합 방향, 괄호, 단항 마이너스, `let`/`if`/`fun`의 범위와 중첩, 함수 호출, 함수 정의 문법 설탕, 리스트와 `::`, 튜플, 패턴과 `match`(가드, 중첩), 튜플 분해 `let`, 생성자와 `type` 선언, 타입 식, 문자열 리터럴, 파서 오류 |
 | `InferTests.fs` | `Infer` | 추론한 타입 표(다형성, 재귀, 패턴, 내장 함수, ADT), 타입 오류 메시지, 건전성(타입 검사를 통과한 `EvalTests` 예제는 실행 중 오류 없이 그 타입의 값이 됨), 타입 검사가 거부하는 동적 예제 목록, FsCheck 속성 |
+| `CompileTests.fs` | `Compile` | 생성한 MLIR, 값 표현(태그), 컴파일한 실행 파일의 출력, **차등 테스트**(컴파일할 수 있는 `EvalTests` 예제를 인터프리터와 비교). LLVM/GC가 없으면 건너뜀(Skipped) |
 | `EvalTests.fs` | `Eval` | 식 계산 표(정수, 불리언, 함수, 재귀, 리스트, 문자열, 내장 함수, 튜플, 패턴 매칭, option, 사용자 정의 타입), `let`과 섀도잉, 클로저, 단락 평가, 타입 오류, 리스트·문자열·내장 함수·패턴 매칭·ADT 오류와 출력, 정의되지 않은 변수, 0으로 나누기, FsCheck 속성 테스트 |
 | `Main.fs` | — | 진입점 (`runTestsInAssemblyWithCLIArgs`) |
 
@@ -134,6 +135,17 @@ Result: 11
 | `type shape = Circle of int \| Rect of int * int in map (fun s -> match s with Circle r -> r \| Rect (w, h) -> w * h) [Circle 2; Rect (2, 3)]` | 사용자 정의 타입 | | `[2; 6]` |
 | `defaultValue 0 (tryFind (fun x -> x > 1) [1; 2; 3])` | option | | `2` |
 
+## 컴파일러 테스트
+
+`Compile` 테스트는 식을 실행 파일로 컴파일하고 실행합니다. 예제 하나에 외부 도구 3개와 실행 파일을 띄우므로 느립니다(예제당 약 0.2초). 컴파일러만 따로 돌리려면 다음과 같이 실행합니다.
+
+```sh
+dotnet run --project tests/Calc.Tests -- --filter "Compile"
+```
+
+- `brew install llvm bdw-gc`가 되어 있지 않으면 이 테스트들은 실패가 아니라 **Skipped**로 표시됩니다.
+- 차등 테스트는 기대값을 따로 적지 않습니다. 같은 식을 `Eval.eval`로 실행한 결과(`Eval.formatValue`)와 실행 파일의 출력을 비교합니다. 컴파일러가 지원하는 기능이 늘어나면 비교하는 예제도 자동으로 늘어납니다.
+
 ## 오류 처리 확인
 
 | 입력 | 단계 | 기대 출력 |
@@ -174,7 +186,7 @@ Result: 11
 | 명령 | 기대 출력 | 종료 코드 |
 |---|---|---|
 | `--help`, `-h` | `USAGE: calc [--help] [--expr=<expr>] [--version] [--no-typecheck]`로 시작하는 사용법 | 0 |
-| `--version`, `-v` | `calc 0.14.0` (`Calc.fsproj`의 `<Version>`) | 0 |
+| `--version`, `-v` | `calc 0.15.0` (`Calc.fsproj`의 `<Version>`) | 0 |
 | `-e "(2+3)*4"` | `Result: 20` | 0 |
 | `--expr=7/2` | `Result: 3` | 0 |
 | `--expr "-5 + 2"` | `Result: -3` (`-`로 시작하는 식도 값으로 처리됨) | 0 |
