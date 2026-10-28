@@ -24,7 +24,8 @@
                      ┌──────────── 외부 도구 (Homebrew LLVM) ────────────┐
                      │ mlir-opt       prog.mlir      → prog.llvm.mlir    │
                      │ mlir-translate prog.llvm.mlir → prog.ll (LLVM IR) │
-                     │ clang -O2      prog.ll + runtime.c + -lgc → 실행 파일│
+                     │ clang -O2 -c   prog.ll → prog.o                   │
+                     │ clang          prog.o + runtime.o + -lgc → 실행 파일│
                      └────────────────────────────────────────────────────┘
 ```
 
@@ -34,7 +35,7 @@
 | 타입 검사 | `Infer.fs` | 통과한 프로그램만 컴파일 (`--no-typecheck`와 함께 쓸 수 없음) |
 | 낮추기 | `Core.fs`, `Lower.fs` | `Ast.Expr` → Core IR. 연산을 `Prim`으로, `&&`/`||`를 `if`로, 클로저 변환(함수를 최상위로). 지원하지 않는 기능은 `NotSupported` |
 | 코드 생성 | `Codegen.fs` | Core IR → MLIR 텍스트 |
-| 빌드 | `Toolchain.fs` | 도구 찾기, 임시 폴더에서 외부 도구 세 개를 차례로 실행 |
+| 빌드 | `Toolchain.fs` | 도구 찾기, 임시 폴더에서 외부 도구(`mlir-opt`, `mlir-translate`, `clang`)를 차례로 실행, C 런타임 오브젝트 캐시 |
 | 런타임 | `runtime/runtime.c`, `runtime.h` | 초기화, 결과 출력, 오류 종료, 다형 연산(`calc_add`, `calc_eq`, `calc_compare`) |
 | 진입 | `Program.fs`의 `compile` | 위 단계를 잇고, 오류를 인터프리터와 같은 형식(`Error: ...`)으로 출력 |
 
@@ -60,7 +61,7 @@ $ ./discount
 3240
 ```
 
-`--keep-temps`를 주면 중간 파일 세 개(`prog.mlir`, `prog.llvm.mlir`, `prog.ll`)가 남습니다. `--emit-mlir`은 ②의 결과만 출력합니다.
+`--keep-temps`를 주면 중간 파일(`prog.mlir`, `prog.llvm.mlir`, `prog.ll`, `prog.o`)이 남습니다. `--emit-mlir`은 ②의 결과만 출력합니다.
 
 ### ① AST와 타입 검사: 인터프리터와 같은 코드
 
@@ -156,12 +157,15 @@ define i32 @main() {                      ; (다)가 C 의 main 심볼이 됨
 
 `price * qty`와 `total / 10`이 이미 상수로 접혔습니다. 28801은 3600, 25921은 3240을 태그로 나타낸 값입니다.
 
-### ⑤ `clang`: 컴파일과 링크를 한 번에
+### ⑤ `clang`: 오브젝트로 컴파일하고 런타임과 링크
 
 ```
-clang -O2 -Wno-override-module prog.ll <Calc.dll 폴더>/runtime/runtime.c \
-      -I/opt/homebrew/opt/bdw-gc/include -L/opt/homebrew/opt/bdw-gc/lib -lgc -o discount
+clang -O2 -Wno-override-module -c prog.ll -o prog.o
+clang prog.o $TMPDIR/calc-runtime-<해시>.o -L/opt/homebrew/opt/bdw-gc/lib -lgc \
+      -Wl,-stack_size,0x20000000 -o discount
 ```
+
+이 문서의 처음 판(0.17.0)에서는 `clang -O2 prog.ll runtime.c ...` 한 번으로 컴파일과 링크를 했습니다. 지금은 런타임을 한 번만 컴파일해 둡니다(4장).
 
 최종 `calc_main`(arm64 어셈블리, `otool -tV discount`):
 
@@ -200,7 +204,7 @@ ret
 
 빌드하면 `runtime.c`와 `runtime.h`가 `Calc.dll` 옆의 `runtime/` 폴더로 복사됩니다. `Toolchain.find`는 이 파일을 `AppContext.BaseDirectory/runtime/runtime.c`에서 찾습니다. `ProjectReference`를 따라 테스트 프로젝트 출력 폴더에도 복사되므로, 테스트도 같은 코드로 찾습니다.
 
-미리 빌드한 라이브러리는 없습니다. **컴파일할 때마다** `clang`이 `prog.ll`과 함께 `runtime.c`를 컴파일합니다.
+처음 `--compile`할 때 `clang -O2 -c`로 `runtime.c`를 컴파일해서 임시 폴더에 `calc-runtime-<해시>.o`로 둡니다. 해시는 런타임 소스·헤더·`clang` 경로·GC 위치로 만들고, 같은 해시의 파일이 있으면 다시 씁니다. 다른 프로세스와 동시에 만들 수 있으므로 임시 이름으로 만든 뒤 옮깁니다.
 
 ### 링크: 선언과 정의를 이름으로 맞춤
 
@@ -208,7 +212,7 @@ ret
 prog.mlir   llvm.func @calc_compare(i64, i64) -> i32    (본문 없음 = 선언)
    ↓ mlir-translate
 prog.ll     declare i32 @calc_compare(i64, i64)          (외부 심볼)
-   ↓ clang 이 prog.ll 과 runtime.c 를 각각 오브젝트로 만들고, 링커가 이름으로 연결
+   ↓ clang 이 prog.o 와 runtime.o(캐시)를 링커로 넘기고, 링커가 이름으로 연결
 runtime.c   int32_t calc_compare(value a, value b) {...}  (정의, value = int64_t)
 ```
 
@@ -240,7 +244,6 @@ U _GC_init  U _GC_malloc  U _printf  U _fprintf  U _exit ← 실행할 때 동�
 |---|---|---|
 | 실행 파일이 Homebrew의 `libgc.1.dylib`에 동적으로 의존 | `bdw-gc`가 없는 기기에서는 실행되지 않음 | `libgc.a` 정적 링크 |
 | MLIR 선언(`Codegen.fs`의 문자열)과 `runtime.h`를 맞추는 검사가 없음 | 인자 타입이 어긋나도 링크는 성공하고, 실행 중 값이 틀림. 지금은 차등 테스트만 잡음 | 선언을 한 곳에서 만들기, 또는 헤더와 비교하는 테스트 |
-| `runtime.c`를 컴파일할 때마다 다시 컴파일 | 한 번 컴파일에 걸리는 약 0.25초에 포함 | `runtime.o`/`.a`를 미리 만들어 두기 |
 | 런타임 호출은 최적화를 막음 | 위 어셈블리에서 `calc_compare` 호출이 남음 | 타입별 특수화(설계 단계 9) |
 
 ## 6. 함수와 클로저 (단계 3)
@@ -266,7 +269,7 @@ Main      = CLet ("k", CInt 10,
 모든 함수 값은 클로저이고, 호출 규약은 `(클로저, 인자) -> 결과` 하나입니다.
 
 ```mlir
-llvm.func @lambda_0(%closure: !llvm.ptr, %arg: i64) -> i64 {
+llvm.func internal @lambda_0(%closure: !llvm.ptr, %arg: i64) -> i64 {   // internal: 모듈 밖에서 보이지 않음
   %v2 = llvm.getelementptr %closure[2] : (!llvm.ptr) -> !llvm.ptr, i64
   %v1 = llvm.load %v2 : !llvm.ptr -> i64                // 입구에서 k 를 꺼냄
   %v3 = llvm.call @calc_add(%arg, %v1) : (i64, i64) -> i64

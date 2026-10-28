@@ -72,37 +72,55 @@ let private run (file: string) (args: string list) =
     if p.ExitCode <> 0 then
         raise (ToolError(sprintf "%s failed (exit %d):\n%s" (Path.GetFileName file) p.ExitCode (stderr.TrimEnd())))
 
-/// MLIR 텍스트 → 실행 파일. keepTemps 면 중간 파일 폴더 경로를 반환하고 지우지 않음
-let build (tools: Tools) (mlir: string) (output: string) (keepTemps: bool) : string option =
+/// MLIR 텍스트 → 오브젝트 파일 dir/name.o (중간 파일 name.mlir, name.llvm.mlir, name.ll 도 dir 에)
+let private compileObject (tools: Tools) (dir: string) (name: string) (mlir: string) =
+    let path ext = Path.Combine(dir, name + ext)
+    File.WriteAllText(path ".mlir", mlir)
+    // scf/cf/arith 를 llvm 방언으로 (함수는 이미 llvm.func)
+    run tools.MlirOpt
+        [ path ".mlir"
+          "--convert-scf-to-cf"
+          "--convert-cf-to-llvm"
+          "--convert-arith-to-llvm"
+          "--reconcile-unrealized-casts"
+          "-o"
+          path ".llvm.mlir" ]
+    run tools.MlirTranslate [ "--mlir-to-llvmir"; path ".llvm.mlir"; "-o"; path ".ll" ]
+    run tools.Clang [ "-O2"; "-Wno-override-module"; "-c"; path ".ll"; "-o"; path ".o" ]
+    path ".o"
+
+/// runtime.c 를 컴파일한 오브젝트. 내용과 도구가 같으면 임시 폴더의 캐시를 다시 씀 (컴파일할 때마다 runtime.c 를 다시 컴파일하지 않음)
+let private runtimeObject (tools: Tools) =
+    let header = Path.Combine(Path.GetDirectoryName tools.Runtime, "runtime.h")
+    let key =
+        String.concat "\n" [ File.ReadAllText tools.Runtime; File.ReadAllText header; tools.Clang; tools.GcPrefix ]
+        |> Text.Encoding.UTF8.GetBytes
+        |> Security.Cryptography.SHA256.HashData
+        |> Convert.ToHexString
+    let cached = Path.Combine(Path.GetTempPath(), sprintf "calc-runtime-%s.o" (key.Substring(0, 16)))
+    if not (File.Exists cached) then
+        // 다른 프로세스와 동시에 만들 수 있으므로 임시 이름으로 만든 뒤 옮김 (같은 폴더라 원자적)
+        let temp = cached + "." + Guid.NewGuid().ToString("N")
+        run tools.Clang [ "-O2"; "-c"; tools.Runtime; "-I" + Path.Combine(tools.GcPrefix, "include"); "-o"; temp ]
+        File.Move(temp, cached, true)
+    cached
+
+let private link (tools: Tools) (objects: string list) (output: string) =
+    run tools.Clang
+        [ yield! objects
+          yield runtimeObject tools
+          yield "-L" + Path.Combine(tools.GcPrefix, "lib")
+          yield "-lgc"
+          // 깊은 재귀: 메인 스레드 스택을 512MB 로 (인터프리터의 큰 스택 스레드와 같은 크기, macOS ld)
+          yield "-Wl,-stack_size,0x20000000"
+          yield "-o"
+          yield Path.GetFullPath output ]
+
+let private withTempDir (keepTemps: bool) (action: string -> unit) : string option =
     let dir = Path.Combine(Path.GetTempPath(), "calc-" + Guid.NewGuid().ToString("N").Substring(0, 8))
     Directory.CreateDirectory dir |> ignore
     try
-        let source = Path.Combine(dir, "prog.mlir")
-        let lowered = Path.Combine(dir, "prog.llvm.mlir")
-        let llvmIr = Path.Combine(dir, "prog.ll")
-        File.WriteAllText(source, mlir)
-        // scf/cf/arith 를 llvm 방언으로 (함수는 이미 llvm.func)
-        run tools.MlirOpt
-            [ source
-              "--convert-scf-to-cf"
-              "--convert-cf-to-llvm"
-              "--convert-arith-to-llvm"
-              "--reconcile-unrealized-casts"
-              "-o"
-              lowered ]
-        run tools.MlirTranslate [ "--mlir-to-llvmir"; lowered; "-o"; llvmIr ]
-        run tools.Clang
-            [ "-O2"
-              "-Wno-override-module"
-              llvmIr
-              tools.Runtime
-              "-I" + Path.Combine(tools.GcPrefix, "include")
-              "-L" + Path.Combine(tools.GcPrefix, "lib")
-              "-lgc"
-              // 깊은 재귀: 메인 스레드 스택을 512MB 로 (인터프리터의 큰 스택 스레드와 같은 크기, macOS ld)
-              "-Wl,-stack_size,0x20000000"
-              "-o"
-              Path.GetFullPath output ]
+        action dir
         if keepTemps then Some dir else None
     finally
         if not keepTemps then
@@ -110,3 +128,77 @@ let build (tools: Tools) (mlir: string) (output: string) (keepTemps: bool) : str
                 Directory.Delete(dir, true)
             with _ ->
                 ()
+
+/// MLIR 텍스트(Codegen.emitProgram) → 실행 파일. keepTemps 면 중간 파일 폴더 경로를 반환하고 지우지 않음
+let build (tools: Tools) (mlir: string) (output: string) (keepTemps: bool) : string option =
+    withTempDir keepTemps (fun dir -> link tools [ compileObject tools dir "prog" mlir ] output)
+
+/// 여러 프로그램을 실행 파일 하나로. modules 는 Codegen.emitEntries 의 MLIR (병렬로 컴파일), entries 는 모든 진입 함수 이름.
+/// 실행 파일 사용법:
+///   prog <번호>          번호의 프로그램을 실행하고 결과를 출력 (calc --compile 의 실행 파일과 같음)
+///   prog --all <폴더>    프로그램마다 fork 한 자식 프로세스에서 실행하고, 폴더에 <번호>.out, <번호>.err, <번호>.code 를 남김
+/// 테스트에서 외부 도구, 새 실행 파일, 프로세스 생성 수를 줄이려고 씀
+let buildMany (tools: Tools) (modules: string list) (entries: string list) (output: string) =
+    withTempDir false (fun dir ->
+        let objects =
+            modules
+            |> Array.ofList
+            |> Array.Parallel.mapi (fun i mlir -> compileObject tools dir (sprintf "part%d" i) mlir)
+            |> List.ofArray
+        let driver = Path.Combine(dir, "driver.c")
+        File.WriteAllLines(
+            driver,
+            [ "#include <stdint.h>"
+              "#include <stdio.h>"
+              "#include <stdlib.h>"
+              "#include <string.h>"
+              "#include <sys/wait.h>"
+              "#include <unistd.h>"
+              "void calc_init(void);"
+              "void calc_print_result(int64_t v);"
+              yield! entries |> List.map (sprintf "int64_t %s(void);")
+              "static int64_t (*const entries[])(void) = {"
+              yield! entries |> List.map (sprintf "    %s,")
+              "};"
+              sprintf "static const int count = %d;" entries.Length
+              "static void run(int i) {"
+              "    calc_init();"
+              "    calc_print_result(entries[i]());"
+              "}"
+              "static FILE *open_result(const char *dir, int i, const char *ext) {"
+              "    char path[4096];"
+              "    snprintf(path, sizeof path, \"%s/%d.%s\", dir, i, ext);"
+              "    return fopen(path, \"w\");"
+              "}"
+              "int main(int argc, char **argv) {"
+              "    if (argc == 3 && strcmp(argv[1], \"--all\") == 0) {"
+              "        for (int i = 0; i < count; i++) {"
+              "            fflush(NULL);"
+              "            pid_t pid = fork();"
+              "            if (pid == 0) {"
+              "                char path[4096];"
+              "                snprintf(path, sizeof path, \"%s/%d.out\", argv[2], i);"
+              "                freopen(path, \"w\", stdout);"
+              "                snprintf(path, sizeof path, \"%s/%d.err\", argv[2], i);"
+              "                freopen(path, \"w\", stderr);"
+              "                run(i);"
+              "                exit(0);"
+              "            }"
+              "            int status = 0;"
+              "            waitpid(pid, &status, 0);"
+              "            /* 셸과 같은 종료 코드: 신호로 끝나면 128 + 신호 번호 */"
+              "            int code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);"
+              "            FILE *f = open_result(argv[2], i, \"code\");"
+              "            fprintf(f, \"%d\", code);"
+              "            fclose(f);"
+              "        }"
+              "        return 0;"
+              "    }"
+              "    run(atoi(argv[1]));"
+              "    return 0;"
+              "}" ]
+        )
+        let driverObject = Path.Combine(dir, "driver.o")
+        run tools.Clang [ "-O2"; "-c"; driver; "-o"; driverObject ]
+        link tools (objects @ [ driverObject ]) output)
+    |> ignore

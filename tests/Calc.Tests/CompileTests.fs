@@ -74,6 +74,212 @@ let private runtimeErrorCases =
       "match [] with | x :: _ -> x"
       "match (1, \"a\") with | (2, _) -> 0 | (_, \"b\") -> 1" ]
 
+/// 실행 테스트: 이름, [입력, (표준 출력, 표준 에러, 종료 코드), 메시지]. 차등 테스트 예제와 함께 실행 파일 하나로 묶어 빌드함 (batch)
+let private runCases =
+    [
+      "42",
+        [
+          "42", ("42\n", "", 0), ""
+        ]
+      "int 범위 끝",
+        [
+          "2147483647", ("2147483647\n", "", 0), ""
+          "0", ("0\n", "", 0), ""
+        ]
+      "bool",
+        [
+          "true", ("true\n", "", 0), ""
+          "false", ("false\n", "", 0), ""
+        ]
+      "산술",
+        [
+          "1 + 2 * 3", ("7\n", "", 0), ""
+          "(1 + 2) * 3 - 10", ("-1\n", "", 0), ""
+          "-(4 - 6)", ("2\n", "", 0), ""
+        ]
+      "나눗셈은 0 쪽으로 버림",
+        [
+          "7 / -2", ("-3\n", "", 0), ""
+          "-7 / 2", ("-3\n", "", 0), ""
+        ]
+      "32비트에서 한 바퀴 돎 (인터프리터와 같음)",
+        [
+          "2147483647 + 1", ("-2147483648\n", "", 0), "+ (런타임)"
+          "-2147483647 - 2", ("2147483647\n", "", 0), "-"
+          "65536 * 65536", ("0\n", "", 0), "*"
+          "-(-2147483647 - 1)", ("-2147483648\n", "", 0), "단항 -"
+        ]
+      "비교와 논리",
+        [
+          "1 < 2 && 2 <= 2 && 3 > 2 && 3 >= 4 = false", ("true\n", "", 0), ""
+          "1 = 1 && true <> false && not (2 = 3)", ("true\n", "", 0), ""
+          "-1 < 0", ("true\n", "", 0), "음수 비교"
+        ]
+      "if",
+        [
+          "if 1 < 2 then 10 else 20", ("10\n", "", 0), ""
+          "if false then true else if 1 = 1 then false else true", ("false\n", "", 0), ""
+        ]
+      "0으로 나누기는 오류",
+        [
+          "1 / 0", ("", "Error: Attempted to divide by zero.\n", 1), ""
+        ]
+      "MinValue / -1 은 오버플로 오류",
+        [
+          "(-2147483647 - 1) / -1", ("", "Error: Arithmetic operation resulted in an overflow.\n", 1), ""
+          "(-2147483647 - 1) / 1", ("-2147483648\n", "", 0), "-1 이 아니면 정상"
+        ]
+      "let 과 섀도잉",
+        [
+          "let x = 5 in if x > 3 then x * 2 else 0", ("10\n", "", 0), ""
+          "let x = 1 in let x = x + 10 in x", ("11\n", "", 0), "섀도잉"
+          "let x = 1 in (let x = 2 in x) + x", ("3\n", "", 0), "안쪽 let 이 끝나면 바깥 x"
+        ]
+      "if 분기 안의 let",
+        [
+          "let a = 3 in let b = if a > 2 then (let c = a * a in c + 1) else 0 in a + b", ("13\n", "", 0), ""
+        ]
+      "let 의 값은 쓰이지 않아도 계산 (인터프리터와 같음)",
+        [
+          "let x = 1 / 0 in 5", ("", "Error: Attempted to divide by zero.\n", 1), ""
+        ]
+      "클로저: 정적 범위",
+        [
+          "let k = 10 in let add = fun x -> x + k in add 32", ("42\n", "", 0), ""
+          "let x = 1 in let f = fun y -> x + y in let x = 100 in f 1", ("2\n", "", 0), "정의할 때의 x"
+        ]
+      "커링과 고차 함수",
+        [
+          "let add x y = x + y in let inc = add 1 in inc 41", ("42\n", "", 0), "부분 적용"
+          "let twice f x = f (f x) in twice (fun x -> x * 3) 7", ("63\n", "", 0), ""
+          "let compose f g = fun x -> f (g x) in let inc x = x + 1 in let dbl x = x * 2 in (compose inc dbl) 5", ("11\n", "", 0), ""
+        ]
+      "let rec",
+        [
+          "let rec fact n = if n = 0 then 1 else n * fact (n - 1) in fact 10", ("3628800\n", "", 0), ""
+          "let rec fib n = if n < 2 then n else fib (n - 1) + fib (n - 2) in fib 20", ("6765\n", "", 0), ""
+          "let rec f f = f in f 5", ("5\n", "", 0), "인자가 자기 자신을 가림"
+        ]
+      "재귀 깊이 100만 (512MB 스택)",
+        [
+          "let rec f n = if n = 0 then 0 else 1 + f (n - 1) in f 1000000", ("1000000\n", "", 0), ""
+        ]
+      "함수 값",
+        [
+          "fun x -> x", ("<fun>\n", "", 0), "인터프리터와 같은 출력"
+          "(fun x -> x) = (fun x -> x)", ("", "Error: Type error: expected int, bool, string, list, tuple or data but got function\n", 1), "함수끼리 비교는 실행 중 오류"
+        ]
+      "문자열 출력: 인터프리터와 같은 따옴표와 이스케이프",
+        [
+          "\"hello\"", ("\"hello\"\n", "", 0), ""
+          "\"\"", ("\"\"\n", "", 0), "빈 문자열"
+          "\"q\\\" b\\\\ n\\n t\\t r\\r\"", ("\"q\\\" b\\\\ n\\n t\\t r\\r\"\n", "", 0), ""
+        ]
+      "문자열 출력: UTF-16 을 UTF-8 로 (대리 쌍 포함)",
+        [
+          "\"한글 😀\"", ("\"한글 😀\"\n", "", 0), ""
+        ]
+      "문자열 연결",
+        [
+          "\"a\" + \"b\" + \"\"", ("\"ab\"\n", "", 0), ""
+          "let greet name = \"Hello, \" + name + \"!\" in greet \"Calc\"", ("\"Hello, Calc!\"\n", "", 0), ""
+          "let rec rep s n = if n = 0 then \"\" else s + rep s (n - 1) in rep \"ab\" 5", ("\"ababababab\"\n", "", 0), ""
+        ]
+      "문자열 비교: 내용 비교와 ordinal 순서",
+        [
+          "\"abc\" = \"abc\" && \"abc\" <> \"abd\" && \"\" = \"\"", ("true\n", "", 0), ""
+          "\"ab\" < \"abc\" && \"B\" < \"a\" && \"Z\" < \"é\"", ("true\n", "", 0), "대문자가 소문자보다 앞 (문화권 순서가 아님)"
+          // UTF-16 코드 단위 순서: 😀 는 D83D DE00 이라 U+FFFF 보다 앞 (코드 포인트 순서와 반대)
+          "\"😀\" < \"\uFFFF\"", ("true\n", "", 0), ""
+        ]
+      "문자열 연결 10만 번",
+        [
+          "let rec loop n = if n = 0 then \"done\" else (let s = \"abc\" + \"def\" in if s = \"abcdef\" then loop (n - 1) else \"bad\") in loop 100000", ("\"done\"\n", "", 0), ""
+        ]
+      "리스트와 튜플 출력",
+        [
+          "[]", ("[]\n", "", 0), ""
+          "[1; 2; 3]", ("[1; 2; 3]\n", "", 0), ""
+          "(1, \"a\", true)", ("(1, \"a\", true)\n", "", 0), ""
+          "[(1, [2]); (3, [])]", ("[(1, [2]); (3, [])]\n", "", 0), "중첩"
+          "[fun x -> x]", ("[<fun>]\n", "", 0), ""
+        ]
+      "리스트 재귀 함수",
+        [
+          "let rec map f xs = match xs with | [] -> [] | x :: rest -> f x :: map f rest in map (fun x -> x * x) [1; 2; 3]", ("[1; 4; 9]\n", "", 0), ""
+          "let rec rev acc xs = match xs with | [] -> acc | x :: r -> rev (x :: acc) r in rev [] [1; 2; 3]", ("[3; 2; 1]\n", "", 0), ""
+        ]
+      "긴 리스트 (10만 개)",
+        [
+          "let rec upto n acc = if n = 0 then acc else upto (n - 1) (n :: acc) in let rec sum xs = match xs with | [] -> 0 | x :: r -> x + sum r in sum (upto 100000 [])", ("705082704\n", "", 0), "합은 32비트에서 한 바퀴 돎"
+        ]
+      "match: 상수, 중첩, 가드",
+        [
+          "match (1, 2) with | (0, y) -> y | (x, y) -> x * 10 + y", ("12\n", "", 0), ""
+          "match [1; 2] with | [x; y] -> x + y | _ -> 0", ("3\n", "", 0), ""
+          "match \"hi\" with | \"hello\" -> 1 | \"hi\" -> 2 | _ -> 3", ("2\n", "", 0), ""
+          "match [1; 2; 3] with | x :: y :: _ when x < y -> (x, y) | _ -> (0, 0)", ("(1, 2)\n", "", 0), ""
+          "match 2 with | n when n > 3 -> \"big\" | _ -> \"small\"", ("\"small\"\n", "", 0), "가드가 거짓이면 다음 분기"
+        ]
+      "Match failure",
+        [
+          "match [1] with | [] -> 0", ("", "Error: Match failure: [1]\n", 1), ""
+          "let (a, 1) = (5, 2) in a", ("", "Error: Match failure: (5, 2)\n", 1), "let 패턴"
+        ]
+      "구조적 = (인터프리터처럼 길이를 먼저)",
+        [
+          "[1; 2] = [1; 2] && [1; 2] <> [1] && (1, \"x\") = (1, \"x\") && [[1]; []] = [[1]; []]", ("true\n", "", 0), ""
+          "[fun x -> x] = []", ("false\n", "", 0), "길이가 다르면 원소를 보지 않음"
+          "[fun x -> x] = [fun x -> x]", ("", "Error: Type error: expected int, bool, string, list, tuple or data but got function\n", 1), ""
+        ]
+      "단락 평가: 오른쪽은 계산하지 않음",
+        [
+          "false && 1 / 0 = 0", ("false\n", "", 0), ""
+          "true || 1 / 0 = 0", ("true\n", "", 0), ""
+          "if true then 1 else 1 / 0", ("1\n", "", 0), ""
+          "true && 1 / 0 = 0", ("", "Error: Attempted to divide by zero.\n", 1), ""
+        ]
+    ]
+
+/// 차등 테스트의 입력: 평가 예제와 실행 중 오류 예제 중 컴파일할 수 있는 것
+let private differentialInputs =
+    lazy ((EvalTests.cases |> List.map fst) @ runtimeErrorCases |> List.filter compilable)
+
+/// 실행 테스트와 차등 테스트의 모든 입력을 실행 파일 하나로 빌드하고 각각 실행한 결과 (표준 출력, 표준 에러, 종료 코드).
+/// 입력마다 실행 파일을 만들면 느림: 외부 도구 3번, 새 실행 파일의 첫 실행(macOS 에서 약 0.3초), .NET 의 프로세스 생성.
+/// 그래서 입력을 코어 수만큼의 모듈로 나눠 병렬로 컴파일하고, 실행은 실행 파일 안의 드라이버가 입력마다 fork 해서 함
+let private batch =
+    lazy
+        (let t = requireTools ()
+         let inputs =
+             (runCases |> List.collect (snd >> List.map (fun (input, _, _) -> input))) @ differentialInputs.Value
+             |> List.distinct
+         let programs =
+             inputs
+             |> List.mapi (fun i input ->
+                 let ast = Program.parse input
+                 Infer.typecheck ast |> ignore
+                 sprintf "calc_entry_%d" i, ast)
+         let chunkSize = max 1 ((programs.Length + Environment.ProcessorCount - 1) / Environment.ProcessorCount)
+         let modules = programs |> List.chunkBySize chunkSize |> List.map Codegen.emitEntries
+         let work = Path.Combine(Path.GetTempPath(), "calc-test-batch-" + Guid.NewGuid().ToString("N"))
+         Directory.CreateDirectory work |> ignore
+         try
+             let exe = Path.Combine(work, "batch")
+             Toolchain.buildMany t modules (List.map fst programs) exe
+             let _, stderr, code = runProcess exe [ "--all"; work ]
+             if code <> 0 then failwithf "batch driver failed (exit %d): %s" code stderr
+             let read i ext = File.ReadAllText(Path.Combine(work, sprintf "%d.%s" i ext))
+             inputs |> List.mapi (fun i input -> input, (read i "out", read i "err", int (read i "code"))) |> Map.ofList
+         finally
+             Directory.Delete(work, true))
+
+/// 묶음 빌드의 결과. 묶음에 없는 입력이면 따로 컴파일
+let private batchRun (input: string) =
+    match batch.Value.TryFind input with
+    | Some result -> result
+    | None -> compileAndRun input
+
 [<Tests>]
 let tests =
     testList "Compile" [
@@ -103,7 +309,7 @@ let tests =
             }
             test "클로저는 calc_alloc 으로 할당하고 간접 호출" {
                 let mlir = Codegen.emitProgram (Program.parse "let k = 10 in let add = fun x -> x + k in add 32")
-                Expect.stringContains mlir "llvm.func @lambda_0(%closure: !llvm.ptr, %arg: i64) -> i64" ""
+                Expect.stringContains mlir "llvm.func internal @lambda_0(%closure: !llvm.ptr, %arg: i64) -> i64" ""
                 Expect.stringContains mlir "llvm.call @calc_alloc(" ""
                 Expect.stringContains mlir "llvm.mlir.addressof @lambda_0" ""
                 Expect.stringContains mlir ": !llvm.ptr, (!llvm.ptr, i64) -> i64" "간접 호출"
@@ -201,178 +407,33 @@ let tests =
             }
         ]
 
-        testList "실행" [
-            test "42" {
-                Expect.equal (compileAndRun "42") ("42\n", "", 0) ""
+        // 위 실행 테스트는 묶음 실행 파일(Toolchain.buildMany)을 씀. calc --compile 과 같은 경로(@main 이 있는 단독 실행 파일)도 확인
+        testList "단독 실행 파일" [
+            test "결과 출력" {
+                Expect.equal (compileAndRun "let xs = [\"a\"; \"b\"] in (xs, fun x -> x)") ("([\"a\"; \"b\"], <fun>)\n", "", 0) ""
             }
-            test "int 범위 끝" {
-                Expect.equal (compileAndRun "2147483647") ("2147483647\n", "", 0) ""
-                Expect.equal (compileAndRun "0") ("0\n", "", 0) ""
-            }
-            test "bool" {
-                Expect.equal (compileAndRun "true") ("true\n", "", 0) ""
-                Expect.equal (compileAndRun "false") ("false\n", "", 0) ""
-            }
-            test "산술" {
-                Expect.equal (compileAndRun "1 + 2 * 3") ("7\n", "", 0) ""
-                Expect.equal (compileAndRun "(1 + 2) * 3 - 10") ("-1\n", "", 0) ""
-                Expect.equal (compileAndRun "-(4 - 6)") ("2\n", "", 0) ""
-            }
-            test "나눗셈은 0 쪽으로 버림" {
-                Expect.equal (compileAndRun "7 / -2") ("-3\n", "", 0) ""
-                Expect.equal (compileAndRun "-7 / 2") ("-3\n", "", 0) ""
-            }
-            test "32비트에서 한 바퀴 돎 (인터프리터와 같음)" {
-                Expect.equal (compileAndRun "2147483647 + 1") ("-2147483648\n", "", 0) "+ (런타임)"
-                Expect.equal (compileAndRun "-2147483647 - 2") ("2147483647\n", "", 0) "-"
-                Expect.equal (compileAndRun "65536 * 65536") ("0\n", "", 0) "*"
-                Expect.equal (compileAndRun "-(-2147483647 - 1)") ("-2147483648\n", "", 0) "단항 -"
-            }
-            test "비교와 논리" {
-                Expect.equal (compileAndRun "1 < 2 && 2 <= 2 && 3 > 2 && 3 >= 4 = false") ("true\n", "", 0) ""
-                Expect.equal (compileAndRun "1 = 1 && true <> false && not (2 = 3)") ("true\n", "", 0) ""
-                Expect.equal (compileAndRun "-1 < 0") ("true\n", "", 0) "음수 비교"
-            }
-            test "if" {
-                Expect.equal (compileAndRun "if 1 < 2 then 10 else 20") ("10\n", "", 0) ""
-                Expect.equal (compileAndRun "if false then true else if 1 = 1 then false else true") ("false\n", "", 0) ""
-            }
-            test "0으로 나누기는 오류" {
+            test "실행 중 오류" {
                 Expect.equal (compileAndRun "1 / 0") ("", "Error: Attempted to divide by zero.\n", 1) ""
             }
-            test "MinValue / -1 은 오버플로 오류" {
-                Expect.equal
-                    (compileAndRun "(-2147483647 - 1) / -1")
-                    ("", "Error: Arithmetic operation resulted in an overflow.\n", 1)
-                    ""
-                Expect.equal (compileAndRun "(-2147483647 - 1) / 1") ("-2147483648\n", "", 0) "-1 이 아니면 정상"
-            }
-            test "let 과 섀도잉" {
-                Expect.equal (compileAndRun "let x = 5 in if x > 3 then x * 2 else 0") ("10\n", "", 0) ""
-                Expect.equal (compileAndRun "let x = 1 in let x = x + 10 in x") ("11\n", "", 0) "섀도잉"
-                Expect.equal (compileAndRun "let x = 1 in (let x = 2 in x) + x") ("3\n", "", 0) "안쪽 let 이 끝나면 바깥 x"
-            }
-            test "if 분기 안의 let" {
-                Expect.equal
-                    (compileAndRun "let a = 3 in let b = if a > 2 then (let c = a * a in c + 1) else 0 in a + b")
-                    ("13\n", "", 0)
-                    ""
-            }
-            test "let 의 값은 쓰이지 않아도 계산 (인터프리터와 같음)" {
-                Expect.equal (compileAndRun "let x = 1 / 0 in 5") ("", "Error: Attempted to divide by zero.\n", 1) ""
-            }
-            test "클로저: 정적 범위" {
-                Expect.equal (compileAndRun "let k = 10 in let add = fun x -> x + k in add 32") ("42\n", "", 0) ""
-                Expect.equal (compileAndRun "let x = 1 in let f = fun y -> x + y in let x = 100 in f 1") ("2\n", "", 0) "정의할 때의 x"
-            }
-            test "커링과 고차 함수" {
-                Expect.equal (compileAndRun "let add x y = x + y in let inc = add 1 in inc 41") ("42\n", "", 0) "부분 적용"
-                Expect.equal (compileAndRun "let twice f x = f (f x) in twice (fun x -> x * 3) 7") ("63\n", "", 0) ""
-                Expect.equal
-                    (compileAndRun "let compose f g = fun x -> f (g x) in let inc x = x + 1 in let dbl x = x * 2 in (compose inc dbl) 5")
-                    ("11\n", "", 0)
-                    ""
-            }
-            test "let rec" {
-                Expect.equal (compileAndRun "let rec fact n = if n = 0 then 1 else n * fact (n - 1) in fact 10") ("3628800\n", "", 0) ""
-                Expect.equal (compileAndRun "let rec fib n = if n < 2 then n else fib (n - 1) + fib (n - 2) in fib 20") ("6765\n", "", 0) ""
-                Expect.equal (compileAndRun "let rec f f = f in f 5") ("5\n", "", 0) "인자가 자기 자신을 가림"
-            }
-            test "재귀 깊이 100만 (512MB 스택)" {
+            test "재귀 깊이 100만 (링크 옵션의 512MB 스택)" {
                 Expect.equal (compileAndRun "let rec f n = if n = 0 then 0 else 1 + f (n - 1) in f 1000000") ("1000000\n", "", 0) ""
             }
-            test "함수 값" {
-                Expect.equal (compileAndRun "fun x -> x") ("<fun>\n", "", 0) "인터프리터와 같은 출력"
-                Expect.equal
-                    (compileAndRun "(fun x -> x) = (fun x -> x)")
-                    ("", "Error: Type error: expected int, bool, string, list, tuple or data but got function\n", 1)
-                    "함수끼리 비교는 실행 중 오류"
-            }
-            test "문자열 출력: 인터프리터와 같은 따옴표와 이스케이프" {
-                Expect.equal (compileAndRun "\"hello\"") ("\"hello\"\n", "", 0) ""
-                Expect.equal (compileAndRun "\"\"") ("\"\"\n", "", 0) "빈 문자열"
-                Expect.equal (compileAndRun "\"q\\\" b\\\\ n\\n t\\t r\\r\"") ("\"q\\\" b\\\\ n\\n t\\t r\\r\"\n", "", 0) ""
-            }
-            test "문자열 출력: UTF-16 을 UTF-8 로 (대리 쌍 포함)" {
-                Expect.equal (compileAndRun "\"한글 😀\"") ("\"한글 😀\"\n", "", 0) ""
-            }
-            test "문자열 연결" {
-                Expect.equal (compileAndRun "\"a\" + \"b\" + \"\"") ("\"ab\"\n", "", 0) ""
-                Expect.equal (compileAndRun "let greet name = \"Hello, \" + name + \"!\" in greet \"Calc\"") ("\"Hello, Calc!\"\n", "", 0) ""
-                Expect.equal
-                    (compileAndRun "let rec rep s n = if n = 0 then \"\" else s + rep s (n - 1) in rep \"ab\" 5")
-                    ("\"ababababab\"\n", "", 0)
-                    ""
-            }
-            test "문자열 비교: 내용 비교와 ordinal 순서" {
-                Expect.equal (compileAndRun "\"abc\" = \"abc\" && \"abc\" <> \"abd\" && \"\" = \"\"") ("true\n", "", 0) ""
-                Expect.equal (compileAndRun "\"ab\" < \"abc\" && \"B\" < \"a\" && \"Z\" < \"é\"") ("true\n", "", 0) "대문자가 소문자보다 앞 (문화권 순서가 아님)"
-                // UTF-16 코드 단위 순서: 😀 는 D83D DE00 이라 U+FFFF 보다 앞 (코드 포인트 순서와 반대)
-                Expect.equal (compileAndRun "\"😀\" < \"\uFFFF\"") ("true\n", "", 0) ""
-            }
-            test "문자열 연결 10만 번" {
-                Expect.equal
-                    (compileAndRun "let rec loop n = if n = 0 then \"done\" else (let s = \"abc\" + \"def\" in if s = \"abcdef\" then loop (n - 1) else \"bad\") in loop 100000")
-                    ("\"done\"\n", "", 0)
-                    ""
-            }
-            test "리스트와 튜플 출력" {
-                Expect.equal (compileAndRun "[]") ("[]\n", "", 0) ""
-                Expect.equal (compileAndRun "[1; 2; 3]") ("[1; 2; 3]\n", "", 0) ""
-                Expect.equal (compileAndRun "(1, \"a\", true)") ("(1, \"a\", true)\n", "", 0) ""
-                Expect.equal (compileAndRun "[(1, [2]); (3, [])]") ("[(1, [2]); (3, [])]\n", "", 0) "중첩"
-                Expect.equal (compileAndRun "[fun x -> x]") ("[<fun>]\n", "", 0) ""
-            }
-            test "리스트 재귀 함수" {
-                Expect.equal
-                    (compileAndRun "let rec map f xs = match xs with | [] -> [] | x :: rest -> f x :: map f rest in map (fun x -> x * x) [1; 2; 3]")
-                    ("[1; 4; 9]\n", "", 0)
-                    ""
-                Expect.equal
-                    (compileAndRun "let rec rev acc xs = match xs with | [] -> acc | x :: r -> rev (x :: acc) r in rev [] [1; 2; 3]")
-                    ("[3; 2; 1]\n", "", 0)
-                    ""
-            }
-            test "긴 리스트 (10만 개)" {
-                Expect.equal
-                    (compileAndRun "let rec upto n acc = if n = 0 then acc else upto (n - 1) (n :: acc) in let rec sum xs = match xs with | [] -> 0 | x :: r -> x + sum r in sum (upto 100000 [])")
-                    ("705082704\n", "", 0)
-                    "합은 32비트에서 한 바퀴 돎"
-            }
-            test "match: 상수, 중첩, 가드" {
-                Expect.equal (compileAndRun "match (1, 2) with | (0, y) -> y | (x, y) -> x * 10 + y") ("12\n", "", 0) ""
-                Expect.equal (compileAndRun "match [1; 2] with | [x; y] -> x + y | _ -> 0") ("3\n", "", 0) ""
-                Expect.equal (compileAndRun "match \"hi\" with | \"hello\" -> 1 | \"hi\" -> 2 | _ -> 3") ("2\n", "", 0) ""
-                Expect.equal (compileAndRun "match [1; 2; 3] with | x :: y :: _ when x < y -> (x, y) | _ -> (0, 0)") ("(1, 2)\n", "", 0) ""
-                Expect.equal (compileAndRun "match 2 with | n when n > 3 -> \"big\" | _ -> \"small\"") ("\"small\"\n", "", 0) "가드가 거짓이면 다음 분기"
-            }
-            test "Match failure" {
-                Expect.equal (compileAndRun "match [1] with | [] -> 0") ("", "Error: Match failure: [1]\n", 1) ""
-                Expect.equal (compileAndRun "let (a, 1) = (5, 2) in a") ("", "Error: Match failure: (5, 2)\n", 1) "let 패턴"
-            }
-            test "구조적 = (인터프리터처럼 길이를 먼저)" {
-                Expect.equal (compileAndRun "[1; 2] = [1; 2] && [1; 2] <> [1] && (1, \"x\") = (1, \"x\") && [[1]; []] = [[1]; []]") ("true\n", "", 0) ""
-                Expect.equal (compileAndRun "[fun x -> x] = []") ("false\n", "", 0) "길이가 다르면 원소를 보지 않음"
-                Expect.equal
-                    (compileAndRun "[fun x -> x] = [fun x -> x]")
-                    ("", "Error: Type error: expected int, bool, string, list, tuple or data but got function\n", 1)
-                    ""
-            }
-            test "단락 평가: 오른쪽은 계산하지 않음" {
-                Expect.equal (compileAndRun "false && 1 / 0 = 0") ("false\n", "", 0) ""
-                Expect.equal (compileAndRun "true || 1 / 0 = 0") ("true\n", "", 0) ""
-                Expect.equal (compileAndRun "if true then 1 else 1 / 0") ("1\n", "", 0) ""
-                Expect.equal (compileAndRun "true && 1 / 0 = 0") ("", "Error: Attempted to divide by zero.\n", 1) ""
-            }
+        ]
+
+        testList "실행" [
+            for name, cases in runCases ->
+                test name {
+                    requireTools () |> ignore
+                    for input, expected, message in cases do
+                        Expect.equal (batchRun input) expected (if message = "" then input else message)
+                }
         ]
 
         test "차등: 컴파일할 수 있는 평가 예제는 인터프리터와 같은 결과" {
             requireTools () |> ignore
-            let inputs = (EvalTests.cases |> List.map fst) @ runtimeErrorCases |> List.filter compilable
-            // 예제마다 외부 도구를 세 번 실행하므로 병렬로 컴파일
-            let actual = inputs |> Array.ofList |> Array.Parallel.map compileAndRun
-            for input, result in Array.zip (Array.ofList inputs) actual do
-                Expect.equal result (interpret input) input
+            let inputs = differentialInputs.Value
+            for input in inputs do
+                Expect.equal (batchRun input) (interpret input) input
             // 단계가 올라갈수록 늘어남 (단계 5: + 리스트, 튜플, 패턴 매칭)
             Expect.isGreaterThanOrEqual inputs.Length 155 "컴파일한 예제 수"
         }

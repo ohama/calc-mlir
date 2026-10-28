@@ -51,15 +51,17 @@ brew install llvm bdw-gc
   → Codegen.fs                (새로)  Core IR → MLIR 텍스트 (.mlir)
   → mlir-opt                  (외부)  scf/cf/arith → llvm 방언으로 낮추기
   → mlir-translate            (외부)  llvm 방언 → LLVM IR (.ll)
-  → clang + runtime.c + libgc (외부)  실행 파일
+  → clang -c                  (외부)  오브젝트 (.o)
+  → clang + runtime.o + libgc (외부)  실행 파일 (runtime.o 는 한 번 컴파일해서 캐시)
 ```
 
 ```sh
 mlir-opt prog.mlir --convert-scf-to-cf --convert-cf-to-llvm --convert-arith-to-llvm \
          --reconcile-unrealized-casts -o prog.llvm.mlir
 mlir-translate --mlir-to-llvmir prog.llvm.mlir -o prog.ll
-clang -O2 -Wno-override-module prog.ll runtime.c \
-      -I/opt/homebrew/opt/bdw-gc/include -L/opt/homebrew/opt/bdw-gc/lib -lgc -o prog
+clang -O2 -Wno-override-module -c prog.ll -o prog.o
+clang -O2 -c runtime.c -I/opt/homebrew/opt/bdw-gc/include -o runtime.o     # 한 번만 (캐시)
+clang prog.o runtime.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack_size,0x20000000 -o prog
 ```
 
 ### 새 명령줄 옵션
@@ -68,7 +70,7 @@ clang -O2 -Wno-override-module prog.ll runtime.c \
 |---|---|
 | `--emit-mlir` | 생성한 MLIR 텍스트를 표준 출력으로 보내고 끝냄 (디버깅, 골든 테스트용) |
 | `--compile <path>` | 실행 파일 `<path>`를 만듦. 중간 파일은 임시 디렉터리에 둠 |
-| `--keep-temps` | 중간 파일(`.mlir`, `.ll`)을 지우지 않고 경로를 출력 |
+| `--keep-temps` | 중간 파일(`.mlir`, `.ll`, `.o`)을 지우지 않고 경로를 출력 |
 
 `--compile`은 `--no-typecheck`와 함께 쓸 수 없습니다(1장).
 
@@ -381,7 +383,7 @@ llvm.func @main() -> i32 {
   - 컴파일러 쪽: 실행 파일의 표준 출력, 표준 에러, 종료 코드
 - 입력은 기존 `EvalTests.cases`에서 **타입 검사를 통과하고 현재 단계가 지원하는 것**을 고릅니다. 지원 여부는 `Lower`가 판단합니다(지원하지 않으면 `Not supported`). 그래서 단계가 올라갈수록 테스트 수가 자동으로 늘어납니다. 각 단계에서 통과 개수의 하한을 테스트에 적습니다.
 - 오류 예제(`1 / 0`, `head []`, `Match failure` 등)는 메시지와 종료 코드까지 비교합니다.
-- 예제마다 외부 프로세스를 4번 실행하므로 느립니다(예제당 수백 ms). 차등 테스트는 별도 목록(`Compile`)에 두고 필요할 때 걸러서 실행합니다(`--filter "Compile"`).
+- 예제마다 실행 파일을 만들면 느립니다(외부 도구 3번, macOS의 새 실행 파일 첫 실행 약 0.3초). 그래서 테스트는 모든 예제를 실행 파일 하나로 묶어 빌드하고, 그 안의 드라이버가 예제마다 `fork`해서 실행합니다(`Toolchain.buildMany`). 예제마다 프로세스가 따로라서 출력과 종료 코드는 단독 실행 파일과 같습니다.
 - 도구가 없는 환경에서는 차등 테스트를 건너뛰고, 건너뛴 이유를 출력합니다.
 - `--emit-mlir` 출력의 골든 테스트는 작은 예제 몇 개에만 둡니다. 출력 형식이 자주 바뀌기 때문입니다.
 - `mlir-opt`를 아무 패스 없이 실행해서 생성한 MLIR이 올바른지 먼저 검증합니다. 오류가 나면 `Codegen` 버그입니다.

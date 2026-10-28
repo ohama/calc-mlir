@@ -55,11 +55,11 @@ dotnet src/Calc/bin/Debug/net10.0/Calc.dll --expr "2 + 3"
 | 옵션 | 짧은 형식 | 설명 |
 |---|---|---|
 | `--expr <expr>` | `-e <expr>` | 주어진 식을 계산합니다. `--expr=<expr>` 형식도 됩니다. 생략하면 표준 입력에서 읽습니다. |
-| `--version` | `-v` | 버전을 출력하고 종료합니다 (예: `calc 0.20.0`). |
+| `--version` | `-v` | 버전을 출력하고 종료합니다 (예: `calc 0.21.0`). |
 | `--no-typecheck` | | 타입 추론을 건너뛰고 바로 평가합니다. 타입은 평가 중에 동적으로 검사됩니다. |
 | `--emit-mlir` | | 평가하지 않고, 컴파일러가 만든 MLIR을 출력합니다. |
 | `--compile <path>` | | 평가하지 않고, 네이티브 실행 파일을 `<path>`에 만듭니다. `--compile=<path>` 형식도 됩니다. |
-| `--keep-temps` | | `--compile`과 함께 쓰면 중간 파일(`.mlir`, `.ll`)을 지우지 않고 폴더 경로를 출력합니다. |
+| `--keep-temps` | | `--compile`과 함께 쓰면 중간 파일(`.mlir`, `.ll`, `.o`)을 지우지 않고 폴더 경로를 출력합니다. |
 | `--help` | `-h` | 사용법을 출력하고 종료합니다. |
 
 `--version`이 출력하는 버전은 `Calc.fsproj`의 `<Version>` 값을 실행 중에 어셈블리에서 읽어 옵니다. 그래서 버전 번호는 fsproj 한 곳만 고치면 됩니다.
@@ -145,5 +145,12 @@ dotnet run --project src/Calc -- --compile ./answer -e "42"
 dotnet run --project src/Calc -- --emit-mlir -e "42"     # 생성한 MLIR 보기
 ```
 
-컴파일 과정은 `mlir-opt`(scf/cf/arith → llvm 방언) → `mlir-translate`(LLVM IR) → `clang`(C 런타임 `runtime/runtime.c`와 `-lgc` 링크)입니다. `--keep-temps`를 주면 중간 파일을 볼 수 있습니다.
+컴파일 과정은 다음과 같습니다. `--keep-temps`를 주면 중간 파일을 볼 수 있습니다.
+
+1. `mlir-opt`: scf/cf/arith → llvm 방언
+2. `mlir-translate`: LLVM IR
+3. `clang -c`: 오브젝트 파일
+4. `clang`: 링크. C 런타임 오브젝트와 `-lgc`를 함께 링크합니다.
+
+C 런타임(`runtime/runtime.c`)은 한 번만 컴파일해서 임시 폴더에 `calc-runtime-<해시>.o`로 둡니다. 해시는 런타임 소스, 헤더, `clang` 경로, GC 위치로 만들어서, 이 중 하나가 바뀌면 다시 컴파일합니다.
 

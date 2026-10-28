@@ -34,7 +34,7 @@ let tupleHeader (count: int) = kindTuple ||| (int64 count <<< 8)
 let stringHeader (length: int) = kindString ||| (int64 (1 + (2 * length + 7) / 8) <<< 8)
 
 /// 문자열 상수를 모아 전역으로 만듦 (같은 내용은 하나만). 프로그램 하나에 하나
-type private StringTable() =
+type private StringTable(prefix: string) =
     let names = System.Collections.Generic.Dictionary<string, string>()
     let order = ResizeArray<string>()
 
@@ -42,12 +42,15 @@ type private StringTable() =
         match names.TryGetValue s with
         | true, name -> name
         | _ ->
-            let name = sprintf "str_%d" names.Count
+            let name = sprintf "%sstr_%d" prefix names.Count
             names[s] <- name
             order.Add s
             name
 
     member _.Entries = order |> Seq.map (fun s -> names[s], s) |> List.ofSeq
+
+    /// 이 프로그램의 심볼(함수, 문자열 상수) 이름 앞에 붙임. 여러 프로그램을 한 모듈에 넣을 때 이름이 겹치지 않게
+    member _.Prefix = prefix
 
 /// 문자열 상수 전역: 8바이트 정렬이라 주소가 곧 값 (하위 3비트 000). 상수라 GC 대상이 아님
 let private emitStringGlobal (sb: StringBuilder) (name: string, s: string) =
@@ -268,7 +271,7 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
         fb.Emit(sprintf "%s = llvm.call @calc_alloc(%s) : (i64) -> !llvm.ptr" block size)
         fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" (emitConst fb "i64" (closureHeader captured.Length)) block)
         let code = fb.Fresh()
-        fb.Emit(sprintf "%s = llvm.mlir.addressof @%s : !llvm.ptr" code funcName)
+        fb.Emit(sprintf "%s = llvm.mlir.addressof @%s%s : !llvm.ptr" code fb.Strings.Prefix funcName)
         fb.Emit(sprintf "llvm.store %s, %s : !llvm.ptr, !llvm.ptr" code (emitSlot fb block 1))
         values |> List.iteri (fun i v -> fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" v (emitSlot fb block (2 + i))))
         let r = fb.Fresh()
@@ -376,40 +379,49 @@ let private emitFunction (strings: StringTable) (sb: StringBuilder) (f: CFunctio
     // 인자가 가장 나중: let rec f f = ... 이면 본문의 f 는 인자 (인터프리터와 같음)
     let env = Map.ofList (captured @ self @ [ f.Param, "%arg" ])
     let result = emitExpr fb env f.Body
-    sb.AppendLine(sprintf "llvm.func @%s(%%closure: !llvm.ptr, %%arg: i64) -> i64 {" f.Name) |> ignore
+    // internal: 모듈 밖에서 보이지 않음. 여러 프로그램의 오브젝트를 한 실행 파일로 링크해도 이름이 겹치지 않음
+    sb.AppendLine(sprintf "llvm.func internal @%s%s(%%closure: !llvm.ptr, %%arg: i64) -> i64 {" strings.Prefix f.Name) |> ignore
     sb.Append(fb.Text) |> ignore
     sb.AppendLine(sprintf "  llvm.return %s : i64" result).AppendLine("}").AppendLine() |> ignore
 
-/// 프로그램 전체: 클로저마다 최상위 함수, 식 하나를 계산하는 @calc_main, 결과를 출력하는 @main
-let emitProgram (expr: Ast.Expr) : string =
+let private declarations =
+    [ "// Calc 컴파일러가 만든 MLIR. 값은 i64 하나 (docs/compiler-design.md D3)"
+      "llvm.func @calc_init()"
+      "llvm.func @calc_alloc(i64) -> !llvm.ptr"
+      "llvm.func @calc_print_result(i64)"
+      "llvm.func @calc_error_divide_by_zero()"
+      "llvm.func @calc_error_overflow()"
+      "llvm.func @calc_add(i64, i64) -> i64"
+      "llvm.func @calc_eq(i64, i64) -> i64"
+      "llvm.func @calc_compare(i64, i64) -> i32"
+      "llvm.func @calc_match_failure(i64)"
+      "" ]
+
+/// 프로그램 하나: 문자열 상수, 클로저마다 최상위 함수, 식 하나를 계산하는 진입 함수 @entry. 심볼 이름에는 prefix 를 붙임
+let private emitBody (sb: StringBuilder) (prefix: string) (entry: string) (expr: Ast.Expr) =
     let program = Lower.lowerProgram expr
-    let strings = StringTable()
+    let strings = StringTable(prefix)
     let fb = FunctionBuilder(strings)
     let result = emitExpr fb Map.empty program.Main
     // 함수 본문을 먼저 만들어야 그 안의 문자열 상수도 모임
     let functions = StringBuilder()
     program.Functions |> List.iter (emitFunction strings functions)
-    let sb = StringBuilder()
     let line (s: string) = sb.AppendLine(s) |> ignore
-    line "// Calc 컴파일러가 만든 MLIR. 값은 i64 하나 (docs/compiler-design.md D3)"
-    line "llvm.func @calc_init()"
-    line "llvm.func @calc_alloc(i64) -> !llvm.ptr"
-    line "llvm.func @calc_print_result(i64)"
-    line "llvm.func @calc_error_divide_by_zero()"
-    line "llvm.func @calc_error_overflow()"
-    line "llvm.func @calc_add(i64, i64) -> i64"
-    line "llvm.func @calc_eq(i64, i64) -> i64"
-    line "llvm.func @calc_compare(i64, i64) -> i32"
-    line "llvm.func @calc_match_failure(i64)"
-    line ""
     strings.Entries |> List.iter (emitStringGlobal sb)
     if not strings.Entries.IsEmpty then line ""
     sb.Append(functions) |> ignore
-    line "llvm.func @calc_main() -> i64 {"
+    line (sprintf "llvm.func @%s() -> i64 {" entry)
     sb.Append(fb.Text) |> ignore
     line (sprintf "  llvm.return %s : i64" result)
     line "}"
     line ""
+
+/// 실행 파일 하나가 될 프로그램: @calc_main 과 결과를 출력하는 @main
+let emitProgram (expr: Ast.Expr) : string =
+    let sb = StringBuilder()
+    let line (s: string) = sb.AppendLine(s) |> ignore
+    declarations |> List.iter line
+    emitBody sb "" "calc_main" expr
     line "llvm.func @main() -> i32 {"
     line "  llvm.call @calc_init() : () -> ()"
     line "  %result = llvm.call @calc_main() : () -> i64"
@@ -417,4 +429,13 @@ let emitProgram (expr: Ast.Expr) : string =
     line "  %ok = arith.constant 0 : i32"
     line "  llvm.return %ok : i32"
     line "}"
+    sb.ToString()
+
+/// 여러 프로그램을 모듈 하나에: 프로그램마다 진입 함수 @entry 와 그 프로그램만의 심볼 접두어 (entry + "_").
+/// @main 은 없음 (Toolchain.buildMany 가 만듦). 테스트에서 외부 도구와 실행 파일 수를 줄이려고 씀
+let emitEntries (programs: (string * Ast.Expr) list) : string =
+    let sb = StringBuilder()
+    declarations |> List.iter (fun s -> sb.AppendLine(s) |> ignore)
+    for entry, expr in programs do
+        emitBody sb (entry + "_") entry expr
     sb.ToString()
