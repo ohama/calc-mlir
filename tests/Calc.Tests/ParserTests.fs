@@ -364,6 +364,74 @@ let tests =
             expectParseError "match p with | _ -> 0 | x :: x -> 1" "Duplicate variable in pattern: x" 1 25
             expectParseError "let (x, x) = p in x" "Duplicate variable in pattern: x" 1 5
         }
+        test "생성자 식" {
+            Expect.equal (parse "None") (Ctor "None") ""
+            Expect.equal (parse "Some 1") (App (Ctor "Some", Number 1)) ""
+            Expect.equal (parse "Some (1, 2)") (App (Ctor "Some", Tuple [ Number 1; Number 2 ])) ""
+            Expect.equal (parse "map Some xs") (App (App (Var "map", Ctor "Some"), Var "xs")) ""
+        }
+        test "생성자 패턴" {
+            let arm p = match parse (sprintf "match x with %s -> 0" p) with
+                        | Match (_, [ (pat, _, _) ]) -> pat
+                        | e -> failtestf "%A" e
+            Expect.equal (arm "None") (PCtor ("None", None)) ""
+            Expect.equal (arm "Some x") (PCtor ("Some", Some (PVar "x"))) ""
+            Expect.equal (arm "Some (a, b)") (PCtor ("Some", Some (PTuple [ PVar "a"; PVar "b" ]))) ""
+            Expect.equal (arm "Some (Some _)") (PCtor ("Some", Some (PCtor ("Some", Some PWildcard)))) ""
+            // 생성자 패턴이 :: 보다 강함
+            Expect.equal (arm "Some x :: t") (PCons (PCtor ("Some", Some (PVar "x")), PVar "t")) ""
+            Expect.equal (arm "[None]") (PCons (PCtor ("None", None), PNil)) ""
+        }
+        test "생성자 패턴 안의 같은 이름도 오류" {
+            expectParseError "match p with Some (a, a) -> a" "Duplicate variable in pattern: a" 1 14
+        }
+        test "type 선언" {
+            Expect.equal
+                (parse "type color = Red | Green in Red")
+                (TypeDecl ("color", [], [ ("Red", None); ("Green", None) ], Ctor "Red"))
+                ""
+            Expect.equal
+                (parse "type shape = | Circle of int | Rect of int * int in 0")
+                (TypeDecl ("shape", [],
+                           [ ("Circle", Some (TName ("int", [])))
+                             ("Rect", Some (TTuple [ TName ("int", []); TName ("int", []) ])) ],
+                           Number 0))
+                ""
+        }
+        test "type 선언: 타입 변수와 타입 식" {
+            Expect.equal
+                (parse "type 'a tree = Leaf | Node of 'a tree * 'a * 'a tree in 0")
+                (TypeDecl ("tree", [ "a" ],
+                           [ ("Leaf", None)
+                             ("Node", Some (TTuple [ TName ("tree", [ TVar "a" ]); TVar "a"; TName ("tree", [ TVar "a" ]) ])) ],
+                           Number 0))
+                ""
+            let ctorType src =
+                match parse (sprintf "type t = A of %s in 0" src) with
+                | TypeDecl (_, _, [ (_, Some t) ], _) -> t
+                | e -> failtestf "%A" e
+            Expect.equal (ctorType "int list option") (TName ("option", [ TName ("list", [ TName ("int", []) ]) ])) ""
+            Expect.equal (ctorType "int -> int -> bool") (TFun (TName ("int", []), TFun (TName ("int", []), TName ("bool", [])))) ""
+            Expect.equal (ctorType "int * string -> bool") (TFun (TTuple [ TName ("int", []); TName ("string", []) ], TName ("bool", []))) ""
+            // 괄호로 묶은 튜플 타입은 원소 하나
+            Expect.equal (ctorType "int * (int * int)") (TTuple [ TName ("int", []); TTuple [ TName ("int", []); TName ("int", []) ] ]) ""
+            match parse "type ('k, 'v) m = M of 'k * 'v in 0" with
+            | TypeDecl (_, ps, _, _) -> Expect.equal ps [ "k"; "v" ] ""
+            | e -> failtestf "%A" e
+        }
+        test "type 본문은 오른쪽 끝까지 이어짐" {
+            Expect.equal
+                (parse "type t = A in A = A")
+                (TypeDecl ("t", [], [ ("A", None) ], Equal (Ctor "A", Ctor "A")))
+                ""
+        }
+        test "같은 생성자 이름 두 번은 오류" {
+            expectParseError "type c = Red | Red in 1" "Duplicate constructor: Red" 1 10
+        }
+        test "대문자 이름은 변수로 묶을 수 없음" {
+            expectParseError "let X = 1 in X" "parse error: unexpected 'X'" 1 5
+            expectParseError "fun Some -> 1" "parse error: unexpected 'Some'" 1 5
+        }
         test "튜플" {
             Expect.equal (parse "(1, 2)") (Tuple [ Number 1; Number 2 ]) ""
             Expect.equal (parse "(1, x + 1, \"a\")") (Tuple [ Number 1; Add (Var "x", Number 1); Str "a" ]) ""

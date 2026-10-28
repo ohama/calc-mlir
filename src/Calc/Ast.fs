@@ -1,5 +1,16 @@
 module Ast
 
+/// type 선언에 적는 타입. 실행 중 타입 검사에는 쓰지 않고, 생성자 인자 수(튜플 원소 수)만 사용
+type TypeExpr =
+    /// int, string, 'a list (인자는 앞에 씀)
+    | TName of string * TypeExpr list
+    /// 'a
+    | TVar of string
+    /// t1 * t2 * ...
+    | TTuple of TypeExpr list
+    /// t1 -> t2
+    | TFun of TypeExpr * TypeExpr
+
 type Pattern =
     /// x: 무엇이든 일치하고 x 에 묶음
     | PVar of string
@@ -14,6 +25,8 @@ type Pattern =
     | PCons of Pattern * Pattern
     /// (p1, p2, ...) 원소 2개 이상
     | PTuple of Pattern list
+    /// None, Some p, Node (l, x, r)
+    | PCtor of string * Pattern option
 
 type Expr =
     | Number of int
@@ -50,3 +63,7 @@ type Expr =
     | Match of scrutinee: Expr * cases: (Pattern * Expr option * Expr) list
     /// let (a, b) = e in body. 일치하지 않으면 Match failure
     | LetPattern of Pattern * Expr * Expr
+    /// 생성자 이름 (대문자로 시작). 인자가 있는 생성자는 App (Ctor "Some", e)
+    | Ctor of string
+    /// type 'a name = C1 | C2 of t | ... in body
+    | TypeDecl of name: string * typeParams: string list * ctors: (string * TypeExpr option) list * body: Expr

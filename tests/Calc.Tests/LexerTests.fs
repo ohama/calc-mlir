@@ -50,7 +50,20 @@ let tests =
                 ""
         }
         test "식별자: 밑줄과 숫자" {
-            Expect.equal (tokens "_a foo_1 X2") [ IDENT "_a"; IDENT "foo_1"; IDENT "X2"; EOF ] ""
+            Expect.equal (tokens "_a foo_1 x2") [ IDENT "_a"; IDENT "foo_1"; IDENT "x2"; EOF ] ""
+        }
+        test "대문자로 시작하면 생성자" {
+            Expect.equal (tokens "X2 Some None_1") [ CTOR "X2"; CTOR "Some"; CTOR "None_1"; EOF ] ""
+            Expect.equal (tokens "Let True") [ CTOR "Let"; CTOR "True"; EOF ] ""
+        }
+        test "타입 선언 토큰" {
+            Expect.equal
+                (tokens "type 'a t = A of 'a")
+                [ TYPE; TYVAR "a"; IDENT "t"; EQUALS; CTOR "A"; OF; TYVAR "a"; EOF ]
+                ""
+        }
+        test "키워드로 시작하는 식별자: typed, often" {
+            Expect.equal (tokens "typed often") [ IDENT "typed"; IDENT "often"; EOF ] ""
         }
         test "키워드로 시작하는 식별자는 IDENT" {
             Expect.equal (tokens "letx inner") [ IDENT "letx"; IDENT "inner"; EOF ] ""

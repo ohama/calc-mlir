@@ -10,7 +10,9 @@ open Errors
 
 let digit = ['0'-'9']
 let letter = ['a'-'z' 'A'-'Z']
-let ident_start = letter | '_'
+// 소문자나 _ 로 시작하면 변수, 대문자로 시작하면 생성자 (OCaml 과 같은 구분)
+let ident_start = ['a'-'z'] | '_'
+let ctor_start = ['A'-'Z']
 let ident_char = letter | digit | '_'
 let whitespace = [' ' '\t']
 let newline = ('\n' | '\r' '\n')
@@ -38,10 +40,17 @@ rule tokenize = parse
     | "match"       { MATCH }
     | "with"        { WITH }
     | "when"        { WHEN }
+    | "type"        { TYPE }
+    | "of"          { OF }
     // _ 하나만 와일드카드. _a 처럼 더 길게 일치하면 IDENT (가장 긴 일치)
     | '_'           { UNDERSCORE }
     | ident_start ident_char*
                     { IDENT (lexeme lexbuf) }
+    | ctor_start ident_char*
+                    { CTOR (lexeme lexbuf) }
+    // 타입 변수 'a. 이 언어에는 문자 리터럴이 없으므로 ' 는 여기서만 쓰임
+    | '\'' ident_start ident_char*
+                    { TYVAR ((lexeme lexbuf).Substring 1) }
     | "->"          { ARROW }
     | "<>"          { NOTEQUAL }
     | "<="          { LESSEQUAL }

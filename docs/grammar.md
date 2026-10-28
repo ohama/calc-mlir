@@ -17,9 +17,11 @@ Calc 언어의 어휘 구조, 구문, 의미를 정리한 문서입니다. 구�
 |---|---|---|
 | `NUMBER` | `[0-9]+` | `0`, `42` |
 | `STRING` | `"`로 시작해서 `"`로 끝남 (아래 "문자열 리터럴" 참고) | `"hello"`, `""`, `"a\"b"` |
-| `IDENT` | `[A-Za-z_][A-Za-z0-9_]*` (키워드와 `_` 하나는 제외) | `x`, `foo_1`, `_tmp` |
+| `IDENT` | `[a-z_][A-Za-z0-9_]*` (키워드와 `_` 하나는 제외). 변수와 타입 이름 | `x`, `foo_1`, `_tmp`, `fooBar` |
+| `CTOR` | `[A-Z][A-Za-z0-9_]*`. 생성자 (타입 이름으로도 쓸 수 있음) | `Some`, `None`, `Node`, `X2` |
+| `TYVAR` | `'` 다음에 `IDENT` 모양. 타입 변수 | `'a`, `'key` |
 | `UNDERSCORE` | `_` (와일드카드 패턴, 쓰지 않는 인자) | |
-| 키워드 | `let` `rec` `in` `fun` `if` `then` `else` `true` `false` `not` `match` `with` `when` | |
+| 키워드 | `let` `rec` `in` `fun` `if` `then` `else` `true` `false` `not` `match` `with` `when` `type` `of` | |
 | `EQUALS` | `=` | |
 | `ARROW` | `->` | |
 | `NOTEQUAL` `LESS` `GREATER` `LESSEQUAL` `GREATEREQUAL` | `<>` `<` `>` `<=` `>=` | |
@@ -41,7 +43,7 @@ Calc 언어의 어휘 구조, 구문, 의미를 정리한 문서입니다. 구�
   - `<=`는 `<`와 `=`로 나뉘지 않고 `LESSEQUAL` 하나가 됩니다. `<>`, `>=`, `->`, `::`, `||`도 같습니다.
   - `[]`는 토큰 하나가 아니라 `LBRACKET`과 `RBRACKET`입니다. 그래서 `[ ]`처럼 사이에 공백이 있어도 됩니다.
   - `2x`는 `NUMBER 2`와 `IDENT x`로 나뉩니다.
-- **대소문자 구분**: 키워드는 소문자만 인정합니다. `Let`, `True`는 `IDENT`입니다.
+- **대소문자 구분**: 키워드는 소문자만 인정합니다. 첫 글자가 대문자면 생성자(`CTOR`)입니다. 그래서 `Let`, `True`, `X`는 생성자이고 변수 이름으로 쓸 수 없습니다(OCaml과 같은 규칙).
 - **숫자 리터럴**: 음이 아닌 정수만 리터럴입니다. `-5`는 `MINUS`와 `NUMBER 5`로 나뉘고, 파서가 단항 마이너스로 처리합니다.
   - 32비트 `int` 범위를 넘는 리터럴(예: `2147483648`)은 렉서 단계에서 오류가 납니다.
 - **그 밖의 문자**: 위 패턴에 맞지 않는 문자는 `Unexpected character: <문자>` 오류를 냅니다. `&`나 `:` 하나만 쓴 경우도 여기에 해당합니다.
@@ -78,6 +80,7 @@ expr    = app
         | "fun" params "->" expr                         (* 람다 *)
         | "if" expr "then" expr "else" expr
         | "match" expr "with" [ "|" ] arm { "|" arm }    (* 패턴 매칭 *)
+        | "type" [ typeParams ] typeName "=" [ "|" ] ctorDecl { "|" ctorDecl } "in" expr
         | expr binop expr
         | "-" expr
         | "not" expr ;
@@ -89,14 +92,17 @@ atom    = NUMBER
         | STRING
         | "true" | "false"
         | IDENT
+        | CTOR                                           (* 생성자 *)
         | "(" expr ")"
         | "(" expr "," expr { "," expr } ")"             (* 튜플 *)
         | "[" [ expr { ";" expr } ] "]" ;                (* 리스트 리터럴 *)
 
 arm     = pattern [ "when" expr ] "->" expr ;
 
-pattern = atomPat [ "::" pattern ] ;                     (* :: 는 오른쪽 결합 *)
-atomPat = IDENT | "_"
+pattern = ctorPat [ "::" pattern ] ;                     (* :: 는 오른쪽 결합 *)
+ctorPat = CTOR atomPat                                   (* Some x, Node (l, x, r) *)
+        | atomPat ;
+atomPat = IDENT | "_" | CTOR
         | NUMBER | "-" NUMBER | STRING | "true" | "false"
         | "[" "]"
         | "[" pattern { ";" pattern } "]"                (* 리스트 패턴 *)
@@ -106,6 +112,14 @@ tuplePat = "(" pattern "," pattern { "," pattern } ")" ;
 
 params  = param { param } ;
 param   = IDENT | "_" ;
+
+typeParams = TYVAR | "(" TYVAR { "," TYVAR } ")" ;     (* 'a tree, ('k, 'v) map *)
+typeName   = IDENT | CTOR ;
+ctorDecl   = CTOR [ "of" type ] ;
+type       = prodType [ "->" type ] ;                    (* -> 는 오른쪽 결합 *)
+prodType   = appType { "*" appType } ;
+appType    = atomType { IDENT } ;                        (* int list option *)
+atomType   = IDENT | TYVAR | "(" type ")" ;
 
 binop   = "+" | "-" | "*" | "/"
         | "=" | "<>" | "<" | ">" | "<=" | ">="
@@ -224,9 +238,16 @@ match e with
 | `[p1; p2]` | 원소가 정확히 2개인 리스트 (`p1 :: p2 :: []`와 같음) | |
 | `(p1, p2, ...)` | 원소 수가 같고 각 원소가 일치하는 튜플 | |
 | `(p)` | `p`와 같음 (괄호로 묶기) | |
+| `None`, `Red` | 같은 생성자로 만든 값 | 없음 |
+| `Some p`, `Node (l, x, r)` | 같은 생성자로 만든 값이고, 인자가 `p`와 일치 | `p`가 묶는 이름 |
 
 - 패턴은 중첩할 수 있습니다. `(n, s) :: _`, `[[x]]`, `(x :: xt, y :: yt)`
 - `::` 패턴은 오른쪽 결합입니다. `a :: b :: t`는 `a :: (b :: t)`입니다.
+- 생성자 패턴은 `::`보다 강합니다. `Some x :: t`는 `(Some x) :: t`입니다. 생성자의 인자가 단순한 이름이나 리터럴이 아니면 괄호로 감쌉니다(`Some (a, b)`, `Some (Some x)`, `Some (h :: t)`).
+- **생성자 패턴은 지금 보이는 생성자여야 합니다.** 오타를 조용히 "불일치"로 넘기지 않으려는 것입니다. 이 검사는 그 분기에 도달했을 때 합니다.
+  - 모르는 생성자: `Unknown constructor: Nome`
+  - 인자 있는 생성자를 인자 없이: `Constructor Some requires an argument`
+  - 인자 없는 생성자에 인자: `Constructor None takes no argument`
 - **한 패턴 안에서 같은 이름을 두 번 쓸 수 없습니다.** `(a, a)`는 `Duplicate variable in pattern: a (line L, column C)` 오류입니다. 위치는 패턴의 시작입니다.
 - **타입이 달라도 오류가 아니라 불일치입니다.** `match "1" with 1 -> ... | _ -> ...`는 두 번째 분기를 고릅니다. `match 1 with [] -> 0 | h :: t -> h`는 `Match failure: 1`입니다.
 - 패턴이 묶은 이름은 그 분기의 가드와 본문에서만 보이고, 바깥의 같은 이름을 가립니다.
@@ -245,6 +266,41 @@ match e with
 - `let` 왼쪽에는 이름 하나 또는 튜플 패턴만 올 수 있습니다. `let [x] = ...`, `let _ = ...`는 지원하지 않습니다.
 - `fun`과 함수 정의의 인자는 이름이나 `_`만 됩니다. `fun (a, b) -> ...`는 아직 지원하지 않습니다. 대신 `fun p -> let (a, b) = p in ...`으로 씁니다.
 - `_` 인자(`fun _ -> 1`, `let f _ x = x`)는 값을 받아서 버립니다. `_`는 식에 쓸 수 없으므로 참조할 방법이 없습니다.
+
+### 대수적 데이터 타입 (`type`)
+
+```
+type shape = Circle of int | Rect of int * int in
+let area s = match s with Circle r -> 3 * r * r | Rect (w, h) -> w * h in
+map area [Circle 2; Rect (2, 3)]                        (* [12; 6] *)
+
+type 'a tree = Leaf | Node of 'a tree * 'a * 'a tree in
+let rec sum t = match t with Leaf -> 0 | Node (l, x, r) -> sum l + x + sum r in
+sum (Node (Node (Leaf, 1, Leaf), 2, Node (Leaf, 3, Leaf)))   (* 6 *)
+```
+
+- 이 언어에는 최상위 선언이 없으므로 `type ... in 식`처럼 **식**입니다. 생성자는 `in` 뒤의 식 안에서만 보입니다. 본문은 `let`처럼 오른쪽 끝까지 이어집니다.
+- 생성자 이름은 대문자로 시작합니다. 타입 이름은 소문자(OCaml 방식)나 대문자로 시작할 수 있습니다.
+- 타입 변수는 OCaml처럼 이름 **앞에** 씁니다. `type 'a tree`, `type ('k, 'v) entry` (F#의 `Tree<'a>` 문법은 지원하지 않음)
+- 첫 생성자 앞의 `|`는 생략할 수 있습니다. 한 선언 안에서 같은 생성자 이름을 두 번 쓰면 `Duplicate constructor: <이름> (line L, column C)`입니다.
+- **`of` 뒤의 타입은 검사하지 않습니다**(이 언어는 동적 타입). 쓰이는 것은 튜플 원소 수뿐입니다.
+  - `of int * int`(원소 2개) 생성자는 원소 2개짜리 튜플을 받아야 합니다. `Rect 1`은 `Constructor Rect expects 2 fields but got int`, `Rect (1, 2, 3)`은 `... but got tuple of 3`입니다.
+  - `of int`(원소 1개) 생성자는 어떤 값이든 하나 받습니다. `Circle (1, 2)`도 됩니다.
+  - 타입 식 문법: `int`, `'a`, `int list`, `'a tree option`(인자가 앞), `int * string`, `int -> bool`, `(int * int)`
+- **생성자는 값입니다.**
+  - 인자 없는 생성자(`None`, `Leaf`)는 그 자체로 값입니다.
+  - 인자 있는 생성자(`Some`, `Node`)는 인자 하나를 받는 함수처럼 쓸 수 있습니다. `map Some [1; 2]`는 `[Some 1; Some 2]`입니다. 출력은 `<fun>`, 타입 이름은 `function`입니다.
+- 같은 이름의 생성자를 안쪽 `type`에서 다시 선언하면 안쪽 것이 가립니다. 바깥 타입의 값은 안쪽 생성자 패턴과 일치하지 않습니다.
+- 대문자 이름은 `let`이나 `fun`으로 묶을 수 없습니다. `let X = 1 in X`는 parse error입니다.
+
+### `option`
+
+`'a option = None | Some of 'a`는 선언 없이 쓸 수 있습니다(처음 환경에 들어 있음). 값이 없을 수 있는 결과에 씁니다.
+
+```
+match tryHead xs with Some x -> x | None -> 0
+defaultValue 0 (tryFind (fun x -> x > 10) xs)
+```
 
 ### 함수 정의의 문법 설탕
 
@@ -288,6 +344,10 @@ match e with
 | 패턴 `x` / `_` / `1` / `true` / `"s"` | `PVar "x"` / `PWildcard` / `PInt 1` / `PBool true` / `PString "s"` |
 | 패턴 `[]` / `p1 :: p2` / `[p1; p2]` | `PNil` / `PCons (p1, p2)` / `PCons (p1, PCons (p2, PNil))` |
 | 패턴 `(p1, p2)` | `PTuple [p1; p2]` |
+| `None` / `Some e` | `Ctor "None"` / `App (Ctor "Some", e)` |
+| 패턴 `None` / `Some p` | `PCtor ("None", None)` / `PCtor ("Some", Some p)` |
+| `type 'a t = A \| B of 'a * int in e` | `TypeDecl ("t", ["a"], [ ("A", None); ("B", Some (TTuple [TVar "a"; TName ("int", [])])) ], e)` |
+| 타입 `int list` / `'a` / `a * b` / `a -> b` | `TName ("list", [TName ("int", [])])` / `TVar "a"` / `TTuple [a; b]` / `TFun (a, b)` |
 | `(e)` | `e` (괄호는 AST에 남지 않음) |
 
 ## 4. 의미 (평가 규칙)
@@ -304,6 +364,8 @@ type Value =
     | VList of Value list                                 // [v1; v2; ...]
     | VTuple of Value list                                // (v1, v2, ...)
     | VBuiltin of name * args                             // 내장 함수 (args: 지금까지 받은 인자)
+    | VData of typeName * ctor * payload option           // None, Some 1, Rect (2, 3)
+    | VConstructor of typeName * ctor * fields            // 인자 있는 생성자 자체 (Some, Rect)
 ```
 
 평가는 환경 `env : Map<string, Value>`에서 이루어집니다. 처음 환경에는 내장 함수만 들어 있습니다(아래 "내장 함수" 참고). 결과는 `formatValue`로 출력합니다.
@@ -313,8 +375,9 @@ type Value =
 - 함수는 `<fun>`으로 출력됩니다. 내장 함수도 같습니다.
 - 리스트는 `[1; 2; 3]`, `[]`, `[[true]; []]`처럼 출력됩니다.
 - 튜플은 `(1, "a", [true])`처럼 출력됩니다.
+- 생성자 값은 `None`, `Some 1`, `Node (Leaf, 1, Leaf)`처럼 출력됩니다. 다시 입력해도 같은 값이 되도록 인자가 있는 생성자 값과 음수는 괄호로 감쌉니다(`Some (Some 1)`, `Some (-1)`).
 
-타입 오류 메시지에서 문자열의 타입 이름은 `string`, 함수는 `function`, 리스트는 `list`, 튜플은 `tuple`입니다.
+타입 오류 메시지에서 문자열의 타입 이름은 `string`, 함수는 `function`, 리스트는 `list`, 튜플은 `tuple`입니다. 생성자 값의 타입 이름은 선언한 타입 이름입니다(`option`, `shape`).
 
 ### 규칙
 
@@ -333,7 +396,7 @@ type Value =
 | `Subtract` `Multiply` `Divide` | int, int | int |
 | `Negate` | int | int |
 | `Less` `Greater` `LessEqual` `GreaterEqual` | int, int 또는 string, string | bool. 문자열은 문자 코드 순서(ordinal)로 비교 |
-| `Equal` `NotEqual` | 같은 타입끼리 (int, bool, string, list, tuple). 리스트와 튜플은 원소를 차례로 비교하고, 원소 수가 다르면 `false`. 함수는 비교할 수 없음 | bool |
+| `Equal` `NotEqual` | 같은 타입끼리 (int, bool, string, list, tuple, 같은 이름의 데이터 타입). 리스트와 튜플은 원소를 차례로 비교하고, 원소 수가 다르면 `false`. 데이터 값은 생성자가 다르면 `false`, 같으면 인자를 비교. 함수는 비교할 수 없음 | bool |
 | `And` `Or` | bool, bool | bool. **단락 평가** |
 | `Not` | bool | bool |
 | `Nil` | | `VList []` |
@@ -341,6 +404,8 @@ type Value =
 | `Tuple [e1; ...]` | 아무 타입 | 왼쪽부터 평가한 `VTuple` |
 | `Match (e, cases)` | 아무 타입 | `e`를 평가하고, 위에서부터 패턴이 일치하고 가드가 `true`인 첫 분기의 본문을 패턴이 묶은 이름을 추가한 환경에서 평가. 없으면 `Match failure`. **선택된 분기만** 평가함 |
 | `LetPattern (p, e1, e2)` | 아무 타입 | `e1`의 값이 `p`와 일치하면 묶은 이름을 추가한 환경에서 `e2`를 평가. 아니면 `Match failure` |
+| `Ctor c` | | `env`에서 `c`의 값(`VData` 또는 `VConstructor`). 없으면 `Unknown constructor: c` |
+| `TypeDecl (t, _, ctors, e)` | | 인자 없는 생성자는 `VData (t, c, None)`, 있는 생성자는 `VConstructor (t, c, 원소 수)`로 `env`에 추가하고 `e`를 평가 |
 
 ### 함수 호출
 
@@ -382,7 +447,7 @@ type Value =
   - `let add x y = x + y in let inc = add 1 in inc 41`은 `42`입니다.
 - **값에 의한 호출(call-by-value)**: 인자는 함수 본문을 실행하기 전에 평가합니다. 쓰이지 않는 인자도 평가합니다.
   - `let k x = 1 in k (1 / 0)`은 0으로 나누기 오류입니다.
-- **함수는 비교할 수 없음**: `(fun x -> x) = (fun x -> x)`는 `Type error: expected int, bool, string, list or tuple but got function`입니다.
+- **함수는 비교할 수 없음**: `(fun x -> x) = (fun x -> x)`는 `Type error: expected int, bool, string, list, tuple or data but got function`입니다.
 - **문자열 비교는 문자 코드 순서**: 사전 순서나 현재 문화권의 정렬 규칙을 쓰지 않습니다. 그래서 대문자가 소문자보다 앞입니다.
   - `"B" < "a"`는 `true`, `"ab" < "abc"`는 `true`입니다.
 - **문자열 처리는 내장 함수로**: 길이, 부분 문자열, 검색, 나누기, 숫자 변환은 아래 "내장 함수"를 씁니다.
@@ -468,6 +533,14 @@ type Value =
 
 원소가 3개 이상인 튜플은 패턴으로 꺼냅니다. `let (a, b, c) = t in ...`
 
+#### option
+
+| 함수 | 타입 | 예 | 결과 |
+|---|---|---|---|
+| `tryHead xs` | list → option | `tryHead [1; 2]`, `tryHead []` | `Some 1`, `None` |
+| `tryFind f xs` | 함수 → list → option | `tryFind (fun x -> x > 1) [1; 2; 3]` | `Some 2` |
+| `defaultValue d opt` | 기본값 → option → 값 | `defaultValue 0 None` | `0` |
+
 ## 5. 오류
 
 | 단계 | 원인 | 메시지 |
@@ -478,9 +551,10 @@ type Value =
 | 렉서 | `int` 범위를 넘는 숫자 | `Integer literal out of range: 2147483648 (line L, column C)` |
 | 파서 | 문법에 맞지 않는 토큰 (예: `1 + + 2`, `let in = 1 in 2`, `[1;]`) | `parse error: unexpected '<토큰>' (line L, column C)` |
 | 파서 | 식이 끝나지 않았는데 입력이 끝남 (예: `1 +`, `let x = 1`, `if c then 1`, `match xs with [] -> 0`) | `parse error: unexpected end of input (line L, column C)` |
+| 파서 | 한 `type` 선언 안에 같은 생성자 이름이 두 번 | `Duplicate constructor: <이름> (line L, column C)` |
 | 파서 | 한 패턴 안에 같은 이름이 두 번 (예: `(a, a)`) | `Duplicate variable in pattern: a (line L, column C)`. 위치는 패턴의 시작 |
 | 평가 | 정의되지 않은 변수 | `Unbound variable: <이름>` |
-| 평가 | 피연산자 타입 불일치 | `Type error: expected <기대 타입> but got <int\|bool\|string\|function\|list\|tuple>` |
+| 평가 | 피연산자 타입 불일치 | `Type error: expected <기대 타입> but got <int\|bool\|string\|function\|list\|tuple\|타입 이름>` |
 | 평가 | `::` 오른쪽이 리스트가 아님 (예: `1 :: 2`) | `Type error: expected list but got int` |
 | 평가 | `match`나 `let` 튜플 분해에서 일치하는 패턴이 없음 | `Match failure: <값>` |
 | 평가 | 함수가 아닌 값을 호출 (예: `1 2`) | `Type error: expected function but got int` |
@@ -491,6 +565,9 @@ type Value =
 | 평가 | 빈 리스트에 `head`/`tail` | `head: empty list`, `tail: empty list` |
 | 평가 | `nth`의 위치가 리스트 밖 | `nth: index out of range (length 1, index 1)` |
 | 평가 | `fst`/`snd`에 원소 2개짜리 튜플이 아닌 값 | `Type error: expected pair but got <타입>` |
+| 평가 | 선언되지 않은(보이지 않는) 생성자 | `Unknown constructor: <이름>` |
+| 평가 | 생성자 인자의 튜플 원소 수가 선언과 다름 | `Constructor Rect expects 2 fields but got int` |
+| 평가 | 패턴에서 생성자 인자 유무가 선언과 다름 | `Constructor Some requires an argument`, `Constructor None takes no argument` |
 | 평가 | 재귀가 너무 깊음 | `Stack overflow.` (프로세스 종료, 잡을 수 없음) |
 
 ### 오류 위치

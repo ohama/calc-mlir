@@ -271,7 +271,48 @@ let cases =
       "let rec zip xs ys = match (xs, ys) with (x :: xt, y :: yt) -> (x, y) :: zip xt yt | _ -> [] in zip [1; 2] [\"a\"; \"b\"; \"c\"]",
           VList [ VTuple [ VInt 1; VString "a" ]; VTuple [ VInt 2; VString "b" ] ]
       "let rec last xs = match xs with [x] -> x | _ :: t -> last t | [] -> 0 in last [1; 2; 3]", VInt 3
-      "let f _ = 1 in f 2", VInt 1 ]
+      "let f _ = 1 in f 2", VInt 1
+      // option
+      "Some 1", some (VInt 1)
+      "None", none
+      "Some (Some 1)", some (some (VInt 1))
+      "Some (1, \"a\")", some (VTuple [ VInt 1; VString "a" ])
+      "map Some [1; 2]", VList [ some (VInt 1); some (VInt 2) ]
+      "Some 1 = Some 1", VBool true
+      "Some 1 = Some 2", VBool false
+      "Some 1 = None", VBool false
+      "None = None", VBool true
+      "[Some 1; None] = [Some 1; None]", VBool true
+      "match Some 3 with Some x when x > 2 -> x | Some _ -> 0 | None -> -1", VInt 3
+      "match Some 1 with Some x when x > 2 -> x | Some _ -> 0 | None -> -1", VInt 0
+      "match None with Some x -> x | None -> -1", VInt -1
+      "match [Some 1; None] with Some x :: _ -> x | _ -> 0", VInt 1
+      "match Some (1, 2) with Some (a, b) -> a + b | None -> 0", VInt 3
+      "match Some (Some 5) with Some (Some x) -> x | _ -> 0", VInt 5
+      "tryHead [1; 2]", some (VInt 1)
+      "tryHead []", none
+      "tryFind (fun x -> x > 1) [1; 2; 3]", some (VInt 2)
+      "tryFind (fun x -> x > 5) [1]", none
+      "defaultValue 0 (tryHead [])", VInt 0
+      "defaultValue 0 (Some 5)", VInt 5
+      // 사용자 정의 타입
+      "type shape = Circle of int | Rect of int * int in let area s = match s with Circle r -> 3 * r * r | Rect (w, h) -> w * h in map area [Circle 2; Rect (2, 3)]", VList [ VInt 12; VInt 6 ]
+      "type shape = Circle of int | Rect of int * int in Rect (2, 3)", VData ("shape", "Rect", Some (VTuple [ VInt 2; VInt 3 ]))
+      "type color = Red | Green | Blue in match Green with Red -> 1 | Green -> 2 | Blue -> 3", VInt 2
+      "type color = Red | Green | Blue in Red = Red", VBool true
+      "type color = Red | Green | Blue in Red <> Blue", VBool true
+      "type color = | Red | Green in Red", VData ("color", "Red", None)
+      "type 'a tree = Leaf | Node of 'a tree * 'a * 'a tree in let rec sum t = match t with Leaf -> 0 | Node (l, x, r) -> sum l + x + sum r in sum (Node (Node (Leaf, 1, Leaf), 2, Node (Leaf, 3, Leaf)))", VInt 6
+      "type 'a tree = Leaf | Node of 'a tree * 'a * 'a tree in let rec size t = match t with Leaf -> 0 | Node (l, _, r) -> size l + 1 + size r in size (Node (Leaf, 1, Node (Leaf, 2, Node (Leaf, 3, Leaf))))", VInt 3
+      "type ('k, 'v) entry = Entry of 'k * 'v in match Entry (\"a\", 1) with Entry (k, v) -> v", VInt 1
+      "type t = F of int -> int in match F (fun x -> x + 1) with F f -> f 1", VInt 2
+      "type t = A of int list * string option in A ([1], Some \"x\")", VData ("t", "A", Some (VTuple [ VList [ VInt 1 ]; some (VString "x") ]))
+      // 대문자로 시작하는 타입 이름도 됨
+      "type Answer = Yes | No in No", VData ("Answer", "No", None)
+      // 안쪽 type 선언의 같은 이름 생성자는 다른 타입이라 일치하지 않음
+      "type t = A in let v = A in type u = A in match v with A -> 1 | _ -> 2", VInt 2
+      // type 선언 밖에서는 생성자를 쓸 수 없지만 값은 남아 있음
+      "let v = (type t = A in A) in v = v", VBool true ]
 
 /// 오류 메시지가 정확히 일치하는지 확인
 let expectError input message =
@@ -329,7 +370,7 @@ let tests =
         testList "함수 오류" [
             expectError "1 2" "Type error: expected function but got int"
             expectError "let f x = x in f -1" "Type error: expected int but got function"
-            expectError "(fun x -> x) = (fun x -> x)" "Type error: expected int, bool, string, list or tuple but got function"
+            expectError "(fun x -> x) = (fun x -> x)" "Type error: expected int, bool, string, list, tuple or data but got function"
             expectError "(fun x -> x) + 1" "Type error: expected int or string but got function"
             // let (rec 아님) 으로 정의한 함수는 자기 자신을 볼 수 없음
             expectError "let f x = f x in f 1" "Unbound variable: f"
@@ -375,7 +416,7 @@ let tests =
             expectError "toInt \" 4\"" "toInt: invalid integer: \" 4\""
             expectError "toInt \"\"" "toInt: invalid integer: \"\""
             expectError "toInt \"2147483648\"" "toInt: invalid integer: \"2147483648\""
-            expectError "length = length" "Type error: expected int, bool, string, list or tuple but got function"
+            expectError "length = length" "Type error: expected int, bool, string, list, tuple or data but got function"
             // 인자를 다 받기 전에는 실행하지 않음 (오류도 나중에)
             expectError "let f = substr 1 in f 2 3" "Type error: expected string but got int"
         ]
@@ -428,8 +469,11 @@ let tests =
                 (fun ex -> Expect.equal ex.Message "Unbound variable: length" "")
         }
 
-        test "모든 내장 함수가 builtins 환경에 있음" {
-            Expect.equal (builtins |> Map.keys |> Set.ofSeq) (builtinArity |> Map.keys |> Set.ofSeq) ""
+        test "모든 내장 함수와 option 생성자가 builtins 환경에 있음" {
+            Expect.equal
+                (builtins |> Map.keys |> Set.ofSeq)
+                (builtinArity |> Map.keys |> Set.ofSeq |> Set.add "Some" |> Set.add "None")
+                ""
         }
 
         test "문자열 값 출력 (리터럴 형태로 이스케이프)" {
@@ -463,6 +507,36 @@ let tests =
             expectError "(1, 2) = 1" "Type error: expected tuple but got int"
             expectError "[1] = [(1, 2)]" "Type error: expected int but got tuple"
         ]
+
+        testList "ADT 오류" [
+            expectError "type shape = Circle of int | Rect of int * int in Rect 1" "Constructor Rect expects 2 fields but got int"
+            expectError "type shape = Circle of int | Rect of int * int in Rect (1, 2, 3)" "Constructor Rect expects 2 fields but got tuple of 3"
+            expectError "Nome" "Unknown constructor: Nome"
+            expectError "match Some 1 with Nome -> 0 | _ -> 1" "Unknown constructor: Nome"
+            expectError "match Some 1 with Some -> 0 | _ -> 1" "Constructor Some requires an argument"
+            expectError "match None with None 1 -> 0 | _ -> 1" "Constructor None takes no argument"
+            expectError "match None with Some 1 -> 0" "Match failure: None"
+            expectError "(type t = A in A) = Some 1" "Type error: expected t but got option"
+            expectError "Some 1 = 1" "Type error: expected option but got int"
+            expectError "None 1" "Type error: expected function but got option"
+            expectError "defaultValue 0 5" "Type error: expected option but got int"
+            expectError "sort [Some 1]" "Type error: expected int or string but got option"
+            expectError "(type t = A in 1) + (match A with A -> 1)" "Unknown constructor: A"
+        ]
+
+        test "ADT 값 출력: 다시 입력하면 같은 값이 되도록 괄호" {
+            Expect.equal (formatValue (calc "Some 1")) "Some 1" ""
+            Expect.equal (formatValue (calc "Some (-1)")) "Some (-1)" ""
+            Expect.equal (formatValue (calc "Some (Some 1)")) "Some (Some 1)" ""
+            Expect.equal (formatValue (calc "Some None")) "Some None" ""
+            Expect.equal (formatValue (calc "Some (1, 2)")) "Some (1, 2)" ""
+            Expect.equal (formatValue (calc "Some [1]")) "Some [1]" ""
+            Expect.equal (formatValue (calc "type 'a tree = Leaf | Node of 'a tree * 'a * 'a tree in Node (Leaf, 1, Leaf)")) "Node (Leaf, 1, Leaf)" ""
+            Expect.equal (formatValue (calc "Some")) "<fun>" ""
+            Expect.equal (typeName (calc "None")) "option" ""
+            Expect.equal (typeName (calc "Some")) "function" ""
+            Expect.equal (calc (formatValue (calc "Some (Some (-1))"))) (calc "Some (Some (-1))") ""
+        }
 
         test "튜플 값 출력" {
             Expect.equal (formatValue (calc "(1, \"a\", [true])")) "(1, \"a\", [true])" ""
@@ -600,6 +674,11 @@ let tests =
 
             testProperty "정수 리터럴 패턴은 = 와 같음" <| fun (NonNegativeInt a) (NonNegativeInt b) ->
                 calc (sprintf "match %d with %d -> true | _ -> false" a b) = VBool (a = b)
+
+            testProperty "defaultValue d (tryHead xs) 는 F# 와 같음" <| fun (xs: NonNegativeInt list) ->
+                let ns = xs |> List.map (fun (NonNegativeInt n) -> n)
+                let src = "[" + (ns |> List.map string |> String.concat "; ") + "]"
+                calc (sprintf "defaultValue (-1) (tryHead %s)" src) = VInt (ns |> List.tryHead |> Option.defaultValue -1)
 
             testProperty "if 는 조건에 따라 분기" <| fun (c: bool) (NonNegativeInt a) (NonNegativeInt b) ->
                 let cond = if c then "true" else "false"

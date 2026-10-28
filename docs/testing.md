@@ -30,8 +30,8 @@ dotnet run --project tests/Calc.Tests -- --debug            # 각 테스트 시�
 | 파일 | 테스트 목록 | 내용 |
 |---|---|---|
 | `LexerTests.fs` | `Lexer` | 토큰 순서, 공백과 줄바꿈 무시, 키워드와 식별자, 비교·논리 연산자, `->`, 리스트 토큰(`[` `]` `;` `::` `|`), 문자열과 이스케이프, 닫히지 않은 문자열, 빈 입력, 알 수 없는 문자 오류 |
-| `ParserTests.fs` | `Parser` | 우선순위, 결합 방향, 괄호, 단항 마이너스, `let`/`if`/`fun`의 범위와 중첩, 함수 호출, 함수 정의 문법 설탕, 리스트와 `::`, 튜플, 패턴과 `match`(가드, 중첩), 튜플 분해 `let`, 문자열 리터럴, 파서 오류 |
-| `EvalTests.fs` | `Eval` | 식 계산 표(정수, 불리언, 함수, 재귀, 리스트, 문자열, 내장 함수, 튜플, 패턴 매칭), `let`과 섀도잉, 클로저, 단락 평가, 타입 오류, 리스트·문자열·내장 함수·패턴 매칭 오류와 출력, 정의되지 않은 변수, 0으로 나누기, FsCheck 속성 테스트 |
+| `ParserTests.fs` | `Parser` | 우선순위, 결합 방향, 괄호, 단항 마이너스, `let`/`if`/`fun`의 범위와 중첩, 함수 호출, 함수 정의 문법 설탕, 리스트와 `::`, 튜플, 패턴과 `match`(가드, 중첩), 튜플 분해 `let`, 생성자와 `type` 선언, 타입 식, 문자열 리터럴, 파서 오류 |
+| `EvalTests.fs` | `Eval` | 식 계산 표(정수, 불리언, 함수, 재귀, 리스트, 문자열, 내장 함수, 튜플, 패턴 매칭, option, 사용자 정의 타입), `let`과 섀도잉, 클로저, 단락 평가, 타입 오류, 리스트·문자열·내장 함수·패턴 매칭·ADT 오류와 출력, 정의되지 않은 변수, 0으로 나누기, FsCheck 속성 테스트 |
 | `Main.fs` | — | 진입점 (`runTestsInAssemblyWithCLIArgs`) |
 
 `[<Tests>]` 속성이 붙은 값은 Expecto가 자동으로 찾아서 실행합니다.
@@ -128,6 +128,8 @@ Result: 11
 | `let (a, b) = (1, 2) in (b, a)` | 튜플과 튜플 분해 | | `(2, 1)` |
 | `match [1; 2; 3] with [] -> 0 \| [x] -> x \| x :: y :: _ -> x + y` | 중첩 패턴, 위에서부터 첫 일치 | | `3` |
 | `match 5 with n when n > 3 -> "big" \| _ -> "small"` | `when` 가드 | | `"big"` |
+| `type shape = Circle of int \| Rect of int * int in map (fun s -> match s with Circle r -> r \| Rect (w, h) -> w * h) [Circle 2; Rect (2, 3)]` | 사용자 정의 타입 | | `[2; 6]` |
+| `defaultValue 0 (tryFind (fun x -> x > 1) [1; 2; 3])` | option | | `2` |
 
 ## 오류 처리 확인
 
@@ -155,6 +157,7 @@ Result: 11
 | `toInt "abc"` | 평가 (내장 함수) | AST 출력 후 `Error: toInt: invalid integer: "abc"` |
 | `head []` | 평가 (내장 함수) | AST 출력 후 `Error: head: empty list` |
 | `match 1 with 2 -> 0` | 평가 (일치하는 패턴 없음) | AST 출력 후 `Error: Match failure: 1` |
+| `match Some 1 with Nome -> 0 \| _ -> 1` | 평가 (모르는 생성자) | AST 출력 후 `Error: Unknown constructor: Nome` |
 | `match p with (a, a) -> a` | 파서 (패턴 안에 같은 이름) | `Error: Duplicate variable in pattern: a (line 1, column 14)` |
 | `let rec loop n = if n = 0 then 0 else loop (n - 1) in loop 1000000` | 평가 (재귀가 너무 깊음) | `Stack overflow.` 후 프로세스 종료 (종료 코드 134) |
 
@@ -165,7 +168,7 @@ Result: 11
 | 명령 | 기대 출력 | 종료 코드 |
 |---|---|---|
 | `--help`, `-h` | `USAGE: calc [--help] [--expr=<expr>] [--version]`로 시작하는 사용법 | 0 |
-| `--version`, `-v` | `calc 0.12.0` (`Calc.fsproj`의 `<Version>`) | 0 |
+| `--version`, `-v` | `calc 0.13.0` (`Calc.fsproj`의 `<Version>`) | 0 |
 | `-e "(2+3)*4"` | `Result: 20` | 0 |
 | `--expr=7/2` | `Result: 3` | 0 |
 | `--expr "-5 + 2"` | `Result: -3` (`-`로 시작하는 식도 값으로 처리됨) | 0 |

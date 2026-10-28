@@ -15,6 +15,10 @@ type Value =
     | VTuple of Value list
     /// 내장 함수. args 는 지금까지 받은 인자 (커링: 인자가 다 모이면 실행)
     | VBuiltin of name: string * args: Value list
+    /// 생성자로 만든 값. None, Some 1, Rect (2, 3). typeName 은 선언한 타입 이름 (option, shape)
+    | VData of typeName: string * ctor: string * payload: Value option
+    /// 인자가 있는 생성자 자체 (함수처럼 호출). fields 는 선언의 튜플 원소 수 (of int * int 면 2)
+    | VConstructor of typeName: string * ctor: string * fields: int
 
 type Env = Map<string, Value>
 
@@ -30,18 +34,32 @@ let rec formatValue value =
     | VBool true -> "true"
     | VBool false -> "false"
     | VString s -> quote s
-    | VClosure _ | VRecClosure _ | VBuiltin _ -> "<fun>"
+    | VClosure _ | VRecClosure _ | VBuiltin _ | VConstructor _ -> "<fun>"
     | VList items -> "[" + (items |> List.map formatValue |> String.concat "; ") + "]"
     | VTuple items -> "(" + (items |> List.map formatValue |> String.concat ", ") + ")"
+    | VData (_, ctor, None) -> ctor
+    | VData (_, ctor, Some payload) ->
+        // 다시 입력했을 때 같은 값이 되도록 괄호: Some (Some 1), Some (-1). 튜플은 이미 괄호가 있음
+        match payload with
+        | VData (_, _, Some _) -> sprintf "%s (%s)" ctor (formatValue payload)
+        | VInt n when n < 0 -> sprintf "%s (%s)" ctor (formatValue payload)
+        | _ -> sprintf "%s %s" ctor (formatValue payload)
 
 let typeName value =
     match value with
     | VInt _ -> "int"
     | VBool _ -> "bool"
     | VString _ -> "string"
-    | VClosure _ | VRecClosure _ | VBuiltin _ -> "function"
+    | VClosure _ | VRecClosure _ | VBuiltin _ | VConstructor _ -> "function"
     | VList _ -> "list"
     | VTuple _ -> "tuple"
+    | VData (typeName, _, _) -> typeName
+
+/// 오류 메시지용: 튜플은 원소 수까지
+let describe value =
+    match value with
+    | VTuple items -> sprintf "tuple of %d" (List.length items)
+    | v -> typeName v
 
 let typeError expected value =
     failwithf "Type error: expected %s but got %s" expected (typeName value)
@@ -55,12 +73,19 @@ let rec valueEquals a b =
     | VList xs, VList ys
     | VTuple xs, VTuple ys ->
         List.length xs = List.length ys && List.forall2 valueEquals xs ys
+    // 같은 타입끼리: 생성자가 다르면 false, 같으면 인자를 비교
+    | VData (t1, c1, p1), VData (t2, c2, p2) when t1 = t2 ->
+        c1 = c2
+        && (match p1, p2 with
+            | Some x, Some y -> valueEquals x y
+            | _ -> true)
     | VInt _, v -> typeError "int" v
     | VBool _, v -> typeError "bool" v
     | VString _, v -> typeError "string" v
     | VList _, v -> typeError "list" v
     | VTuple _, v -> typeError "tuple" v
-    | v, _ -> typeError "int, bool, string, list or tuple" v
+    | VData (t, _, _), v -> typeError t v
+    | v, _ -> typeError "int, bool, string, list, tuple or data" v
 
 /// 패턴이 값과 일치하면 묶을 이름들을 env 에 추가해서 반환. 타입이 달라도 오류가 아니라 불일치
 let rec matchPattern pattern value (env: Env) : Env option =
@@ -75,6 +100,19 @@ let rec matchPattern pattern value (env: Env) : Env option =
         matchPattern ph h env |> Option.bind (matchPattern pt (VList t))
     | PTuple ps, VTuple vs when List.length ps = List.length vs ->
         List.fold2 (fun acc p v -> acc |> Option.bind (matchPattern p v)) (Some env) ps vs
+    | PCtor (name, argPattern), v ->
+        // 오타 난 생성자가 조용히 "불일치"가 되지 않도록, 지금 보이는 생성자인지와 인자 유무를 먼저 확인
+        let typeName =
+            match Map.tryFind name env, argPattern with
+            | Some (VData (t, _, None)), None -> t
+            | Some (VConstructor (t, _, _)), Some _ -> t
+            | Some (VData _), Some _ -> failwithf "Constructor %s takes no argument" name
+            | Some (VConstructor _), None -> failwithf "Constructor %s requires an argument" name
+            | _ -> failwithf "Unknown constructor: %s" name
+        match v, argPattern with
+        | VData (t, c, None), None when t = typeName && c = name -> Some env
+        | VData (t, c, Some payload), Some p when t = typeName && c = name -> matchPattern p payload env
+        | _ -> None
     | _ -> None
 
 let matchFailure value =
@@ -146,7 +184,14 @@ let builtinArity =
         // 튜플
         "fst", 1
         "snd", 1
+        // option
+        "tryHead", 1
+        "tryFind", 2
+        "defaultValue", 2
     ]
+
+let none = VData ("option", "None", None)
+let some v = VData ("option", "Some", Some v)
 
 /// 인자가 다 모인 내장 함수를 실행. 문자열 위치와 길이는 UTF-16 코드 단위 (.NET string 과 같음)
 /// apply 는 map, filter 같은 고차 함수가 사용자 함수를 호출할 때 사용 (evalIn 보다 먼저 정의되므로 인자로 받음)
@@ -227,11 +272,28 @@ let callBuiltin (apply: Value -> Value -> Value) name args =
     | "fst", [ VTuple [ a; _ ] ] -> a
     | "snd", [ VTuple [ _; b ] ] -> b
     | ("fst" | "snd"), [ v ] -> typeError "pair" v
+    | "tryHead", [ xs ] ->
+        match list' xs with
+        | h :: _ -> some h
+        | [] -> none
+    | "tryFind", [ f; xs ] ->
+        match list' xs |> List.tryFind (fun x -> bool' (apply f x)) with
+        | Some x -> some x
+        | None -> none
+    | "defaultValue", [ d; opt ] ->
+        match opt with
+        | VData ("option", "Some", Some v) -> v
+        | VData ("option", "None", None) -> d
+        | v -> typeError "option" v
     | _ -> failwithf "Unknown builtin: %s" name
 
 /// 처음 환경. 내장 함수는 보통 변수처럼 let 으로 가릴 수 있음
 let builtins: Env =
-    builtinArity |> Map.map (fun name _ -> VBuiltin (name, []))
+    builtinArity
+    |> Map.map (fun name _ -> VBuiltin (name, []))
+    // 'a option = None | Some of 'a 는 선언 없이 쓸 수 있음
+    |> Map.add "None" none
+    |> Map.add "Some" (VConstructor ("option", "Some", 1))
 
 let rec evalIn (env: Env) expr =
     match expr with
@@ -297,6 +359,20 @@ let rec evalIn (env: Env) expr =
         match matchPattern pattern v env with
         | Some bodyEnv -> evalIn bodyEnv body
         | None -> matchFailure v
+    | Ctor name ->
+        match Map.tryFind name env with
+        | Some (VData _ | VConstructor _ as v) -> v
+        | _ -> failwithf "Unknown constructor: %s" name
+    | TypeDecl (typeName, _, ctors, body) ->
+        // 인자 없는 생성자는 값, 인자 있는 생성자는 함수처럼 호출하는 값으로 환경에 추가
+        let bindCtor env (ctor, argType) =
+            let value =
+                match argType with
+                | None -> VData (typeName, ctor, None)
+                | Some (TTuple items) -> VConstructor (typeName, ctor, List.length items)
+                | Some _ -> VConstructor (typeName, ctor, 1)
+            Map.add ctor value env
+        evalIn (List.fold bindCtor env ctors) body
 
 and evalInt env expr =
     match evalIn env expr with
@@ -339,6 +415,12 @@ and apply fv av =
         let args = args @ [ av ]
         if List.length args = builtinArity.[name] then callBuiltin apply name args
         else VBuiltin (name, args)
+    | VConstructor (typeName, ctor, fields) ->
+        // of int * int 처럼 원소가 여럿이면 그 수만큼의 튜플을 받아야 함
+        match av with
+        | _ when fields = 1 -> VData (typeName, ctor, Some av)
+        | VTuple items when List.length items = fields -> VData (typeName, ctor, Some av)
+        | v -> failwithf "Constructor %s expects %d fields but got %s" ctor fields (describe v)
     | v -> typeError "function" v
 
 /// 내장 함수만 있는 환경에서 평가

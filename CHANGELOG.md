@@ -4,6 +4,26 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.13.0] - 2026-10-28
+
+### 추가
+- 대수적 데이터 타입 `type 'a tree = Leaf | Node of 'a tree * 'a * 'a tree in 식`
+  - 타입 변수는 OCaml처럼 이름 앞에 씁니다(`'a tree`, `('k, 'v) entry`).
+  - `of` 뒤의 타입은 검사하지 않고, 튜플 원소 수로 생성자 인자 수만 확인합니다.
+  - 생성자는 값입니다. 인자 있는 생성자는 함수처럼 넘길 수 있습니다(`map Some xs`).
+- 생성자 패턴 `None`, `Some x`, `Node (l, x, r)`. 모르는 생성자나 인자 유무가 다른 패턴은 오류입니다.
+- `'a option = None | Some of 'a`를 선언 없이 쓸 수 있습니다.
+- 내장 함수 `tryHead`, `tryFind`, `defaultValue`
+- 오류 `Unknown constructor`, `Constructor X expects N fields but got ...`, `Duplicate constructor`
+- 렉서: 키워드 `type`, `of`, 토큰 `CTOR`(대문자로 시작), `TYVAR`(`'a`)
+- AST: `TypeExpr`, `Ctor`, `TypeDecl`, `PCtor`. 값: `VData`, `VConstructor`
+- 테스트 62개 추가 (총 553개)
+
+### 변경
+- **대문자로 시작하는 이름은 이제 생성자입니다.** 변수 이름으로 쓸 수 없습니다(`let X = 1 in X`는 parse error).
+- 함수를 비교할 때의 오류 메시지가 `expected int, bool, string, list, tuple or data but got function`으로 바뀌었습니다.
+- `docs/grammar.md`, `docs/testing.md`, `README.md`에 ADT와 option을 반영했습니다.
+
 ## [0.12.0] - 2026-10-28
 
 ### 추가
