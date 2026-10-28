@@ -4,6 +4,11 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [Unreleased]
+
+### 추가
+- `LICENSE`(MIT)를 추가했습니다. 저장소는 https://github.com/ohama/calc-mlir 에 공개되어 있습니다.
+
 ## [0.20.0] - 2026-10-28
 
 ### 추가

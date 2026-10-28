@@ -102,7 +102,8 @@ Error: parse error: unexpected '+' (line 1, column 5)
 ├── tests/Calc.Tests/         # Expecto + FsCheck 테스트
 ├── docs/                     # 빌드, 테스트, 문법 문서
 ├── howto/                    # 문제 해결 기록
-└── CHANGELOG.md
+├── CHANGELOG.md
+└── LICENSE                   # MIT
 ```
 
 처리 흐름:
@@ -132,3 +133,7 @@ Error: parse error: unexpected '+' (line 1, column 5)
 1. `src/Calc/Calc.fsproj`의 `<Version>`. `calc --version`이 이 값을 출력합니다.
 2. `CHANGELOG.md`의 버전 항목
 3. git 태그 `vX.Y.Z`
+
+## 라이선스
+
+[MIT](LICENSE)
