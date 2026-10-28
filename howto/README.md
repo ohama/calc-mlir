@@ -52,8 +52,10 @@
 | 44 | [44-redirect-interpreter-output-per-test-with-asynclocal](44-redirect-interpreter-output-per-test-with-asynclocal.md) | 병렬 테스트마다 print 출력을 받으려면 AsyncLocal을 쓴다. 값은 설정한 흐름의 자손에만 보이므로 기본값은 읽을 때 null에서 정한다 | [64365f6](https://github.com/ohama/calc-mlir/commit/64365f6) v0.25.0 | 2026-10-28 |
 | 45 | [45-implement-repl-by-reinferring-declarations](45-implement-repl-by-reinferring-declarations.md) | REPL은 지금까지의 선언을 let ... in 사슬로 붙여 타입을 다시 추론하고, 값은 이전 환경을 이어서 쓴다. 경고는 개수로 빼서 새것만 | [32d4e7c](https://github.com/ohama/calc-mlir/commit/32d4e7c) v0.26.0 | 2026-10-28 |
 | 46 | [46-export-types-for-a-second-fsyacc-start-symbol](46-export-types-for-a-second-fsyacc-start-symbol.md) | fsyacc 헤더의 타입은 Parser.fsi에 없다. 시작 기호의 결과 타입은 Ast처럼 파서보다 먼저 컴파일되는 파일에 둔다 (FS0039, FS0034) | [32d4e7c](https://github.com/ohama/calc-mlir/commit/32d4e7c) v0.26.0 | 2026-10-28 |
+| 47 | [47-compile-or-patterns-with-multi-result-scf-if](47-compile-or-patterns-with-multi-result-scf-if.md) | or 패턴을 분기로 펼치면 가드가 있을 때 결과가 달라진다. 검사는 i1 scf.if, 이름 묶기는 값 여러 개를 내는 scf.if로 맞은 쪽에서 꺼낸다 | [caef51e](https://github.com/ohama/calc-mlir/commit/caef51e) v0.27.0 | 2026-10-28 |
+| 48 | [48-compile-mutual-recursion-by-backpatching-closures](48-compile-mutual-recursion-by-backpatching-closures.md) | 서로를 가리키는 클로저는 그룹의 블록을 모두 할당한 뒤 칸을 채운다. 인터프리터는 호출할 때 그룹 환경을 다시 만든다 | [caef51e](https://github.com/ohama/calc-mlir/commit/caef51e) v0.27.0 | 2026-10-28 |
 
-추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 → 16 → 43 → 46 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match → 오류 위치 → 최상위 선언과 ; → 두 번째 시작 기호), 45 (REPL), 17 → 18 → 19 (패턴 매칭, 생성자, ADT), 20 → 21 → 22 → 41 → 42 (타입 추론, 오류 위치, 빠진 분기), 8 → 9 → 13 → 14 → 15 (함수 평가, 재귀 한계, 내장 함수), 23 → 24 → 25 → 26 → 27 → 28 → 29 → 30 → 31 → 32 → 33 → 34 → 35 → 36 → 37 → 38 → 39 → 40 (네이티브 컴파일러), 4 → 6 → 44 (테스트), 5 (릴리스)
+추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 → 16 → 43 → 46 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match → 오류 위치 → 최상위 선언과 ; → 두 번째 시작 기호), 45 (REPL), 17 → 18 → 19 (패턴 매칭, 생성자, ADT), 20 → 21 → 22 → 41 → 42 (타입 추론, 오류 위치, 빠진 분기), 8 → 9 → 13 → 14 → 15 (함수 평가, 재귀 한계, 내장 함수), 23 → 24 → 25 → 26 → 27 → 28 → 29 → 30 → 31 → 32 → 33 → 34 → 35 → 36 → 37 → 38 → 39 → 40 → 47 → 48 (네이티브 컴파일러), 4 → 6 → 44 (테스트), 5 (릴리스)
 
 ---
-총 46개 | 업데이트: 2026-10-28
+총 48개 | 업데이트: 2026-10-28
