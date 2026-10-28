@@ -58,8 +58,8 @@ shift/reduce error at state 87 on terminal BAR between {noprec shift(88)} and {n
 
 | 방법 | 충돌 | 중첩 `match` 동작 | 언제 |
 |---|---|---|---|
-| A. 분기 수 고정 (이 프로젝트) | 0 | 분기를 다 채우면 안쪽이 끝남. 괄호 없이 중첩 가능 | 패턴 종류가 정해져 있을 때 (리스트의 `[]`/`h :: t`) |
-| B. 목록 + `%prec`로 shift 명시 | 0 | 안쪽이 뒤의 분기를 모두 가져감 (F#과 같음) | 일반 패턴 매칭 |
+| A. 분기 수 고정 (이 프로젝트 0.7.0~0.11.0) | 0 | 분기를 다 채우면 안쪽이 끝남. 괄호 없이 중첩 가능 | 패턴 종류가 정해져 있을 때 (리스트의 `[]`/`h :: t`) |
+| B. 목록 + `%prec`로 shift 명시 (이 프로젝트 0.12.0~) | 0 | 안쪽이 뒤의 분기를 모두 가져감 (F#과 같음) | 일반 패턴 매칭 |
 | C. 목록 + 닫는 키워드 (`end`) | 0 | 키워드로 끝이 분명함 | 문법이 장황해져도 될 때 (OCaml의 `begin ... end`, Pascal 계열) |
 | D. 목록, 아무것도 안 함 | 1 | B와 같지만 경고가 남음 | 하지 않는다 |
 
@@ -108,7 +108,21 @@ Arms:
     | Arm BAR Arms
 ```
 
-`reduce(Arms: Arm)`의 우선순위(NOBAR)가 lookahead `BAR`보다 낮으므로 shift를 고른다. 동작은 D와 같지만 충돌 보고가 사라진다. 이 프로젝트 문법에 적용해 보고 충돌이 0개인 것을 확인했다.
+`reduce(Arms: Arm)`의 우선순위(NOBAR)가 lookahead `BAR`보다 낮으므로 shift를 고른다. 동작은 D와 같지만 충돌 보고가 사라진다.
+
+0.12.0에서 일반 패턴 매칭을 넣으면서 이 프로젝트도 A에서 B로 바꿨다. 분기 목록은 `Arm` 하나에 패턴과 가드를 담는다.
+
+```
+Arms:
+    | Arm %prec NOBAR               { [ $1 ] }
+    | Arm BAR Arms                  { $1 :: $3 }
+
+Arm:
+    | Pattern ARROW Expr            { ... }
+    | Pattern WHEN Expr ARROW Expr  { ... }
+```
+
+충돌은 0개다. 대신 중첩 `match`의 의미가 바뀐다(아래 Example). 예전에 "괄호 없이 중첩 가능"이던 테스트를 "뒤의 분기는 안쪽 것"으로 고치고, CHANGELOG의 "변경"에 적었다.
 
 `NOBAR`는 렉서가 만들지 않는 토큰이다. fsyacc에서는 `%token NOBAR`로 선언해 두어야 한다.
 
@@ -120,7 +134,7 @@ dotnet build | grep -i conflict    # 비어 있어야 함
 
 ## Example
 
-방법 A에서 실제로 나오는 AST다.
+방법 A(0.7.0~0.11.0)에서 실제로 나오는 AST다.
 
 ```fsharp
 test "중첩 match: 분기가 둘뿐이므로 괄호 없이 가능" {
@@ -138,6 +152,23 @@ test "같은 종류 분기 둘은 parse error" {
 ```
 
 첫 번째 테스트에서 `| h :: t -> 3`은 바깥 `match`의 분기가 된다. 안쪽 `match`는 이미 `[]` 분기와 `x :: y` 분기를 다 가졌기 때문이다. 방법 B라면 이 입력은 안쪽 `match`에 `h :: t` 분기를 하나 더 붙이려 하고, 바깥 `match`에는 분기가 하나뿐이게 된다.
+
+방법 B로 바꾼 뒤(0.12.0) 같은 입력의 AST다. 세 분기가 모두 안쪽 `match b`에 붙는다.
+
+```fsharp
+test "중첩 match: 뒤의 분기는 모두 안쪽 match 것 (F# 와 같음)" {
+    Expect.equal
+        (parse "match a with [] -> match b with [] -> 1 | x :: y -> 2 | h :: t -> 3")
+        (Match (Var "a",
+                [ (PNil, None,
+                   Match (Var "b",
+                          [ (PNil, None, Number 1)
+                            (PCons (PVar "x", PVar "y"), None, Number 2)
+                            (PCons (PVar "h", PVar "t"), None, Number 3) ])) ]))
+        ""
+}
+test "중첩 match: 괄호로 감싸면 바깥 분기" { ... }
+```
 
 마지막 분기의 본문이 오른쪽 끝까지 이어지는 것은 별도의 문제다. `ARROW`를 가장 낮은 우선순위로 두어서 해결한다(`match xs with [] -> 0 | h :: t -> h + 1`의 본문은 `h + 1`).
 

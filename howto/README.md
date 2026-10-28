@@ -20,8 +20,9 @@
 | 14 | [use-ordinal-string-apis-for-language-builtins](use-ordinal-string-apis-for-language-builtins.md) | .NET 문자열 API 일부는 기본이 문화권 비교다. 언어 내장 함수에는 Ordinal과 Invariant를 명시한다 | 2026-10-28 |
 | 15 | [guard-fsharp-core-semantics-in-builtins](guard-fsharp-core-semantics-in-builtins.md) | 내장 함수를 FSharp.Core 함수로 바로 구현하면 오버플로 검사, 예외 감싸기, 오류 메시지가 언어로 새어 나온다. 경계를 조사해 막는다 | 2026-10-28 |
 | 16 | [report-parse-error-positions-with-fsyacc](report-parse-error-positions-with-fsyacc.md) | fsyacc의 기본 오류는 위치 없는 "parse error"다. parse_error_rich로 구분되는 예외를 던지고, 위치는 lexbuf의 StartPos/EndPos에서 읽는다 | 2026-10-28 |
+| 17 | [implement-pattern-matching-evaluator](implement-pattern-matching-evaluator.md) | 패턴 매칭 평가는 matchPattern: Pattern -> Value -> Env -> Env option 하나로 끝난다. 분기 선택, 가드, let 분해가 모두 이 함수를 쓴다 | 2026-10-28 |
 
-추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 → 16 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match → 오류 위치), 8 → 9 → 13 → 14 → 15 (함수 평가, 재귀 한계, 내장 함수), 4 → 6 (테스트), 5 (릴리스)
+추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 → 16 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match → 오류 위치), 17 (패턴 매칭), 8 → 9 → 13 → 14 → 15 (함수 평가, 재귀 한계, 내장 함수), 4 → 6 (테스트), 5 (릴리스)
 
 ---
-총 16개 | 업데이트: 2026-10-28
+총 17개 | 업데이트: 2026-10-28

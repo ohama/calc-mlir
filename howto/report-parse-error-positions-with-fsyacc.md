@@ -150,6 +150,41 @@ and readString (sb: StringBuilder) (start: Position) = parse
 
 줄 번호가 맞으려면 줄바꿈 규칙마다 `lexbuf.EndPos <- lexbuf.EndPos.NextLine`을 호출해야 한다. 문자열 안의 줄바꿈 규칙도 마찬가지다. 이걸 빠뜨리면 열은 맞는데 줄이 틀린다.
 
+### Step 6: 파서 액션에서 의미 오류에 위치를 붙인다
+
+"패턴 안에 같은 이름이 두 번" 같은 오류는 문법으로는 맞지만 언어 규칙에 어긋난다. 이런 검사는 **파서 액션 안에서** 할 수 있다. fsyacc 액션에서는 `parseState`를 쓸 수 있고, `parseState.InputStartPosition n`이 규칙의 **n번째 기호(1부터)가 시작하는 위치**를 준다.
+
+```
+Arm:
+    | Pattern ARROW Expr            { (checkPattern (parseState.InputStartPosition 1) $1, None, $3) }
+
+Expr:
+    | LET TuplePattern EQUALS Expr IN Expr
+                                    { LetPattern(checkPattern (parseState.InputStartPosition 2) $2, $4, $6) }
+```
+
+```fsharp
+/// 한 패턴 안에서 같은 이름을 두 번 묶으면 오류 (F# 와 같음). pos 는 패턴의 시작 위치
+let checkPattern (pos: FSharp.Text.Lexing.Position) pattern =
+    let names = patternVars pattern
+    match names |> List.countBy id |> List.tryFind (fun (_, n) -> n > 1) with
+    | Some (name, _) -> Errors.syntaxError (sprintf "Duplicate variable in pattern: %s" name) pos
+    | None -> pattern
+```
+
+- 기호가 비단말(`Pattern`)이면 그 비단말을 이루는 **첫 토큰의 시작**이다. 여러 줄에 걸친 패턴도 맞게 나온다.
+
+  ```
+  match p with (a, a) -> a                       → line 1, column 14
+  match p with
+  | _ -> 0
+  | (x,
+     x) -> 1   → line 3, column 5
+  ```
+
+- 액션에서 던진 `SyntaxError`는 `parse_error_rich`를 거치지 않고 `Parser.start` 밖으로 그대로 나온다. `Program.parse`는 `ParseFailure`만 잡으므로 위치가 붙은 메시지가 그대로 전달된다.
+- **한계:** AST에 위치가 없으므로 "두 번째 `a`"의 위치는 알 수 없다. 패턴 전체의 시작을 가리킨다. 더 정확하게 하려면 `PVar`에 위치를 저장해야 한다.
+
 ## Example
 
 CLI에서는 위치로 원본 줄을 찾아 `^`를 찍는다.
@@ -192,6 +227,7 @@ Expect.equal (Program.errorLocation "\tx )" 1 4) [ "  1 | \tx )"; "    | \t  ^" 
 - [ ] 여러 규칙에 걸친 토큰(문자열)은 반환 전에 `StartPos`를 시작 위치로 되돌린다
 - [ ] 모든 줄바꿈 규칙(문자열 안 포함)이 `EndPos.NextLine`을 호출한다
 - [ ] 여러 줄, `\r\n`, 탭, 빈 입력, 끝 줄바꿈이 붙은 입력의 위치를 테스트로 고정했다
+- [ ] 파서 액션의 의미 검사는 `parseState.InputStartPosition n`으로 위치를 붙인다
 
 ## 관련 문서
 
