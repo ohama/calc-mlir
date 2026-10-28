@@ -21,16 +21,32 @@ and TypeVar =
       /// +, <, length, sort 처럼 일부 타입만 허용하는 변수 (타입 생성자 이름 목록). 이런 변수는 일반화하지 않음
       mutable Allowed: string list option }
 
-/// 정적 타입 오류. 위치 정보는 아직 없음 (AST 에 위치가 없음)
-exception TypeError of string with
-    override this.Message = this.Data0
+/// 정적 타입 오류. position 은 원인이 된 식이나 패턴의 시작 (줄, 열; 1부터). Message 에는 위치를 넣지 않음
+exception TypeError of message: string * position: (int * int) option with
+    override this.Message = this.message
 
-let private typeError message = raise (TypeError message)
+let private typeError message = raise (TypeError (message, None))
+
+/// 위치가 없는 타입 오류에 node 의 위치를 붙임 (안쪽에서 이미 붙였으면 그대로)
+let private locate (node: obj) (action: unit -> 'a) : 'a =
+    try
+        action ()
+    with TypeError (message, None) ->
+        raise (TypeError (message, Errors.positionOf node))
+
+/// 패턴 매칭이 모든 값을 덮지 못함 (경고). position 은 match 또는 let 의 시작
+type Warning = { Message: string; Position: (int * int) option }
 
 let private genericLevel = System.Int32.MaxValue
 
 /// 추론 한 번의 상태. 테스트가 병렬로 돌기 때문에 모듈 전역 변수 대신 호출마다 만듦
-type private State = { mutable Level: int; mutable NextId: int }
+type private State =
+    { mutable Level: int
+      mutable NextId: int
+      /// 사용자 타입의 고유 이름 → (타입 매개변수 변수, 생성자와 인자 타입). 빠진 분기 검사가 씀
+      DataTypes: Dictionary<string, TypeVar list * (string * Type option) list>
+      /// 검사할 패턴 매칭: 대상 타입, (패턴, 가드가 있는지) 목록, 위치. 추론이 끝난 뒤 타입이 다 정해지면 검사
+      Matches: List<Type * (Pattern * bool) list * (int * int) option * string> }
 
 type private Context =
     { Vars: Map<string, Type>
@@ -286,6 +302,9 @@ let rec private convertType (ctx: Context) (typeParams: Map<string, Type>) te =
 
 /// 패턴의 타입과, 패턴이 묶는 이름들 (단형)
 let rec private inferPattern (st: State) (ctx: Context) pattern : Type * (string * Type) list =
+    locate pattern (fun () -> inferPatternNode st ctx pattern)
+
+and private inferPatternNode (st: State) (ctx: Context) pattern : Type * (string * Type) list =
     match pattern with
     | PVar name ->
         let t = newVar st
@@ -316,22 +335,28 @@ let rec private inferPattern (st: State) (ctx: Context) pattern : Type * (string
             | result, None -> result, []
             | _, Some _ -> typeError (sprintf "Constructor %s takes no argument" name)
 
+/// 식의 타입. 위치가 없는 타입 오류에는 이 식의 위치를 붙임 (가장 안쪽 식이 먼저 붙임)
 let rec private infer (st: State) (ctx: Context) expr : Type =
+    locate expr (fun () -> inferNode st ctx expr)
+
+and private inferNode (st: State) (ctx: Context) expr : Type =
     let infer' = infer st ctx
+    /// e 의 타입이 expected 여야 함. 맞지 않으면 e 를 가리키는 오류 (OCaml 처럼 문제가 된 식)
+    let expect (e: obj) expected actual = locate e (fun () -> unifyAt expected actual)
     let withVars binds (ctx: Context) =
         { ctx with Vars = binds |> List.fold (fun vars (name, t) -> Map.add name t vars) ctx.Vars }
     /// +, <: int 끼리 또는 string 끼리
     let sameIntOrString a b =
         let t = newVarAt st st.Level (Some [ "int"; "string" ])
-        unifyAt t (infer' a)
-        unifyAt t (infer' b)
+        expect a t (infer' a)
+        expect b t (infer' b)
         t
     let ints a b =
-        unifyAt tInt (infer' a)
-        unifyAt tInt (infer' b)
+        expect a tInt (infer' a)
+        expect b tInt (infer' b)
     let bools a b =
-        unifyAt tBool (infer' a)
-        unifyAt tBool (infer' b)
+        expect a tBool (infer' a)
+        expect b tBool (infer' b)
     match expr with
     | Number _ -> tInt
     | Bool _ -> tBool
@@ -368,17 +393,17 @@ let rec private infer (st: State) (ctx: Context) expr : Type =
         let ta = infer' arg
         match prune tf with
         | TyFun (param, result) ->
-            unifyAt param ta
+            expect arg param ta
             result
         | TyVar _ ->
             let result = newVar st
             unifyAt tf (TyFun (ta, result))
             result
-        | other -> typeError (sprintf "Type mismatch: expected function but got %s" (typeToString other))
+        | other -> locate f (fun () -> typeError (sprintf "Type mismatch: expected function but got %s" (typeToString other)))
     | If (cond, thenExpr, elseExpr) ->
-        unifyAt tBool (infer' cond)
+        expect cond tBool (infer' cond)
         let t = infer' thenExpr
-        unifyAt t (infer' elseExpr)
+        expect elseExpr t (infer' elseExpr)
         t
     | Add (a, b) -> sameIntOrString a b
     | Subtract (a, b)
@@ -387,13 +412,13 @@ let rec private infer (st: State) (ctx: Context) expr : Type =
         ints a b
         tInt
     | Negate e ->
-        unifyAt tInt (infer' e)
+        expect e tInt (infer' e)
         tInt
     | Equal (a, b)
     | NotEqual (a, b) ->
         // OCaml 처럼 모든 타입에 대해 'a -> 'a -> bool. 함수 비교는 실행 중 오류로 남음
         let t = infer' a
-        unifyAt t (infer' b)
+        expect b t (infer' b)
         tBool
     | Less (a, b)
     | Greater (a, b)
@@ -406,12 +431,12 @@ let rec private infer (st: State) (ctx: Context) expr : Type =
         bools a b
         tBool
     | Not e ->
-        unifyAt tBool (infer' e)
+        expect e tBool (infer' e)
         tBool
     | Nil -> listOf (newVar st)
     | Cons (head, tail) ->
         let th = infer' head
-        unifyAt (listOf th) (infer' tail)
+        expect tail (listOf th) (infer' tail)
         listOf th
     | Tuple items -> TyTuple (items |> List.map infer')
     | Match (scrutinee, cases) ->
@@ -419,17 +444,19 @@ let rec private infer (st: State) (ctx: Context) expr : Type =
         let result = newVar st
         for pattern, guard, body in cases do
             let tp, binds = inferPattern st ctx pattern
-            unifyAt ts tp
+            expect pattern ts tp
             let caseCtx = withVars binds ctx
-            guard |> Option.iter (fun g -> unifyAt tBool (infer st caseCtx g))
-            unifyAt result (infer st caseCtx body)
+            guard |> Option.iter (fun g -> expect g tBool (infer st caseCtx g))
+            expect body result (infer st caseCtx body)
+        st.Matches.Add((ts, cases |> List.map (fun (p, g, _) -> p, Option.isSome g), Errors.positionOf expr, "match"))
         result
     | LetPattern (pattern, value, body) ->
         st.Level <- st.Level + 1
         let tv = infer' value
         let tp, binds = inferPattern st ctx pattern
-        unifyAt tp tv
+        expect value tp tv
         st.Level <- st.Level - 1
+        st.Matches.Add((tv, [ pattern, false ], Errors.positionOf expr, "let"))
         binds |> List.iter (snd >> generalize st)
         infer st (withVars binds ctx) body
     | TypeDecl (name, typeParams, ctors, body) ->
@@ -442,12 +469,17 @@ let rec private infer (st: State) (ctx: Context) expr : Type =
         let paramVars = typeParams |> List.map (fun p -> p, newVarAt st genericLevel None)
         let declCtx = { ctx with Types = Map.add name (unique, List.length typeParams) ctx.Types }
         let result = TyCon (unique, paramVars |> List.map snd)
+        let ctorArgs =
+            ctors |> List.map (fun (ctor, argType) -> ctor, argType |> Option.map (convertType declCtx (Map.ofList paramVars)))
+        let paramTypeVars =
+            paramVars |> List.map (fun (_, t) -> match t with | TyVar v -> v | _ -> failwith "unreachable")
+        st.DataTypes[unique] <- (paramTypeVars, ctorArgs)
         let ctorTypes =
-            ctors
-            |> List.map (fun (ctor, argType) ->
-                match argType with
+            ctorArgs
+            |> List.map (fun (ctor, arg) ->
+                match arg with
                 | None -> ctor, result
-                | Some te -> ctor, TyFun (convertType declCtx (Map.ofList paramVars) te, result))
+                | Some t -> ctor, TyFun (t, result))
         infer st (withVars ctorTypes declCtx) body
 
 /// 아직 정해지지 않은 허용 목록 변수는 첫 번째 허용 타입으로 정함 (F# 가 + 를 int 로 정하는 것과 같음)
@@ -462,9 +494,129 @@ let rec private applyDefaults (st: State) t =
         applyDefaults st b
     | TyTuple items -> List.iter (applyDefaults st) items
 
-/// 식 전체의 타입. 타입이 맞지 않으면 TypeError
-let typecheck (expr: Expr) : Type =
-    let st = { Level = 0; NextId = 0 }
+// ---- 빠진 분기 검사 (Maranget, "Warnings for pattern matching", 2007) ----
+
+/// 검사용 패턴: 무엇이든(_) 또는 생성자와 하위 패턴. 생성자 이름: "true", "false", "[]", "::", "tuple", 생성자 이름,
+/// 정수·문자열 상수는 "int:5", "str:..." (값이 무한히 많은 타입)
+type private Pat =
+    | Any
+    | Con of string * Pat list
+
+let rec private toPat pattern =
+    match pattern with
+    | PVar _
+    | PWildcard -> Any
+    | PInt n -> Con (sprintf "int:%d" n, [])
+    | PBool b -> Con ((if b then "true" else "false"), [])
+    | PString s -> Con ("str:" + s, [])
+    | PNil -> Con ("[]", [])
+    | PCons (h, t) -> Con ("::", [ toPat h; toPat t ])
+    | PTuple items -> Con ("tuple", List.map toPat items)
+    | PCtor (name, None) -> Con (name, [])
+    | PCtor (name, Some p) -> Con (name, [ toPat p ])
+
+/// 타입의 생성자 전부 (이름, 하위 타입). 값이 무한히 많은 타입(int, string)과 정해지지 않은 타입은 None
+let private signature (st: State) (t: Type) : (string * Type list) list option =
+    match prune t with
+    | TyCon ("bool", []) -> Some [ "true", []; "false", [] ]
+    | TyCon ("list", [ a ]) as listType -> Some [ "[]", []; "::", [ a; listType ] ]
+    | TyCon ("option", [ a ]) -> Some [ "None", []; "Some", [ a ] ]
+    | TyTuple items -> Some [ "tuple", items ]
+    | TyCon (name, args) when st.DataTypes.ContainsKey name ->
+        let paramVars, ctors = st.DataTypes[name]
+        let substitution = List.zip (paramVars |> List.map (fun v -> v.Id)) args |> Map.ofList
+        let rec subst t =
+            match prune t with
+            | TyVar v -> substitution |> Map.tryFind v.Id |> Option.defaultValue t
+            | TyCon (n, xs) -> TyCon (n, List.map subst xs)
+            | TyFun (a, b) -> TyFun (subst a, subst b)
+            | TyTuple xs -> TyTuple (List.map subst xs)
+        Some (ctors |> List.map (fun (ctor, arg) -> ctor, arg |> Option.map subst |> Option.toList))
+    | _ -> None
+
+/// 행렬 rows(각 행은 열마다 패턴)이 덮지 못하는 값의 예. 모두 덮으면 None
+let rec private missing (st: State) (rows: Pat list list) (types: Type list) : Pat list option =
+    match types with
+    | [] -> if List.isEmpty rows then Some [] else None
+    | t :: rest ->
+        let heads = rows |> List.choose (function Con (name, _) :: _ -> Some name | _ -> None) |> Set.ofList
+        // 생성자 c 로 시작하는 값만 남김: 그 생성자의 하위 패턴을 열로 펼침
+        let specialize name arity =
+            rows
+            |> List.choose (fun row ->
+                match row with
+                | Con (n, args) :: tail when n = name -> Some (args @ tail)
+                | Any :: tail -> Some (List.replicate arity Any @ tail)
+                | _ -> None)
+        let defaultRows = rows |> List.choose (function Any :: tail -> Some tail | _ -> None)
+        match signature st t with
+        | Some ctors when ctors |> List.forall (fun (name, _) -> heads.Contains name) ->
+            // 모든 생성자가 나옴: 생성자마다 확인
+            ctors
+            |> List.tryPick (fun (name, argTypes) ->
+                missing st (specialize name argTypes.Length) (argTypes @ rest)
+                |> Option.map (fun w -> Con (name, List.take argTypes.Length w) :: List.skip argTypes.Length w))
+        | ctors ->
+            // 나오지 않은 생성자가 있음: _ 로 시작하는 행만으로 나머지 열을 덮는지
+            missing st defaultRows rest
+            |> Option.map (fun w ->
+                let head =
+                    match ctors with
+                    // 이 열에 생성자가 하나도 없으면 어떤 값이든 됨
+                    | _ when heads.IsEmpty -> Any
+                    | Some ctors ->
+                        let name, argTypes = ctors |> List.find (fun (name, _) -> not (heads.Contains name))
+                        Con (name, List.replicate argTypes.Length Any)
+                    | None when heads.IsEmpty -> Any
+                    // int, string: 나온 상수가 아닌 값
+                    | None ->
+                        match prune t with
+                        | TyCon ("int", []) -> Con (sprintf "int:%d" (Seq.initInfinite id |> Seq.find (fun n -> not (heads.Contains(sprintf "int:%d" n)))), [])
+                        | _ -> Con ("str:" + (Seq.initInfinite (fun n -> String.replicate n "a") |> Seq.find (fun s -> not (heads.Contains("str:" + s)))), [])
+                head :: w)
+
+/// 값의 예를 소스 문법으로 (formatValue 와 비슷하게): Some _, _ :: _, (true, _)
+let rec private patToString (prec: int) (p: Pat) =
+    let paren cond (s: string) = if cond then "(" + s + ")" else s
+    match p with
+    | Any -> "_"
+    | Con ("[]", []) -> "[]"
+    | Con ("::", [ h; t ]) ->
+        // 끝이 [] 인 사슬은 리스트 문법 [_; _]
+        let rec items p =
+            match p with
+            | Con ("::", [ h; t ]) -> items t |> Option.map (fun rest -> h :: rest)
+            | Con ("[]", []) -> Some []
+            | _ -> None
+        match items p with
+        | Some xs -> "[" + (xs |> List.map (patToString 0) |> String.concat "; ") + "]"
+        | None -> paren (prec > 0) (patToString 1 h + " :: " + patToString 0 t)
+    | Con ("tuple", items) -> "(" + (items |> List.map (patToString 0) |> String.concat ", ") + ")"
+    | Con (name, []) when name.StartsWith "int:" -> name.Substring 4
+    | Con (name, []) when name.StartsWith "str:" -> "\"" + name.Substring 4 + "\""
+    | Con (name, []) -> name
+    | Con (name, [ arg ]) -> paren (prec > 1) (name + " " + patToString 2 arg)
+    | Con (name, args) -> name + " " + (args |> List.map (patToString 2) |> String.concat " ")
+
+let private checkMatches (st: State) : Warning list =
+    [ for t, cases, position, kind in st.Matches do
+          // 가드가 있는 분기는 실패할 수 있으므로 덮는 데 셈하지 않음 (OCaml, F# 와 같음)
+          let rows = cases |> List.filter (snd >> not) |> List.map (fun (p, _) -> [ toPat p ])
+          match missing st rows [ t ] with
+          | Some [ example ] ->
+              let what = if kind = "let" then "this let pattern" else "this match"
+              yield
+                  { Message = sprintf "%s is not exhaustive. Example of a value not matched: %s" what (patToString 0 example)
+                    Position = position }
+          | _ -> () ]
+    |> List.sortBy (fun w -> w.Position)
+
+/// 식 전체의 타입과, 모든 값을 덮지 못하는 패턴 매칭의 경고. 타입이 맞지 않으면 TypeError
+let typecheckWithWarnings (expr: Expr) : Type * Warning list =
+    let st = { Level = 0; NextId = 0; DataTypes = Dictionary(); Matches = List() }
     let t = infer st (initialContext st) expr
     applyDefaults st t
-    t
+    t, checkMatches st
+
+/// 식 전체의 타입. 타입이 맞지 않으면 TypeError
+let typecheck (expr: Expr) : Type = fst (typecheckWithWarnings expr)

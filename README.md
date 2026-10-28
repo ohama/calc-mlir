@@ -34,9 +34,10 @@ Result: 10
 | 패턴 매칭 (중첩 패턴, `when` 가드) | `match xs with [] -> 0 \| [x] -> x \| x :: _ when x > 0 -> x \| _ -> -1` |
 
 - 우선순위 (낮은 것부터): `let`/`if`/`fun`/`match` < `||` < `&&` < 비교 < `::` < `+ -` < `* /` < 단항 `-`, `not` < 함수 호출
-- **타입 추론** (Hindley–Milner, let 다형성): 실행 전에 타입을 추론하고, 맞지 않으면 평가하지 않습니다.
+- **타입 추론** (Hindley–Milner, let 다형성): 실행 전에 타입을 추론하고, 맞지 않으면 평가하지 않습니다. 타입 오류는 문제가 된 식의 위치(줄, 열, `^`)를 가리킵니다.
   - `fun f x -> f (f x)`는 `('a -> 'a) -> 'a -> 'a`, `[1; true]`는 `Type mismatch: expected int list but got bool list`
   - `--no-typecheck`를 주면 추론을 건너뛰고 평가 중에 동적으로 검사합니다.
+- **빠진 `match` 분기 경고**: 모든 값을 덮지 못하는 `match`와 `let` 패턴에 대해, 덮지 못하는 값의 예와 위치를 경고합니다(OCaml Warning 8, F# FS0025와 같음).
 
 자세한 문법과 의미는 [docs/grammar.md](docs/grammar.md)에 있습니다.
 

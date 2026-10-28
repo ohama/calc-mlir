@@ -668,14 +668,51 @@ Error: parse error: unexpected '+' (line 1, column 5)
 | 생성자 패턴의 인자 유무 | `Constructor Some requires an argument`, `Constructor None takes no argument` |
 | `type` 선언의 타입 | `Unknown type: foo`, `Unbound type variable: 'b`, `Duplicate type variable: 'a`, `Type list expects 1 type argument(s) but got 0` |
 
-- 오류 메시지에는 아직 위치가 없습니다. AST에 위치 정보가 없기 때문입니다.
+- **위치:** 오류에는 문제가 된 식이나 패턴의 위치가 붙습니다(OCaml처럼). `calc`는 파서 오류와 같은 형식으로 위치와 `^`를 출력합니다.
+
+  ```
+  Error: Type mismatch: expected int but got bool (line 2, column 5)
+    2 |   f true
+      |     ^
+  ```
+
+  - 함수 인자가 맞지 않으면 인자, `if` 조건이면 조건, 분기 타입이 다르면 `else` 분기를 가리킵니다.
+  - 연산자 피연산자, `::`의 오른쪽, 리스트 리터럴의 원소(`[1; true]`의 `true`), 패턴, 가드, 분기 본문도 그 자체를 가리킵니다.
+  - 정의되지 않은 이름은 그 이름을 가리킵니다.
+- **위치 기록 방식:** 위치는 AST에 넣지 않습니다. 파서가 노드마다 시작 위치를 따로 기록합니다(`Errors.positionOf`). 그래서 AST 모양과 `%A` 출력은 그대로입니다. `TypeError`의 `Message`에는 위치가 없고, 위치는 `position` 필드에 있습니다.
 - 메시지의 두 타입은 단일화가 실패한 시점의 **전체 타입**입니다. 일부가 이미 단일화된 상태로 보일 수 있습니다.
+
+### 빠진 match 분기 경고
+
+타입 추론이 끝나면 `match`와 `let` 패턴이 모든 값을 덮는지 검사합니다. 덮지 못하면, 덮지 못하는 값의 예와 위치를 담은 경고를 표준 에러로 출력합니다. 경고만 하고 실행은 계속합니다. OCaml의 Warning 8, F#의 FS0025와 같습니다.
+
+```
+$ calc -e "match Some 1 with | Some x -> x"
+Warning: this match is not exhaustive. Example of a value not matched: None (line 1, column 1)
+  1 | match Some 1 with | Some x -> x
+    | ^
+```
+
+| 패턴 | 값의 예 |
+|---|---|
+| `match xs with \| x :: _ -> x` | `[]` |
+| `match (b, n) with \| (true, _) -> 1 \| (false, 0) -> 2` | `(false, 1)` |
+| `match xs with \| [a; b] -> a \| [] -> 0` | `[_]` |
+| `match o with \| Some (Some _) -> 1 \| None -> 0` | `Some None` |
+| `match n with \| 0 -> 0 \| 1 -> 1` | `2` |
+| `let (a, 1) = p in a` | `(_, 0)` (`this let pattern is not exhaustive`) |
+
+- **생성자 목록:** `bool`, 리스트, `option`, 튜플, 사용자 타입은 생성자를 모두 압니다. `int`와 `string`은 값이 무한히 많으므로 `_`나 변수가 있어야 덮습니다.
+- **가드:** 가드가 있는 분기는 실패할 수 있으므로 덮는 데 세지 않습니다(OCaml, F#과 같음).
+- **알고리즘:** Maranget, "Warnings for pattern matching"(2007)의 유용성(usefulness) 검사입니다. 값의 예도 같은 계산에서 나옵니다(`Infer.typecheckWithWarnings`).
+- **같은 결과:** 경고가 없는 프로그램은 실행 중에 `Match failure`가 나지 않습니다. 평가 예제로 이것을 테스트합니다(`DiagnosticTests`).
+- **아직 하지 않는 것:** 쓰이지 않는 분기 경고(OCaml Warning 11)는 아직 없습니다.
 
 ### 건전성과 남은 실행 중 오류
 
 타입 검사를 통과한 프로그램은 실행 중에 `Type error`가 나지 않습니다. 함수끼리 `=` 비교만 예외입니다(테스트: `InferTests`의 건전성 테스트). 다음 오류는 여전히 실행 중에 납니다.
 
-- `Match failure` (모든 경우를 다루는지 검사하지 않음), `head []`, `nth`/`substr` 범위, `toInt` 변환 실패
+- `Match failure` (빠진 분기가 있으면 실행 전에 경고함, 아래), `head []`, `nth`/`substr` 범위, `toInt` 변환 실패
 - 0으로 나누기, 재귀가 너무 깊음
 - 함수끼리 `=` 비교: 타입은 `'a -> 'a -> bool`로 통과하고, 실행 중에 `Type error: expected int, bool, string, list, tuple or data but got function`
 

@@ -4,6 +4,17 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.24.0] - 2026-10-28
+
+### 추가
+- 타입 오류의 위치: OCaml처럼 문제가 된 식이나 패턴을 가리킵니다. 함수 인자, `if` 조건, `else` 분기, 연산자 피연산자, `::`의 오른쪽, 리스트 원소, 패턴, 가드, 분기 본문을 가리킵니다. 파서 오류와 같은 형식으로 `(line, column)`과 `^`를 출력합니다.
+  - 파서가 식·패턴 노드의 시작 위치를 따로 기록합니다(`Errors.recordPosition`, `positionOf`). AST 모양과 `%A` 출력은 그대로입니다.
+  - `Infer.TypeError`에 `position` 필드를 더했습니다. `Message`에는 위치를 넣지 않습니다.
+- 빠진 `match` 분기 경고: `match`와 `let` 패턴이 모든 값을 덮지 못하면 `Warning: this match is not exhaustive. Example of a value not matched: None (line 1, column 1)`을 표준 에러로 출력합니다. 실행은 계속합니다(`calc`와 `calc --compile` 모두).
+  - Maranget의 유용성(usefulness) 검사로 판정하고, 같은 계산에서 값의 예(`[]`, `(false, 1)`, `[_]`, `Some None`, `2`)를 만듭니다. 가드가 있는 분기는 덮는 데 세지 않습니다.
+  - `Infer.typecheckWithWarnings`: 타입과 경고 목록을 돌려줍니다. `typecheck`는 그대로입니다.
+- `DiagnosticTests.fs`: 테스트 31개 추가 (총 737개). 건전성 테스트: 실행 중 `Match failure`가 나는 평가 예제는 모두 경고를 받습니다.
+
 ## [0.23.0] - 2026-10-28
 
 ### 추가

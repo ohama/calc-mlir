@@ -32,6 +32,7 @@ dotnet run --project tests/Calc.Tests -- --debug            # 각 테스트 시�
 | `LexerTests.fs` | `Lexer` | 토큰 순서, 공백과 줄바꿈 무시, 키워드와 식별자, 비교·논리 연산자, `->`, 리스트 토큰(`[` `]` `;` `::` `|`), 문자열과 이스케이프, 닫히지 않은 문자열, 빈 입력, 알 수 없는 문자 오류 |
 | `ParserTests.fs` | `Parser` | 우선순위, 결합 방향, 괄호, 단항 마이너스, `let`/`if`/`fun`의 범위와 중첩, 함수 호출, 함수 정의 문법 설탕, 리스트와 `::`, 튜플, 패턴과 `match`(가드, 중첩), 튜플 분해 `let`, 생성자와 `type` 선언, 타입 식, 문자열 리터럴, 파서 오류 |
 | `InferTests.fs` | `Infer` | 추론한 타입 표(다형성, 재귀, 패턴, 내장 함수, ADT), 타입 오류 메시지, 건전성(타입 검사를 통과한 `EvalTests` 예제는 실행 중 오류 없이 그 타입의 값이 됨), 타입 검사가 거부하는 동적 예제 목록, FsCheck 속성 |
+| `DiagnosticTests.fs` | `Diagnostics` | 타입 오류의 위치(문제가 된 식을 가리킴), 빠진 `match` 분기 경고와 값의 예, 가드, 경고가 없는 경우, 건전성(실행 중 `Match failure`가 나는 평가 예제는 모두 경고를 받음) |
 | `CompileTests.fs` | `Compile` | 생성한 MLIR, 값 표현(태그, 클로저 헤더), 클로저 변환(`Lower`), 컴파일한 실행 파일의 출력, **차등 테스트**(컴파일할 수 있는 `EvalTests` 예제를 인터프리터와 비교). LLVM/GC가 없으면 건너뜀(Skipped) |
 | `EvalTests.fs` | `Eval` | 식 계산 표(정수, 불리언, 함수, 재귀, 리스트, 문자열, 내장 함수, 튜플, 패턴 매칭, option, 사용자 정의 타입), `let`과 섀도잉, 클로저, 단락 평가, 타입 오류, 리스트·문자열·내장 함수·패턴 매칭·ADT 오류와 출력, 정의되지 않은 변수, 0으로 나누기, FsCheck 속성 테스트 |
 | `Main.fs` | — | 진입점 (`runTestsInAssemblyWithCLIArgs`) |
@@ -169,23 +170,24 @@ dotnet run --project tests/Calc.Tests -- --filter "Compile"
 | `match p with (a, a) -> a` | 파서 (패턴 안에 같은 이름) | `Error: Duplicate variable in pattern: a (line 1, column 14)` |
 | `"abc` | 렉서 (닫히지 않은 문자열) | `Error: Unterminated string (line 1, column 1)` |
 | `2147483648` | 렉서 (`int` 범위 밖) | `Error: Integer literal out of range: 2147483648 (line 1, column 1)` |
-| `y + 1` | 타입 추론 | AST 출력 후 `Error: Unbound variable: y` |
-| `let f x = f x in f 1` | 타입 추론 (`rec` 없이 재귀) | AST 출력 후 `Error: Unbound variable: f` |
-| `1 + true` | 타입 추론 | AST 출력 후 `Error: Type mismatch: expected int but got bool` |
-| `"a" + 1` | 타입 추론 | AST 출력 후 `Error: Type mismatch: expected string but got int` |
-| `if 1 then 2 else 3` | 타입 추론 | AST 출력 후 `Error: Type mismatch: expected bool but got int` |
-| `if true then 1 else false` | 타입 추론 (분기 타입이 다름) | AST 출력 후 `Error: Type mismatch: expected int but got bool` |
-| `[1; true]` | 타입 추론 (원소 타입이 다름) | AST 출력 후 `Error: Type mismatch: expected int list but got bool list` |
-| `1 < 2 < 3` | 타입 추론 (`(1 < 2) < 3`) | AST 출력 후 `Error: Type mismatch: expected int or string but got bool` |
-| `1 2` | 타입 추론 (함수가 아닌 값 호출) | AST 출력 후 `Error: Type mismatch: expected function but got int` |
-| `1 :: 2` | 타입 추론 (`::` 오른쪽이 리스트가 아님) | AST 출력 후 `Error: Type mismatch: expected int list but got int` |
-| `fun x -> x x` | 타입 추론 (무한 타입) | AST 출력 후 `Error: Type mismatch: cannot construct infinite type 'a = 'a -> 'b` |
-| `match Some 1 with Nome -> 0 \| _ -> 1` | 타입 추론 (모르는 생성자) | AST 출력 후 `Error: Unknown constructor: Nome` |
+| `y + 1` | 타입 추론 | AST 출력 후 `Error: Unbound variable: y (line 1, column 1)`, 그 아래 오류 줄과 `^` |
+| `let f x = f x in f 1` | 타입 추론 (`rec` 없이 재귀) | AST 출력 후 `Error: Unbound variable: f (line 1, column 11)`, 그 아래 오류 줄과 `^` |
+| `1 + true` | 타입 추론 | AST 출력 후 `Error: Type mismatch: expected int but got bool (line 1, column 5)`, 그 아래 오류 줄과 `^` |
+| `"a" + 1` | 타입 추론 | AST 출력 후 `Error: Type mismatch: expected string but got int (line 1, column 7)`, 그 아래 오류 줄과 `^` |
+| `if 1 then 2 else 3` | 타입 추론 | AST 출력 후 `Error: Type mismatch: expected bool but got int (line 1, column 4)`, 그 아래 오류 줄과 `^` |
+| `if true then 1 else false` | 타입 추론 (분기 타입이 다름) | AST 출력 후 `Error: Type mismatch: expected int but got bool (line 1, column 21)`, 그 아래 오류 줄과 `^` |
+| `[1; true]` | 타입 추론 (원소 타입이 다름) | AST 출력 후 `Error: Type mismatch: expected int list but got bool list (line 1, column 5)`, 그 아래 오류 줄과 `^` |
+| `1 < 2 < 3` | 타입 추론 (`(1 < 2) < 3`) | AST 출력 후 `Error: Type mismatch: expected int or string but got bool (line 1, column 1)`, 그 아래 오류 줄과 `^` |
+| `1 2` | 타입 추론 (함수가 아닌 값 호출) | AST 출력 후 `Error: Type mismatch: expected function but got int (line 1, column 1)`, 그 아래 오류 줄과 `^` |
+| `1 :: 2` | 타입 추론 (`::` 오른쪽이 리스트가 아님) | AST 출력 후 `Error: Type mismatch: expected int list but got int (line 1, column 6)`, 그 아래 오류 줄과 `^` |
+| `fun x -> x x` | 타입 추론 (무한 타입) | AST 출력 후 `Error: Type mismatch: cannot construct infinite type 'a = 'a -> 'b (line 1, column 10)`, 그 아래 오류 줄과 `^` |
+| `match Some 1 with Nome -> 0 \| _ -> 1` | 타입 추론 (모르는 생성자) | AST 출력 후 `Error: Unknown constructor: Nome (line 1, column 19)`, 그 아래 오류 줄과 `^` |
 | `--no-typecheck -e "1 + true"` | 평가 (동적 타입 검사) | AST 출력 후 `Error: Type error: expected int but got bool` |
 | `1 / 0` | 평가 | AST, `Type: int` 출력 후 `Error: Attempted to divide by zero.` |
 | `toInt "abc"` | 평가 (내장 함수) | AST, `Type: int` 출력 후 `Error: toInt: invalid integer: "abc"` |
 | `head []` | 평가 (내장 함수) | AST, `Type: 'a` 출력 후 `Error: head: empty list` |
-| `match 1 with 2 -> 0` | 평가 (일치하는 패턴 없음) | AST, `Type: int` 출력 후 `Error: Match failure: 1` |
+| `match 1 with 2 -> 0` | 평가 (일치하는 패턴 없음) | 표준 에러에 `Warning: this match is not exhaustive. Example of a value not matched: 0 (line 1, column 1)`, AST, `Type: int` 출력 후 `Error: Match failure: 1` |
+| `match Some 1 with Some x -> x` | 타입 추론 (빠진 분기) | 표준 에러에 `Warning: this match is not exhaustive. Example of a value not matched: None (line 1, column 1)`와 `^`. 실행은 계속해서 `Result: 1` |
 | `let rec loop n = if n = 0 then 0 else loop (n - 1) in loop 1000000` | 평가 (재귀가 너무 깊음) | `Stack overflow.` 후 프로세스 종료 (종료 코드 134) |
 
 모든 경우 종료 코드는 `1`입니다. 종료 코드는 `echo $?`로 확인할 수 있습니다.
@@ -195,7 +197,7 @@ dotnet run --project tests/Calc.Tests -- --filter "Compile"
 | 명령 | 기대 출력 | 종료 코드 |
 |---|---|---|
 | `--help`, `-h` | `USAGE: calc [--help] [--expr=<expr>] [--version] [--no-typecheck]`로 시작하는 사용법 | 0 |
-| `--version`, `-v` | `calc 0.23.0` (`Calc.fsproj`의 `<Version>`) | 0 |
+| `--version`, `-v` | `calc 0.24.0` (`Calc.fsproj`의 `<Version>`) | 0 |
 | `-e "(2+3)*4"` | `Result: 20` | 0 |
 | `--expr=7/2` | `Result: 3` | 0 |
 | `--expr "-5 + 2"` | `Result: -3` (`-`로 시작하는 식도 값으로 처리됨) | 0 |

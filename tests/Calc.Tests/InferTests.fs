@@ -14,7 +14,7 @@ let expectTypeError input message =
             (fun () -> typeOf input |> ignore)
             (fun ex ->
                 match ex with
-                | TypeError m -> Expect.equal m message input
+                | TypeError (m, _) -> Expect.equal m message input
                 | _ -> failtestf "TypeError 가 아님: %s: %s" (ex.GetType().Name) ex.Message)
     }
 

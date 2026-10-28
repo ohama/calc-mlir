@@ -78,20 +78,37 @@ let errorLocation (input: string) line column =
         [ sprintf "  %s | %s" gutter text
           sprintf "  %s | %s^" (String.replicate gutter.Length " ") padding ]
 
+/// 빠진 분기 경고: 표준 에러로, 오류와 같은 위치 표시. 실행은 계속함 (OCaml, F# 와 같음)
+let printWarnings (input: string) (warnings: Infer.Warning list) =
+    for w in warnings do
+        match w.Position with
+        | Some (line, column) ->
+            eprintfn "Warning: %s (line %d, column %d)" w.Message line column
+            errorLocation input line column |> List.iter (eprintfn "%s")
+        | None -> eprintfn "Warning: %s" w.Message
+
+/// 타입 검사: 경고를 출력하고 타입을 돌려줌. 추론도 식의 깊이만큼 재귀하므로 평가와 같은 큰 스택에서 실행
+let typecheckAndWarn (input: string) (ast: Ast.Expr) =
+    let t, warnings = runWithLargeStack (fun () -> Infer.typecheckWithWarnings ast)
+    printWarnings input warnings
+    t
+
 let run (typecheck: bool) (input: string) =
     try
         let ast = parse input
         printfn "AST:    %A" ast
         if typecheck then
-            // 추론도 식의 깊이만큼 재귀하므로 평가와 같은 큰 스택에서 실행
-            let t = runWithLargeStack (fun () -> Infer.typeToString (Infer.typecheck ast))
-            printfn "Type:   %s" t
+            printfn "Type:   %s" (Infer.typeToString (typecheckAndWarn input ast))
         let value = runWithLargeStack (fun () -> Eval.eval ast)
         printfn "Result: %s" (Eval.formatValue value)
         0
     with
     | Errors.SyntaxError (_, line, column) as ex ->
         eprintfn "Error: %s" ex.Message
+        errorLocation input line column |> List.iter (eprintfn "%s")
+        1
+    | Infer.TypeError (message, Some (line, column)) ->
+        eprintfn "Error: %s (line %d, column %d)" message line column
         errorLocation input line column |> List.iter (eprintfn "%s")
         1
     | ex ->
@@ -106,7 +123,7 @@ type CompileMode =
 let compile (mode: CompileMode) (input: string) =
     try
         let ast = parse input
-        runWithLargeStack (fun () -> Infer.typecheck ast) |> ignore
+        typecheckAndWarn input ast |> ignore
         let mlir = Codegen.emitProgram ast
         match mode with
         | EmitMlir ->
@@ -125,6 +142,10 @@ let compile (mode: CompileMode) (input: string) =
     with
     | Errors.SyntaxError (_, line, column) as ex ->
         eprintfn "Error: %s" ex.Message
+        errorLocation input line column |> List.iter (eprintfn "%s")
+        1
+    | Infer.TypeError (message, Some (line, column)) ->
+        eprintfn "Error: %s (line %d, column %d)" message line column
         errorLocation input line column |> List.iter (eprintfn "%s")
         1
     | ex ->
