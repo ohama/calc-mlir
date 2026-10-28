@@ -21,8 +21,10 @@
 | 15 | [guard-fsharp-core-semantics-in-builtins](guard-fsharp-core-semantics-in-builtins.md) | 내장 함수를 FSharp.Core 함수로 바로 구현하면 오버플로 검사, 예외 감싸기, 오류 메시지가 언어로 새어 나온다. 경계를 조사해 막는다 | 2026-10-28 |
 | 16 | [report-parse-error-positions-with-fsyacc](report-parse-error-positions-with-fsyacc.md) | fsyacc의 기본 오류는 위치 없는 "parse error"다. parse_error_rich로 구분되는 예외를 던지고, 위치는 lexbuf의 StartPos/EndPos에서 읽는다 | 2026-10-28 |
 | 17 | [implement-pattern-matching-evaluator](implement-pattern-matching-evaluator.md) | 패턴 매칭 평가는 matchPattern: Pattern -> Value -> Env -> Env option 하나로 끝난다. 분기 선택, 가드, let 분해가 모두 이 함수를 쓴다 | 2026-10-28 |
+| 18 | [distinguish-constructors-from-variables-in-patterns](distinguish-constructors-from-variables-in-patterns.md) | 패턴의 이름은 생성자일 수도 변수일 수도 있다. 대소문자로 구분하고 모르는 생성자는 오류로 만들어 오타가 catch-all이 되는 것을 막는다 | 2026-10-28 |
+| 19 | [represent-adt-values-in-dynamic-interpreter](represent-adt-values-in-dynamic-interpreter.md) | ADT 값은 (타입 이름, 생성자, 인자) 데이터로, 생성자는 환경에 든 보통 값으로 표현한다. 생성자를 함수처럼 넘길 수 있다 | 2026-10-28 |
 
-추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 → 16 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match → 오류 위치), 17 (패턴 매칭), 8 → 9 → 13 → 14 → 15 (함수 평가, 재귀 한계, 내장 함수), 4 → 6 (테스트), 5 (릴리스)
+추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 → 16 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match → 오류 위치), 17 → 18 → 19 (패턴 매칭, 생성자, ADT), 8 → 9 → 13 → 14 → 15 (함수 평가, 재귀 한계, 내장 함수), 4 → 6 (테스트), 5 (릴리스)
 
 ---
-총 17개 | 업데이트: 2026-10-28
+총 19개 | 업데이트: 2026-10-28
