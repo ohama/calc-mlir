@@ -20,8 +20,18 @@ typedef int64_t value;
 
 /* 힙 블록: 첫 단어가 헤더 = 종류 | (뒤따르는 단어 수 << 8). Codegen.closureHeader 와 같음 */
 #define CALC_KIND_CLOSURE 1 /* [헤더, 코드 포인터, 캡처한 값...] */
+#define CALC_KIND_STRING 2  /* [헤더, 길이, UTF-16 코드 단위...] (.NET string 과 같은 단위) */
 #define CALC_HEADER(v) (((int64_t *)(v))[0])
 #define CALC_KIND(v) (CALC_HEADER(v) & 0xff)
+#define CALC_IS_KIND(v, kind) (CALC_IS_PTR(v) && CALC_KIND(v) == (kind))
+
+typedef struct {
+    int64_t header;
+    int64_t length; /* UTF-16 코드 단위 수 */
+    uint16_t units[];
+} calc_string;
+
+#define CALC_STRING(v) ((calc_string *)(v))
 
 #define CALC_TRUE ((value)11)
 #define CALC_FALSE ((value)3)

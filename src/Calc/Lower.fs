@@ -29,6 +29,7 @@ let rec private lower (state: State) (expr: Expr) : CExpr =
     match expr with
     | Number n -> CInt n
     | Bool b -> CBool b
+    | Str s -> CString s
     | Var name -> CVar name
     | Let (name, value, body) -> CLet (name, lower state value, lower state body)
     | If (c, t, e) -> CIf (lower state c, lower state t, lower state e)

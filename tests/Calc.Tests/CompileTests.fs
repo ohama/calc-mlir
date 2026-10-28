@@ -90,8 +90,8 @@ let tests =
             }
             test "지원하지 않는 기능은 NotSupported" {
                 Expect.throwsC
-                    (fun () -> Codegen.emitProgram (Program.parse "\"a\"") |> ignore)
-                    (fun ex -> Expect.equal ex.Message "Not supported by the compiler yet: Str" "")
+                    (fun () -> Codegen.emitProgram (Program.parse "[1]") |> ignore)
+                    (fun ex -> Expect.equal ex.Message "Not supported by the compiler yet: Cons" "")
             }
             test "클로저는 calc_alloc 으로 할당하고 간접 호출" {
                 let mlir = Codegen.emitProgram (Program.parse "let k = 10 in let add = fun x -> x + k in add 32")
@@ -99,6 +99,21 @@ let tests =
                 Expect.stringContains mlir "llvm.call @calc_alloc(" ""
                 Expect.stringContains mlir "llvm.mlir.addressof @lambda_0" ""
                 Expect.stringContains mlir ": !llvm.ptr, (!llvm.ptr, i64) -> i64" "간접 호출"
+            }
+            test "문자열 상수는 8바이트 정렬 전역, 같은 내용은 하나" {
+                let mlir = Codegen.emitProgram (Program.parse "\"hi\" + \"hi\" + \"\"")
+                Expect.stringContains
+                    mlir
+                    "llvm.mlir.global internal constant @str_0() {addr_space = 0 : i32, alignment = 8 : i64} : !llvm.struct<(i64, i64, array<2 x i16>)>"
+                    ""
+                Expect.stringContains mlir "dense<[104, 105]> : tensor<2xi16>" "UTF-16 코드 단위"
+                Expect.stringContains mlir "@str_1() {addr_space = 0 : i32, alignment = 8 : i64} : !llvm.struct<(i64, i64)>" "빈 문자열"
+                Expect.isFalse (mlir.Contains "@str_2") "\"hi\" 는 한 번만"
+            }
+            test "문자열 헤더: 종류 2, 길이 칸 + 코드 단위를 담는 단어" {
+                Expect.equal (Codegen.stringHeader 0) 0x102L ""
+                Expect.equal (Codegen.stringHeader 4) 0x202L "8바이트 = 1단어"
+                Expect.equal (Codegen.stringHeader 5) 0x302L "10바이트 = 2단어"
             }
             test "클로저 헤더: 종류 1, 뒤따르는 단어 수" {
                 Expect.equal (Codegen.closureHeader 0) 0x101L "코드 포인터만"
@@ -242,6 +257,34 @@ let tests =
                     ("", "Error: Type error: expected int, bool, string, list, tuple or data but got function\n", 1)
                     "함수끼리 비교는 실행 중 오류"
             }
+            test "문자열 출력: 인터프리터와 같은 따옴표와 이스케이프" {
+                Expect.equal (compileAndRun "\"hello\"") ("\"hello\"\n", "", 0) ""
+                Expect.equal (compileAndRun "\"\"") ("\"\"\n", "", 0) "빈 문자열"
+                Expect.equal (compileAndRun "\"q\\\" b\\\\ n\\n t\\t r\\r\"") ("\"q\\\" b\\\\ n\\n t\\t r\\r\"\n", "", 0) ""
+            }
+            test "문자열 출력: UTF-16 을 UTF-8 로 (대리 쌍 포함)" {
+                Expect.equal (compileAndRun "\"한글 😀\"") ("\"한글 😀\"\n", "", 0) ""
+            }
+            test "문자열 연결" {
+                Expect.equal (compileAndRun "\"a\" + \"b\" + \"\"") ("\"ab\"\n", "", 0) ""
+                Expect.equal (compileAndRun "let greet name = \"Hello, \" + name + \"!\" in greet \"Calc\"") ("\"Hello, Calc!\"\n", "", 0) ""
+                Expect.equal
+                    (compileAndRun "let rec rep s n = if n = 0 then \"\" else s + rep s (n - 1) in rep \"ab\" 5")
+                    ("\"ababababab\"\n", "", 0)
+                    ""
+            }
+            test "문자열 비교: 내용 비교와 ordinal 순서" {
+                Expect.equal (compileAndRun "\"abc\" = \"abc\" && \"abc\" <> \"abd\" && \"\" = \"\"") ("true\n", "", 0) ""
+                Expect.equal (compileAndRun "\"ab\" < \"abc\" && \"B\" < \"a\" && \"Z\" < \"é\"") ("true\n", "", 0) "대문자가 소문자보다 앞 (문화권 순서가 아님)"
+                // UTF-16 코드 단위 순서: 😀 는 D83D DE00 이라 U+FFFF 보다 앞 (코드 포인트 순서와 반대)
+                Expect.equal (compileAndRun "\"😀\" < \"\uFFFF\"") ("true\n", "", 0) ""
+            }
+            test "문자열 연결 10만 번" {
+                Expect.equal
+                    (compileAndRun "let rec loop n = if n = 0 then \"done\" else (let s = \"abc\" + \"def\" in if s = \"abcdef\" then loop (n - 1) else \"bad\") in loop 100000")
+                    ("\"done\"\n", "", 0)
+                    ""
+            }
             test "단락 평가: 오른쪽은 계산하지 않음" {
                 Expect.equal (compileAndRun "false && 1 / 0 = 0") ("false\n", "", 0) ""
                 Expect.equal (compileAndRun "true || 1 / 0 = 0") ("true\n", "", 0) ""
@@ -257,7 +300,7 @@ let tests =
             let actual = inputs |> Array.ofList |> Array.Parallel.map compileAndRun
             for input, result in Array.zip (Array.ofList inputs) actual do
                 Expect.equal result (interpret input) input
-            // 단계가 올라갈수록 늘어남 (단계 3: 정수, 불리언, if, let, 함수와 클로저)
-            Expect.isGreaterThanOrEqual inputs.Length 79 "컴파일한 예제 수"
+            // 단계가 올라갈수록 늘어남 (단계 4: 정수, 불리언, if, let, 함수와 클로저, 문자열)
+            Expect.isGreaterThanOrEqual inputs.Length 96 "컴파일한 예제 수"
         }
     ]

@@ -2,7 +2,7 @@
 
 `calc --compile`이 소스 코드에서 실행 파일을 만드는 과정을 예제 하나로 따라갑니다. 설계의 이유와 단계별 계획은 [compiler-design.md](compiler-design.md)에 있습니다. 이 문서는 **지금 코드가 실제로 하는 일**을 설명합니다.
 
-이 문서의 출력은 모두 직접 실행해서 얻었습니다. 2장의 예제는 단계 2(0.17.0), 6장의 클로저는 단계 3 기준입니다. 환경은 macOS arm64, Homebrew LLVM 22.1.7, bdw-gc 8.2.12입니다.
+이 문서의 출력은 모두 직접 실행해서 얻었습니다. 2장의 예제는 단계 2(0.17.0), 6장의 클로저는 단계 3, 7장의 문자열은 단계 4 기준입니다. 환경은 macOS arm64, Homebrew LLVM 22.1.7, bdw-gc 8.2.12입니다.
 
 ## 1. 큰 그림
 
@@ -311,6 +311,38 @@ define i64 @calc_main() {
 ### 깊은 재귀
 
 `clang`에 `-Wl,-stack_size,0x20000000`을 넘겨 메인 스레드 스택을 512MB로 만듭니다. 인터프리터가 평가에 쓰는 큰 스택 스레드와 같은 크기입니다. 기본 8MB에서는 깊이 100만 재귀가 세그폴트(종료 코드 139)로 죽고, 512MB에서는 끝까지 갑니다. 이 옵션은 macOS `ld` 전용입니다.
+
+## 7. 문자열 (단계 4)
+
+```
+"hi" + "!"
+```
+
+문자열 상수는 전역 상수 블록이 됩니다. 같은 내용은 하나만 만듭니다.
+
+```mlir
+llvm.mlir.global internal constant @str_0() {addr_space = 0 : i32, alignment = 8 : i64}
+    : !llvm.struct<(i64, i64, array<2 x i16>)> {
+  ...                                    // [헤더 514 = 2 | (2 << 8), 길이 2, 'h' 'i']
+  %a = llvm.mlir.constant(dense<[104, 105]> : tensor<2xi16>) : !llvm.array<2 x i16>
+  ...
+}
+
+llvm.func @calc_main() -> i64 {
+  %v1 = llvm.mlir.addressof @str_0 : !llvm.ptr
+  %v2 = llvm.ptrtoint %v1 : !llvm.ptr to i64           // 값 = 전역의 주소 (8바이트 정렬)
+  %v3 = llvm.mlir.addressof @str_1 : !llvm.ptr
+  %v4 = llvm.ptrtoint %v3 : !llvm.ptr to i64
+  %v5 = llvm.call @calc_add(%v2, %v4) : (i64, i64) -> i64   // 런타임이 태그와 헤더로 연결을 고름
+  llvm.return %v5 : i64
+}
+```
+
+- **저장:** 코드 단위는 .NET `string`과 같은 UTF-16입니다. 그래서 비교(`String.CompareOrdinal`)가 코드 단위 순서로 인터프리터와 같습니다. 예를 들어 `"😀" < "\uFFFF"`는 `true`입니다.
+- **출력:** 런타임이 UTF-8로 바꿉니다. 짝이 없는 대리 코드 단위는 U+FFFD가 됩니다.
+- **상수:** 전역이라 GC가 관리하지 않습니다.
+- **`+`의 결과:** `GC_MALLOC_ATOMIC`으로 할당합니다. 블록 안에 포인터가 없으므로 GC가 내용을 훑지 않습니다.
+- **출력 형식:** `Eval.formatValue`와 같습니다. 따옴표로 감싸고 `\\ \" \n \t \r`만 이스케이프합니다.
 
 ## 관련 문서
 

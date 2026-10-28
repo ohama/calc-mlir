@@ -2,7 +2,7 @@
 
 Calc 언어를 인터프리터(`Eval`) 대신 **네이티브 실행 파일로 컴파일**하기 위한 설계 문서입니다. 구현은 간단한 것부터 단계별로 진행합니다(8장). 각 단계는 그 자체로 동작하고 테스트되는 상태로 끝납니다.
 
-**진행 상황**: 단계 3 완료 (정수·불리언 연산, 비교, 단락 평가, `if`, `let`, 함수와 클로저, `let rec`). 다음은 단계 4(문자열).
+**진행 상황**: 단계 4 완료 (정수·불리언 연산, 비교, 단락 평가, `if`, `let`, 함수와 클로저, `let rec`, 문자열 리터럴과 `+ = <`). 다음은 단계 5(리스트, 튜플, 패턴 매칭).
 
 지금 코드가 실제로 하는 일(예제 하나로 따라가는 흐름, 진입점, 런타임 링크)은 [compiler-architecture.md](compiler-architecture.md)에 있습니다.
 
@@ -126,7 +126,7 @@ clang -O2 -Wno-override-module prog.ll runtime.c \
 
 | 종류 | 필드 |
 |---|---|
-| `STRING` | 길이, UTF-16 코드 단위 배열 |
+| `STRING` | 길이, UTF-16 코드 단위 배열. 헤더는 `2 \| (뒤따르는 단어 수 << 8)`. 상수는 8바이트 정렬 전역(`llvm.mlir.global`, GC 대상 아님), 연결 결과는 `GC_MALLOC_ATOMIC`(안에 포인터가 없어 GC가 내용을 훑지 않음) |
 | `CONS` | head, tail |
 | `TUPLE` | 원소 n개 |
 | `DATA` | 생성자 설명자 포인터(이름, 타입 이름, 번호), 인자(있으면) |
@@ -198,12 +198,13 @@ clang -O2 -Wno-override-module prog.ll runtime.c \
 
 ## 5. Core IR
 
-`Lower`가 만드는 중간 표현입니다(`src/Calc/Core.fs`). 클로저 변환이 끝나서 **모든 함수가 최상위**에 있습니다. 아래는 단계 3까지 구현한 모양이고, 문자열·리스트·패턴은 해당 단계에서 경우를 더합니다.
+`Lower`가 만드는 중간 표현입니다(`src/Calc/Core.fs`). 클로저 변환이 끝나서 **모든 함수가 최상위**에 있습니다. 아래는 단계 4까지 구현한 모양이고, 리스트·패턴·생성자는 해당 단계에서 경우를 더합니다.
 
 ```fsharp
 type CExpr =
     | CInt of int
     | CBool of bool
+    | CString of string               // 전역 상수 블록 (같은 내용은 하나)
     | CVar of string                  // 지역 변수, 인자, 캡처한 변수, 자기 자신
     | CLet of string * CExpr * CExpr
     | CIf of CExpr * CExpr * CExpr    // && 와 || 도 여기로

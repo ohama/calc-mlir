@@ -14,11 +14,53 @@ let tagBool (b: bool) = if b then (1L <<< 3) ||| 3L else 3L
 
 /// 힙 블록의 첫 단어: 종류 | (뒤따르는 단어 수 << 8). runtime.h 의 CALC_KIND_* 와 같음
 let kindClosure = 1L
+let kindString = 2L
 
 let closureHeader (capturedCount: int) = kindClosure ||| (int64 (1 + capturedCount) <<< 8)
 
+/// 문자열 블록 = [헤더, 길이, UTF-16 코드 단위...]. 뒤따르는 단어 수는 길이 칸 + 코드 단위를 담는 단어
+let stringHeader (length: int) = kindString ||| (int64 (1 + (2 * length + 7) / 8) <<< 8)
+
+/// 문자열 상수를 모아 전역으로 만듦 (같은 내용은 하나만). 프로그램 하나에 하나
+type private StringTable() =
+    let names = System.Collections.Generic.Dictionary<string, string>()
+    let order = ResizeArray<string>()
+
+    member _.NameOf(s: string) =
+        match names.TryGetValue s with
+        | true, name -> name
+        | _ ->
+            let name = sprintf "str_%d" names.Count
+            names[s] <- name
+            order.Add s
+            name
+
+    member _.Entries = order |> Seq.map (fun s -> names[s], s) |> List.ofSeq
+
+/// 문자열 상수 전역: 8바이트 정렬이라 주소가 곧 값 (하위 3비트 000). 상수라 GC 대상이 아님
+let private emitStringGlobal (sb: StringBuilder) (name: string, s: string) =
+    let units = s.ToCharArray() |> Array.map (fun c -> int16 c)
+    let ty =
+        if units.Length = 0 then "!llvm.struct<(i64, i64)>"
+        else sprintf "!llvm.struct<(i64, i64, array<%d x i16>)>" units.Length
+    let line (text: string) = sb.AppendLine(text) |> ignore
+    line (sprintf "llvm.mlir.global internal constant @%s() {addr_space = 0 : i32, alignment = 8 : i64} : %s {" name ty)
+    line (sprintf "  %%0 = llvm.mlir.undef : %s" ty)
+    line (sprintf "  %%h = llvm.mlir.constant(%d : i64) : i64" (stringHeader units.Length))
+    line (sprintf "  %%1 = llvm.insertvalue %%h, %%0[0] : %s" ty)
+    line (sprintf "  %%n = llvm.mlir.constant(%d : i64) : i64" units.Length)
+    line (sprintf "  %%2 = llvm.insertvalue %%n, %%1[1] : %s" ty)
+    if units.Length = 0 then
+        line (sprintf "  llvm.return %%2 : %s" ty)
+    else
+        let values = units |> Array.map string |> String.concat ", "
+        line (sprintf "  %%a = llvm.mlir.constant(dense<[%s]> : tensor<%dxi16>) : !llvm.array<%d x i16>" values units.Length units.Length)
+        line (sprintf "  %%3 = llvm.insertvalue %%a, %%2[2] : %s" ty)
+        line (sprintf "  llvm.return %%3 : %s" ty)
+    line "}"
+
 /// 함수 하나의 본문을 만드는 동안의 상태: SSA 이름, 출력 줄, 들여쓰기(scf.if 영역)
-type private FunctionBuilder() =
+type private FunctionBuilder(strings: StringTable) =
     let lines = StringBuilder()
     let mutable next = 0
     let mutable depth = 1
@@ -30,6 +72,7 @@ type private FunctionBuilder() =
     member _.Emit(line: string) =
         lines.Append(String.replicate depth "  ").AppendLine(line) |> ignore
 
+    member _.Strings = strings
     member _.Indent() = depth <- depth + 1
     member _.Dedent() = depth <- depth - 1
     member _.Text = lines.ToString()
@@ -124,6 +167,12 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
     match expr with
     | CInt n -> emitConst fb "i64" (tagInt n)
     | CBool b -> emitConst fb "i64" (tagBool b)
+    | CString s ->
+        let address = fb.Fresh()
+        fb.Emit(sprintf "%s = llvm.mlir.addressof @%s : !llvm.ptr" address (fb.Strings.NameOf s))
+        let r = fb.Fresh()
+        fb.Emit(sprintf "%s = llvm.ptrtoint %s : !llvm.ptr to i64" r address)
+        r
     // let 은 새 코드가 없음: 값의 SSA 이름을 환경에 넣을 뿐. 섀도잉은 Map.add 가 덮어씀
     | CLet (name, value, body) ->
         let v = emitExpr fb env value
@@ -198,8 +247,8 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
         r
 
 /// 최상위 함수 하나: 입구에서 캡처한 값을 꺼내 환경을 만들고 본문을 생성
-let private emitFunction (sb: StringBuilder) (f: CFunction) =
-    let fb = FunctionBuilder()
+let private emitFunction (strings: StringTable) (sb: StringBuilder) (f: CFunction) =
+    let fb = FunctionBuilder(strings)
     let captured =
         f.Captured
         |> List.mapi (fun i name ->
@@ -223,8 +272,12 @@ let private emitFunction (sb: StringBuilder) (f: CFunction) =
 /// 프로그램 전체: 클로저마다 최상위 함수, 식 하나를 계산하는 @calc_main, 결과를 출력하는 @main
 let emitProgram (expr: Ast.Expr) : string =
     let program = Lower.lowerProgram expr
-    let fb = FunctionBuilder()
+    let strings = StringTable()
+    let fb = FunctionBuilder(strings)
     let result = emitExpr fb Map.empty program.Main
+    // 함수 본문을 먼저 만들어야 그 안의 문자열 상수도 모임
+    let functions = StringBuilder()
+    program.Functions |> List.iter (emitFunction strings functions)
     let sb = StringBuilder()
     let line (s: string) = sb.AppendLine(s) |> ignore
     line "// Calc 컴파일러가 만든 MLIR. 값은 i64 하나 (docs/compiler-design.md D3)"
@@ -237,7 +290,9 @@ let emitProgram (expr: Ast.Expr) : string =
     line "llvm.func @calc_eq(i64, i64) -> i64"
     line "llvm.func @calc_compare(i64, i64) -> i32"
     line ""
-    program.Functions |> List.iter (emitFunction sb)
+    strings.Entries |> List.iter (emitStringGlobal sb)
+    if not strings.Entries.IsEmpty then line ""
+    sb.Append(functions) |> ignore
     line "llvm.func @calc_main() -> i64 {"
     sb.Append(fb.Text) |> ignore
     line (sprintf "  llvm.return %s : i64" result)
