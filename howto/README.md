@@ -44,8 +44,10 @@
 | 38 | [compile-adt-constructors-with-name-pointers](compile-adt-constructors-with-name-pointers.md) | 타입 검사를 통과했다면 생성자 값에는 이름 포인터 하나면 충분하다. 인자 없는 생성자는 정적 블록, 적용 위치는 바로 블록, 값 위치만 클로저. 런타임도 만드는 Some/None 의 이름은 런타임 전역 | 2026-10-28 |
 | 39 | [generate-unicode-tables-from-dotnet-for-c-runtime](generate-unicode-tables-from-dotnet-for-c-runtime.md) | C의 towupper는 로캘에 따라 다르다. .NET에서 모든 코드 포인트의 대소문자·공백 표를 생성해 C 헤더로 넣고, 테스트가 표와 지금 .NET을 비교한다 | 2026-10-28 |
 | 40 | [resolve-builtins-by-scope-when-compiling](resolve-builtins-by-scope-when-compiling.md) | 내장 함수는 가릴 수 있으므로 범위에 없는 이름만 내장 함수다. 다 모인 호출은 직접, 나머지는 커링 클로저(클로저 변환이 만들어 줌) | 2026-10-28 |
+| 41 | [track-source-positions-without-changing-ast](track-source-positions-without-changing-ast.md) | AST에 위치 필드를 넣지 않고, 노드 참조를 키로 하는 ConditionalWeakTable에 시작 위치를 기록한다. 싱글턴 노드와 ResultRange 시작 위치를 조심한다 | 2026-10-28 |
+| 42 | [check-match-exhaustiveness-with-maranget](check-match-exhaustiveness-with-maranget.md) | 빠진 match 분기는 Maranget의 유용성 검사로 판정하고 값의 예도 만든다. 가드는 세지 않고, Match failure 예제로 건전성을 테스트한다 | 2026-10-28 |
 
-추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 → 16 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match → 오류 위치), 17 → 18 → 19 (패턴 매칭, 생성자, ADT), 20 → 21 → 22 (타입 추론), 8 → 9 → 13 → 14 → 15 (함수 평가, 재귀 한계, 내장 함수), 23 → 24 → 25 → 26 → 27 → 28 → 29 → 30 → 31 → 32 → 33 → 34 → 35 → 36 → 37 → 38 → 39 → 40 (네이티브 컴파일러), 4 → 6 (테스트), 5 (릴리스)
+추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 → 16 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match → 오류 위치), 17 → 18 → 19 (패턴 매칭, 생성자, ADT), 20 → 21 → 22 → 41 → 42 (타입 추론, 오류 위치, 빠진 분기), 8 → 9 → 13 → 14 → 15 (함수 평가, 재귀 한계, 내장 함수), 23 → 24 → 25 → 26 → 27 → 28 → 29 → 30 → 31 → 32 → 33 → 34 → 35 → 36 → 37 → 38 → 39 → 40 (네이티브 컴파일러), 4 → 6 (테스트), 5 (릴리스)
 
 ---
-총 40개 | 업데이트: 2026-10-28
+총 42개 | 업데이트: 2026-10-28
