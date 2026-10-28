@@ -120,7 +120,7 @@ and readString (sb: StringBuilder) (start: Position) = parse
 
 // $" 다음부터 닫는 " 까지. 글자는 포맷 문자열로 모으고(% 는 %%), 구멍(중괄호 안의 식)은 %A 자리,
 // 앞에 %d 처럼 지정자를 붙이면 그 지정자 자리. 중괄호를 두 번 쓰면 중괄호 글자 (F# 와 같음). holes 는 거꾸로 모은 구멍의 식.
-// (fslex 는 규칙 부분의 주석 속 중괄호도 코드로 읽으므로 주석에 중괄호를 쓰지 않음)
+// (fslex 는 규칙 인자의 타입 표기로 이름 하나만 받음: Ast.Expr list 나 list<_> 는 parse error 라서 holes 는 표기하지 않음)
 and readInterpolated (sb: StringBuilder) holes (start: Position) = parse
     | '"'           { lexbuf.StartPos <- start; INTERP (sb.ToString(), List.rev holes) }
     | '\\' '"'      { sb.Append('\"') |> ignore; readInterpolated sb holes start lexbuf }
