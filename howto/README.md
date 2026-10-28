@@ -16,8 +16,10 @@
 | 10 | [handle-nested-match-ambiguity-in-fsyacc](handle-nested-match-ambiguity-in-fsyacc.md) | 분기 수가 자유로운 match는 중첩될 때 dangling else와 같은 충돌을 만든다. 분기 수를 고정하거나 %prec로 shift를 명시한다 | 2026-10-28 |
 | 11 | [lex-string-literals-with-fslex](lex-string-literals-with-fslex.md) | 문자열 리터럴은 두 번째 렉서 규칙(and readString sb = parse)으로 한 글자씩 모은다. 이스케이프 규칙 순서와 eof 처리가 핵심이다 | 2026-10-28 |
 | 12 | [escape-quotes-and-braces-in-fslex-actions](escape-quotes-and-braces-in-fslex-actions.md) | fslex/fsyacc는 액션 코드를 자체 규칙으로 훑는다. 문자 리터럴 '"'와 '}'는 '\"'와 '\u007D'로 쓴다 | 2026-10-28 |
+| 13 | [implement-builtins-as-data-values](implement-builtins-as-data-values.md) | 내장 함수를 F# 함수로 Value에 넣으면 equality가 깨진다. 이름과 모은 인자만 저장하는 데이터로 표현한다 | 2026-10-28 |
+| 14 | [use-ordinal-string-apis-for-language-builtins](use-ordinal-string-apis-for-language-builtins.md) | .NET 문자열 API 일부는 기본이 문화권 비교다. 언어 내장 함수에는 Ordinal과 Invariant를 명시한다 | 2026-10-28 |
 
-추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match), 8 → 9 (함수 평가와 재귀 한계), 4 → 6 (테스트), 5 (릴리스)
+추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match), 8 → 9 → 13 → 14 (함수 평가, 재귀 한계, 내장 함수), 4 → 6 (테스트), 5 (릴리스)
 
 ---
-총 12개 | 업데이트: 2026-10-28
+총 14개 | 업데이트: 2026-10-28
