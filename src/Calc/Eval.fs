@@ -9,24 +9,39 @@ type Value =
     | VClosure of param: string * body: Expr * env: Map<string, Value>
     /// let rec name param = body. 호출할 때 name 을 자기 자신으로 환경에 추가
     | VRecClosure of name: string * param: string * body: Expr * env: Map<string, Value>
+    | VList of Value list
 
 type Env = Map<string, Value>
 
-let formatValue value =
+let rec formatValue value =
     match value with
     | VInt n -> string n
     | VBool true -> "true"
     | VBool false -> "false"
     | VClosure _ | VRecClosure _ -> "<fun>"
+    | VList items -> "[" + (items |> List.map formatValue |> String.concat "; ") + "]"
 
 let typeName value =
     match value with
     | VInt _ -> "int"
     | VBool _ -> "bool"
     | VClosure _ | VRecClosure _ -> "function"
+    | VList _ -> "list"
 
 let typeError expected value =
     failwithf "Type error: expected %s but got %s" expected (typeName value)
+
+/// = 와 <> 는 같은 타입끼리만 비교 가능. 리스트는 원소를 차례로 비교
+let rec valueEquals a b =
+    match a, b with
+    | VInt x, VInt y -> x = y
+    | VBool x, VBool y -> x = y
+    | VList xs, VList ys ->
+        List.length xs = List.length ys && List.forall2 valueEquals xs ys
+    | VInt _, v -> typeError "int" v
+    | VBool _, v -> typeError "bool" v
+    | VList _, v -> typeError "list" v
+    | v, _ -> typeError "int, bool or list" v
 
 let rec evalIn (env: Env) expr =
     match expr with
@@ -64,6 +79,14 @@ let rec evalIn (env: Env) expr =
     | And (a, b) -> VBool (evalBool env a && evalBool env b)
     | Or (a, b) -> VBool (evalBool env a || evalBool env b)
     | Not e -> VBool (not (evalBool env e))
+    | Nil -> VList []
+    | Cons (head, tail) ->
+        let h = evalIn env head
+        VList (h :: evalList env tail)
+    | Match (scrutinee, nilCase, head, tail, consCase) ->
+        match evalList env scrutinee with
+        | [] -> evalIn env nilCase
+        | h :: t -> evalIn (env |> Map.add head h |> Map.add tail (VList t)) consCase
 
 and evalInt env expr =
     match evalIn env expr with
@@ -75,14 +98,14 @@ and evalBool env expr =
     | VBool b -> b
     | v -> typeError "bool" v
 
-/// = 와 <> 는 같은 타입끼리만 비교 가능
+and evalList env expr =
+    match evalIn env expr with
+    | VList items -> items
+    | v -> typeError "list" v
+
 and evalEquals env a b =
-    match evalIn env a, evalIn env b with
-    | VInt x, VInt y -> x = y
-    | VBool x, VBool y -> x = y
-    | VInt _, v -> typeError "int" v
-    | VBool _, v -> typeError "bool" v
-    | v, _ -> typeError "int or bool" v
+    let x = evalIn env a
+    valueEquals x (evalIn env b)
 
 and apply fv av =
     match fv with

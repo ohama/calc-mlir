@@ -86,6 +86,29 @@ let tests =
         test "키워드로 시작하는 식별자: funny, record" {
             Expect.equal (tokens "funny record") [ IDENT "funny"; IDENT "record"; EOF ] ""
         }
+        test "리스트 토큰" {
+            Expect.equal
+                (tokens "[1; 2] :: []")
+                [ LBRACKET; NUMBER 1; SEMI; NUMBER 2; RBRACKET; CONS; LBRACKET; RBRACKET; EOF ]
+                ""
+        }
+        test "match 키워드와 |" {
+            Expect.equal
+                (tokens "match xs with | h :: t -> h")
+                [ MATCH; IDENT "xs"; WITH; BAR; IDENT "h"; CONS; IDENT "t"; ARROW; IDENT "h"; EOF ]
+                ""
+        }
+        test "| 와 || 구분 (가장 긴 일치)" {
+            Expect.equal (tokens "| ||") [ BAR; OR; EOF ] ""
+        }
+        test "키워드로 시작하는 식별자: matches, without" {
+            Expect.equal (tokens "matches without") [ IDENT "matches"; IDENT "without"; EOF ] ""
+        }
+        test ": 하나는 알 수 없는 문자" {
+            Expect.throwsC
+                (fun () -> tokens "1 : 2" |> ignore)
+                (fun ex -> Expect.equal ex.Message "Unexpected character: :" "")
+        }
         test "& 하나는 알 수 없는 문자" {
             Expect.throwsC
                 (fun () -> tokens "1 & 2" |> ignore)

@@ -228,6 +228,81 @@ let tests =
                 (LetRec ("f", "a", Lambda ("b", Var "a"), Var "f"))
                 ""
         }
+        test "빈 리스트" {
+            Expect.equal (parse "[]") Nil ""
+        }
+        test "리스트 리터럴은 Cons 로 바뀜" {
+            Expect.equal
+                (parse "[1; 2]")
+                (Cons (Number 1, Cons (Number 2, Nil)))
+                ""
+        }
+        test ":: 는 오른쪽 결합" {
+            Expect.equal
+                (parse "1 :: 2 :: []")
+                (Cons (Number 1, Cons (Number 2, Nil)))
+                ""
+        }
+        test ":: 는 + 보다 약함" {
+            Expect.equal
+                (parse "1 + 2 :: xs")
+                (Cons (Add (Number 1, Number 2), Var "xs"))
+                ""
+        }
+        test ":: 는 비교보다 강함" {
+            Expect.equal
+                (parse "x :: xs = ys")
+                (Equal (Cons (Var "x", Var "xs"), Var "ys"))
+                ""
+        }
+        test "함수 호출이 :: 보다 우선" {
+            Expect.equal
+                (parse "f x :: g y")
+                (Cons (App (Var "f", Var "x"), App (Var "g", Var "y")))
+                ""
+        }
+        test "리스트는 함수 인자가 될 수 있음 (Atom)" {
+            Expect.equal (parse "f [1]") (App (Var "f", Cons (Number 1, Nil))) ""
+        }
+        test "리스트 원소는 식" {
+            Expect.equal
+                (parse "[1 + 2; f x]")
+                (Cons (Add (Number 1, Number 2), Cons (App (Var "f", Var "x"), Nil)))
+                ""
+        }
+        test "match" {
+            Expect.equal
+                (parse "match xs with [] -> 0 | h :: t -> h")
+                (Match (Var "xs", Number 0, "h", "t", Var "h"))
+                ""
+        }
+        test "match: 첫 | 생략 가능, 분기 순서 무관" {
+            let expected = Match (Var "xs", Number 0, "h", "t", Var "h")
+            Expect.equal (parse "match xs with | [] -> 0 | h :: t -> h") expected ""
+            Expect.equal (parse "match xs with h :: t -> h | [] -> 0") expected ""
+            Expect.equal (parse "match xs with | h :: t -> h | [] -> 0") expected ""
+        }
+        test "match 마지막 분기 본문은 오른쪽으로 최대한 확장" {
+            Expect.equal
+                (parse "match xs with [] -> 0 | h :: t -> h + 1")
+                (Match (Var "xs", Number 0, "h", "t", Add (Var "h", Number 1)))
+                ""
+        }
+        test "중첩 match: 분기가 둘뿐이므로 괄호 없이 가능" {
+            Expect.equal
+                (parse "match a with [] -> match b with [] -> 1 | x :: y -> 2 | h :: t -> 3")
+                (Match (Var "a", Match (Var "b", Number 1, "x", "y", Number 2), "h", "t", Number 3))
+                ""
+        }
+        test "match 분기가 하나면 parse error" {
+            Expect.throws (fun () -> parse "match xs with [] -> 0" |> ignore) ""
+        }
+        test "같은 종류 분기 둘은 parse error" {
+            Expect.throws (fun () -> parse "match xs with [] -> 0 | [] -> 1" |> ignore) ""
+        }
+        test "리스트 끝 ; 는 parse error" {
+            Expect.throws (fun () -> parse "[1;]" |> ignore) ""
+        }
         test "인자 없는 let rec 은 parse error" {
             Expect.throws (fun () -> parse "let rec f = 1 in f" |> ignore) ""
         }

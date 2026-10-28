@@ -81,7 +81,33 @@ let cases =
       "let rec even n = if n = 0 then true else not (even (n - 1)) in even 7", VBool false
       "let rec pow b e = if e = 0 then 1 else b * pow b (e - 1) in pow 2 10", VInt 1024
       // rec 이 아니면 본문의 f 는 바깥 f 를 가리킴
-      "let f n = n in let f n = f (n + 1) in f 1", VInt 2 ]
+      "let f n = n in let f n = f (n + 1) in f 1", VInt 2
+      // 리스트
+      "[]", VList []
+      "[1; 2; 3]", VList [ VInt 1; VInt 2; VInt 3 ]
+      "1 :: 2 :: []", VList [ VInt 1; VInt 2 ]
+      "0 :: [1; 2]", VList [ VInt 0; VInt 1; VInt 2 ]
+      "1 + 2 :: [3]", VList [ VInt 3; VInt 3 ]
+      "[true; 1 < 2]", VList [ VBool true; VBool true ]
+      "[[1]; []]", VList [ VList [ VInt 1 ]; VList [] ]
+      "[1; 2] = 1 :: [2]", VBool true
+      "[1] = [1; 2]", VBool false
+      "[] = []", VBool true
+      "[1] <> [2]", VBool true
+      "[[1; 2]] = [[1; 2]]", VBool true
+      "match [] with [] -> 0 | h :: t -> h", VInt 0
+      "match [5; 6] with [] -> 0 | h :: t -> h", VInt 5
+      "match [5; 6] with h :: t -> t | [] -> []", VList [ VInt 6 ]
+      "let rec len xs = match xs with [] -> 0 | h :: t -> 1 + len t in len [1; 2; 3]", VInt 3
+      "let rec sum xs = match xs with [] -> 0 | h :: t -> h + sum t in sum [1; 2; 3; 4]", VInt 10
+      "let rec map f xs = match xs with [] -> [] | h :: t -> f h :: map f t in map (fun x -> x * x) [1; 2; 3]",
+          VList [ VInt 1; VInt 4; VInt 9 ]
+      "let rec append xs ys = match xs with [] -> ys | h :: t -> h :: append t ys in append [1; 2] [3]",
+          VList [ VInt 1; VInt 2; VInt 3 ]
+      "let rec range n = if n = 0 then [] else n :: range (n - 1) in range 3",
+          VList [ VInt 3; VInt 2; VInt 1 ]
+      // match 분기에서 바인딩한 이름은 바깥 이름을 가림
+      "let h = 100 in match [1] with [] -> h | h :: t -> h", VInt 1 ]
 
 /// 오류 메시지가 정확히 일치하는지 확인
 let expectError input message =
@@ -139,11 +165,34 @@ let tests =
         testList "함수 오류" [
             expectError "1 2" "Type error: expected function but got int"
             expectError "let f x = x in f -1" "Type error: expected int but got function"
-            expectError "(fun x -> x) = (fun x -> x)" "Type error: expected int or bool but got function"
+            expectError "(fun x -> x) = (fun x -> x)" "Type error: expected int, bool or list but got function"
             expectError "(fun x -> x) + 1" "Type error: expected int but got function"
             // let (rec 아님) 으로 정의한 함수는 자기 자신을 볼 수 없음
             expectError "let f x = f x in f 1" "Unbound variable: f"
         ]
+
+        testList "리스트 오류" [
+            expectError "1 :: 2" "Type error: expected list but got int"
+            expectError "match 1 with [] -> 0 | h :: t -> h" "Type error: expected list but got int"
+            expectError "[1] = 1" "Type error: expected list but got int"
+            expectError "1 = [1]" "Type error: expected int but got list"
+            expectError "[1] < [2]" "Type error: expected int but got list"
+            expectError "[1] + 1" "Type error: expected int but got list"
+            expectError "[1] = [true]" "Type error: expected int but got bool"
+            expectError "[1] 2" "Type error: expected function but got list"
+        ]
+
+        test "리스트 값 출력" {
+            Expect.equal (formatValue (calc "[]")) "[]" ""
+            Expect.equal (formatValue (calc "[1; -2; 3]")) "[1; -2; 3]" ""
+            Expect.equal (formatValue (calc "[[true]; []]")) "[[true]; []]" ""
+            Expect.equal (formatValue (calc "[fun x -> x]")) "[<fun>]" ""
+            Expect.equal (typeName (calc "[]")) "list" ""
+        }
+
+        test "선택되지 않은 match 분기는 평가하지 않음" {
+            Expect.equal (calc "match [] with [] -> 0 | h :: t -> 1 / 0") (VInt 0) ""
+        }
 
         test "함수 값" {
             Expect.equal (formatValue (calc "fun x -> x")) "<fun>" ""
@@ -208,6 +257,16 @@ let tests =
             testProperty "재귀 합: sum n = n(n+1)/2" <| fun (NonNegativeInt n) ->
                 calc (sprintf "let rec sum n = if n = 0 then 0 else n + sum (n - 1) in sum %d" n)
                     = VInt (n * (n + 1) / 2)
+
+            testProperty "리스트 리터럴은 F# 리스트와 같음" <| fun (xs: NonNegativeInt list) ->
+                let ns = xs |> List.map (fun (NonNegativeInt n) -> n)
+                let src = "[" + (ns |> List.map string |> String.concat "; ") + "]"
+                calc src = VList (ns |> List.map VInt)
+
+            testProperty "재귀 len 은 List.length 와 같음" <| fun (xs: NonNegativeInt list) ->
+                let src = "[" + (xs |> List.map (fun (NonNegativeInt n) -> string n) |> String.concat "; ") + "]"
+                calc (sprintf "let rec len xs = match xs with [] -> 0 | h :: t -> 1 + len t in len %s" src)
+                    = VInt (List.length xs)
 
             testProperty "if 는 조건에 따라 분기" <| fun (c: bool) (NonNegativeInt a) (NonNegativeInt b) ->
                 let cond = if c then "true" else "false"

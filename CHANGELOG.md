@@ -4,6 +4,22 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.7.0] - 2026-10-28
+
+### 추가
+- 리스트 리터럴 `[]`, `[1; 2; 3]`. 리터럴은 `::`와 `[]`로 바뀝니다.
+- cons 연산자 `::`. 오른쪽 결합이고, 비교보다 강하고 `+ -`보다 약합니다.
+- `match e with [] -> e1 | h :: t -> e2`. 두 분기는 순서와 상관없고, 첫 `|`는 생략할 수 있습니다.
+- 리스트 비교 `=`, `<>`. 원소를 차례로 비교합니다.
+- 렉서: 키워드 `match`, `with`, 토큰 `[`, `]`, `;`, `::`, `|`
+- AST: `Nil`, `Cons`, `Match`
+- 값: `VList`. `[1; 2; 3]`으로 출력되고 타입 이름은 `list`입니다.
+- 테스트 53개 추가 (총 224개)
+
+### 변경
+- 함수를 비교할 때의 오류 메시지가 `expected int, bool or list but got function`으로 바뀌었습니다.
+- `docs/grammar.md`, `docs/testing.md`, `README.md`에 리스트 문법과 의미를 반영했습니다.
+
 ## [0.6.0] - 2026-10-27
 
 ### 추가

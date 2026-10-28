@@ -23,3 +23,9 @@ type Expr =
     | And of Expr * Expr
     | Or of Expr * Expr
     | Not of Expr
+    /// 빈 리스트 []
+    | Nil
+    /// head :: tail. 리스트 리터럴 [a; b] 는 Cons(a, Cons(b, Nil)) 로 바뀜
+    | Cons of Expr * Expr
+    /// match e with [] -> nilCase | head :: tail -> consCase
+    | Match of scrutinee: Expr * nilCase: Expr * head: string * tail: string * consCase: Expr

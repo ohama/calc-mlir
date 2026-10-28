@@ -24,8 +24,9 @@ Result: 10
 | 조건식 | `if x > 0 then x else -x` |
 | 함수 정의와 호출 (커링, 클로저) | `let add x y = x + y in add 1 2`, `(fun x -> x * 2) 21` |
 | 재귀 함수 | `let rec fact n = if n <= 1 then 1 else n * fact (n - 1) in fact 10` |
+| 리스트와 `match` | `[1; 2; 3]`, `0 :: xs`, `match xs with [] -> 0 \| h :: t -> h` |
 
-- 우선순위 (낮은 것부터): `let`/`if`/`fun` < `||` < `&&` < 비교 < `+ -` < `* /` < 단항 `-`, `not` < 함수 호출
+- 우선순위 (낮은 것부터): `let`/`if`/`fun`/`match` < `||` < `&&` < 비교 < `::` < `+ -` < `* /` < 단항 `-`, `not` < 함수 호출
 - 타입은 실행 중에 검사합니다. 예를 들어 `1 + true`는 `Type error: expected int but got bool`입니다.
 
 자세한 문법과 의미는 [docs/grammar.md](docs/grammar.md)에 있습니다.

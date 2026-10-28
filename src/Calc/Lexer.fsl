@@ -27,6 +27,8 @@ rule tokenize = parse
     | "true"        { TRUE }
     | "false"       { FALSE }
     | "not"         { NOT }
+    | "match"       { MATCH }
+    | "with"        { WITH }
     | ident_start ident_char*
                     { IDENT (lexeme lexbuf) }
     | "->"          { ARROW }
@@ -38,6 +40,11 @@ rule tokenize = parse
     | '='           { EQUALS }
     | "&&"          { AND }
     | "||"          { OR }
+    | "::"          { CONS }
+    | '|'           { BAR }
+    | '['           { LBRACKET }
+    | ']'           { RBRACKET }
+    | ';'           { SEMI }
     | '+'           { PLUS }
     | '-'           { MINUS }
     | '*'           { STAR }
