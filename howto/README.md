@@ -38,8 +38,10 @@
 | 32 | [measure-fresh-binaries-on-macos](measure-fresh-binaries-on-macos.md) | macOS에서 새로 만든 실행 파일은 첫 실행에만 약 0.3초가 더 걸린다. 성능은 두 번째 실행부터 user 시간으로 잰다 | 2026-10-28 |
 | 33 | [emit-string-constants-as-aligned-llvm-globals](emit-string-constants-as-aligned-llvm-globals.md) | 상수의 주소를 값으로 쓰려면 전역을 8바이트로 정렬한다. 바이트 배열 전역은 주소 하위 비트가 0이 아니다. 헤더로 시작하는 struct 전역을 초기화 영역으로 만든다 | 2026-10-28 |
 | 34 | [store-strings-as-utf16-for-dotnet-compatibility](store-strings-as-utf16-for-dotnet-compatibility.md) | .NET과 같은 결과를 내려면 문자열을 UTF-16으로 저장한다(ordinal 순서가 UTF-8과 다름). 출력은 구간째 UTF-8로, 짝 없는 대리는 U+FFFD | 2026-10-28 |
+| 35 | [compile-match-with-scf-if-conditions](compile-match-with-scf-if-conditions.md) | 가드가 있는 match를 scf.if로 그대로 펼치면 나머지 분기가 두 곳에 생겨 지수로 커진다. 조건을 i1로 먼저 계산하면 선형 크기가 된다 | 2026-10-28 |
+| 36 | [replicate-reference-equality-order-in-runtime](replicate-reference-equality-order-in-runtime.md) | 비교할 수 없는 값이 섞이면 검사 순서에 따라 false 또는 오류가 된다. 인터프리터처럼 길이를 먼저, 처음 false에서 멈추게 옮긴다 | 2026-10-28 |
 
-추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 → 16 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match → 오류 위치), 17 → 18 → 19 (패턴 매칭, 생성자, ADT), 20 → 21 → 22 (타입 추론), 8 → 9 → 13 → 14 → 15 (함수 평가, 재귀 한계, 내장 함수), 23 → 24 → 25 → 26 → 27 → 28 → 29 → 30 → 31 → 32 → 33 → 34 (네이티브 컴파일러), 4 → 6 (테스트), 5 (릴리스)
+추천 읽는 순서: 3 → 11 → 12 (렉서, 문자열 리터럴, 액션 코드 함정), 2 → 1 → 7 → 10 → 16 (파서 우선순위 → 우선순위 함정 → 함수 호출 → 중첩 match → 오류 위치), 17 → 18 → 19 (패턴 매칭, 생성자, ADT), 20 → 21 → 22 (타입 추론), 8 → 9 → 13 → 14 → 15 (함수 평가, 재귀 한계, 내장 함수), 23 → 24 → 25 → 26 → 27 → 28 → 29 → 30 → 31 → 32 → 33 → 34 → 35 → 36 (네이티브 컴파일러), 4 → 6 (테스트), 5 (릴리스)
 
 ---
-총 34개 | 업데이트: 2026-10-28
+총 36개 | 업데이트: 2026-10-28
