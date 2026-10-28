@@ -26,8 +26,10 @@ Result: 10
 | 재귀 함수 | `let rec fact n = if n <= 1 then 1 else n * fact (n - 1) in fact 10` |
 | 문자열 (`+`로 연결, 비교) | `"Hello, " + name`, `"a" < "b"` |
 | 문자열 내장 함수 | `length`, `substr`, `upper`, `split`, `join`, `toInt`, `toString` 등 14개 |
-| 리스트 내장 함수 | `map`, `filter`, `fold`, `range`, `sum`, `sort`, `head`, `nth` 등 14개 |
-| 리스트와 `match` | `[1; 2; 3]`, `0 :: xs`, `match xs with [] -> 0 \| h :: t -> h` |
+| 리스트·튜플 내장 함수 | `map`, `filter`, `fold`, `range`, `sum`, `sort`, `head`, `nth`, `fst`, `snd` 등 16개 |
+| 리스트 | `[1; 2; 3]`, `0 :: xs` |
+| 튜플 | `(1, "a")`, `let (a, b) = p in a + b` |
+| 패턴 매칭 (중첩 패턴, `when` 가드) | `match xs with [] -> 0 \| [x] -> x \| x :: _ when x > 0 -> x \| _ -> -1` |
 
 - 우선순위 (낮은 것부터): `let`/`if`/`fun`/`match` < `||` < `&&` < 비교 < `::` < `+ -` < `* /` < 단항 `-`, `not` < 함수 호출
 - 타입은 실행 중에 검사합니다. 예를 들어 `1 + true`는 `Type error: expected int but got bool`입니다.

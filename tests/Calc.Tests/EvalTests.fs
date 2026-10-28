@@ -224,7 +224,54 @@ let cases =
       "join \",\" (map toString (range 1 3))", VString "1,2,3"
       "length (range 1 100000)", VInt 100000
       // 사용자가 정의한 map 이 내장 map 을 가림
-      "let map f xs = 0 in map 1 2", VInt 0 ]
+      "let map f xs = 0 in map 1 2", VInt 0
+      // 튜플
+      "(1, 2)", VTuple [ VInt 1; VInt 2 ]
+      "(1, \"a\", true)", VTuple [ VInt 1; VString "a"; VBool true ]
+      "((1, 2), [3])", VTuple [ VTuple [ VInt 1; VInt 2 ]; VList [ VInt 3 ] ]
+      "(1 + 1, 2 * 3)", VTuple [ VInt 2; VInt 6 ]
+      "(1, 2) = (1, 2)", VBool true
+      "(1, 2) = (1, 3)", VBool false
+      "(1, 2) <> (2, 1)", VBool true
+      "(1, 2) = (1, 2, 3)", VBool false
+      "[(1, 2)] = [(1, 2)]", VBool true
+      "fst (1, \"a\")", VInt 1
+      "snd (1, \"a\")", VString "a"
+      "map fst [(1, 2); (3, 4)]", VList [ VInt 1; VInt 3 ]
+      "let (a, b) = (1, 2) in a + b", VInt 3
+      "let (a, (b, c)) = (1, (2, 3)) in a * 100 + b * 10 + c", VInt 123
+      "let (a, _) = (1, 2) in a", VInt 1
+      "let (h :: t, n) = ([1; 2], 3) in h + n", VInt 4
+      // 패턴 매칭
+      "match 3 with 1 -> \"one\" | 2 -> \"two\" | _ -> \"many\"", VString "many"
+      "match 2 with 1 -> \"one\" | 2 -> \"two\" | _ -> \"many\"", VString "two"
+      "match -1 with -1 -> \"neg\" | _ -> \"x\"", VString "neg"
+      "match \"hi\" with \"hi\" -> 1 | _ -> 0", VInt 1
+      "match false with true -> 1 | false -> 0", VInt 0
+      "match [] with [] -> 0 | [x] -> x | x :: y :: _ -> x + y", VInt 0
+      "match [5] with [] -> 0 | [x] -> x | x :: y :: _ -> x + y", VInt 5
+      "match [1; 2; 3] with [] -> 0 | [x] -> x | x :: y :: _ -> x + y", VInt 3
+      "match [1; 2] with [a; b] -> a * 10 + b | _ -> 0", VInt 12
+      "match [1; 2; 3] with [a; b] -> a * 10 + b | _ -> 0", VInt 0
+      "match (1, 0) with (0, _) -> \"a\" | (_, 0) -> \"b\" | _ -> \"c\"", VString "b"
+      "match (0, 0) with (0, _) -> \"a\" | (_, 0) -> \"b\" | _ -> \"c\"", VString "a"
+      "match [(1, \"a\"); (2, \"b\")] with (n, s) :: _ -> s | [] -> \"\"", VString "a"
+      "match [[1]] with [[x]] -> x | _ -> 0", VInt 1
+      // 위에서부터 처음 일치하는 분기
+      "match 1 with x -> \"first\" | 1 -> \"second\"", VString "first"
+      // 리터럴 패턴은 타입이 다르면 불일치
+      "match \"1\" with 1 -> \"int\" | _ -> \"other\"", VString "other"
+      "match (1, 2) with (a, b, c) -> 0 | _ -> 1", VInt 1
+      // when 가드
+      "match 5 with n when n > 3 -> \"big\" | n -> \"small\"", VString "big"
+      "match 2 with n when n > 3 -> \"big\" | n -> \"small\"", VString "small"
+      "match (3, 4) with (a, b) when a > b -> a | (a, b) -> b", VInt 4
+      // 패턴 변수는 바깥 이름을 가리고, 분기 밖에서는 사라짐
+      "let x = 100 in (match 1 with x -> x) + x", VInt 101
+      "let rec zip xs ys = match (xs, ys) with (x :: xt, y :: yt) -> (x, y) :: zip xt yt | _ -> [] in zip [1; 2] [\"a\"; \"b\"; \"c\"]",
+          VList [ VTuple [ VInt 1; VString "a" ]; VTuple [ VInt 2; VString "b" ] ]
+      "let rec last xs = match xs with [x] -> x | _ :: t -> last t | [] -> 0 in last [1; 2; 3]", VInt 3
+      "let f _ = 1 in f 2", VInt 1 ]
 
 /// 오류 메시지가 정확히 일치하는지 확인
 let expectError input message =
@@ -282,7 +329,7 @@ let tests =
         testList "함수 오류" [
             expectError "1 2" "Type error: expected function but got int"
             expectError "let f x = x in f -1" "Type error: expected int but got function"
-            expectError "(fun x -> x) = (fun x -> x)" "Type error: expected int, bool, string or list but got function"
+            expectError "(fun x -> x) = (fun x -> x)" "Type error: expected int, bool, string, list or tuple but got function"
             expectError "(fun x -> x) + 1" "Type error: expected int or string but got function"
             // let (rec 아님) 으로 정의한 함수는 자기 자신을 볼 수 없음
             expectError "let f x = f x in f 1" "Unbound variable: f"
@@ -290,7 +337,8 @@ let tests =
 
         testList "리스트 오류" [
             expectError "1 :: 2" "Type error: expected list but got int"
-            expectError "match 1 with [] -> 0 | h :: t -> h" "Type error: expected list but got int"
+            // 패턴은 타입이 달라도 오류가 아니라 불일치
+            expectError "match 1 with [] -> 0 | h :: t -> h" "Match failure: 1"
             expectError "[1] = 1" "Type error: expected list but got int"
             expectError "1 = [1]" "Type error: expected int but got list"
             expectError "[1] < [2]" "Type error: expected int or string but got list"
@@ -327,7 +375,7 @@ let tests =
             expectError "toInt \" 4\"" "toInt: invalid integer: \" 4\""
             expectError "toInt \"\"" "toInt: invalid integer: \"\""
             expectError "toInt \"2147483648\"" "toInt: invalid integer: \"2147483648\""
-            expectError "length = length" "Type error: expected int, bool, string or list but got function"
+            expectError "length = length" "Type error: expected int, bool, string, list or tuple but got function"
             // 인자를 다 받기 전에는 실행하지 않음 (오류도 나중에)
             expectError "let f = substr 1 in f 2 3" "Type error: expected string but got int"
         ]
@@ -399,6 +447,32 @@ let tests =
             Expect.equal (formatValue (calc "[[true]; []]")) "[[true]; []]" ""
             Expect.equal (formatValue (calc "[fun x -> x]")) "[<fun>]" ""
             Expect.equal (typeName (calc "[]")) "list" ""
+        }
+
+        testList "패턴 매칭 오류" [
+            expectError "match 1 with 2 -> 0" "Match failure: 1"
+            expectError "match [1] with [] -> 0" "Match failure: [1]"
+            expectError "match (1, \"a\") with (2, _) -> 0" "Match failure: (1, \"a\")"
+            expectError "let (a, b) = (1, 2, 3) in a" "Match failure: (1, 2, 3)"
+            expectError "let (a, b) = 1 in a" "Match failure: 1"
+            expectError "match 1 with x when 1 -> x" "Type error: expected bool but got int"
+            expectError "fst (1, 2, 3)" "Type error: expected pair but got tuple"
+            expectError "fst 1" "Type error: expected pair but got int"
+            expectError "(1, 2) + 1" "Type error: expected int or string but got tuple"
+            expectError "(1, 2) < (1, 3)" "Type error: expected int or string but got tuple"
+            expectError "(1, 2) = 1" "Type error: expected tuple but got int"
+            expectError "[1] = [(1, 2)]" "Type error: expected int but got tuple"
+        ]
+
+        test "튜플 값 출력" {
+            Expect.equal (formatValue (calc "(1, \"a\", [true])")) "(1, \"a\", [true])" ""
+            Expect.equal (typeName (calc "(1, 2)")) "tuple" ""
+            Expect.equal (calc "toString (1, 2)") (VString "(1, 2)") ""
+        }
+
+        test "가드가 false 면 다음 분기로, 선택되지 않은 분기 본문은 평가하지 않음" {
+            Expect.equal (calc "match 1 with x when false -> 1 / 0 | _ -> 7") (VInt 7) ""
+            Expect.equal (calc "match 1 with 2 -> 1 / 0 | _ -> 7") (VInt 7) ""
         }
 
         test "선택되지 않은 match 분기는 평가하지 않음" {
@@ -520,6 +594,12 @@ let tests =
             testProperty "fold 로 만든 length 는 length 와 같음" <| fun (xs: NonNegativeInt list) ->
                 let src = "[" + (xs |> List.map (fun (NonNegativeInt n) -> string n) |> String.concat "; ") + "]"
                 calc (sprintf "fold (fun acc x -> acc + 1) 0 %s" src) = calc (sprintf "length %s" src)
+
+            testProperty "let (a, b) = (x, y) in (b, a) 는 순서를 바꿈" <| fun (NonNegativeInt x) (NonNegativeInt y) ->
+                calc (sprintf "let (a, b) = (%d, %d) in (b, a)" x y) = VTuple [ VInt y; VInt x ]
+
+            testProperty "정수 리터럴 패턴은 = 와 같음" <| fun (NonNegativeInt a) (NonNegativeInt b) ->
+                calc (sprintf "match %d with %d -> true | _ -> false" a b) = VBool (a = b)
 
             testProperty "if 는 조건에 따라 분기" <| fun (c: bool) (NonNegativeInt a) (NonNegativeInt b) ->
                 let cond = if c then "true" else "false"

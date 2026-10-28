@@ -17,8 +17,9 @@ Calc 언어의 어휘 구조, 구문, 의미를 정리한 문서입니다. 구�
 |---|---|---|
 | `NUMBER` | `[0-9]+` | `0`, `42` |
 | `STRING` | `"`로 시작해서 `"`로 끝남 (아래 "문자열 리터럴" 참고) | `"hello"`, `""`, `"a\"b"` |
-| `IDENT` | `[A-Za-z_][A-Za-z0-9_]*` (키워드 제외) | `x`, `foo_1`, `_tmp` |
-| 키워드 | `let` `rec` `in` `fun` `if` `then` `else` `true` `false` `not` `match` `with` | |
+| `IDENT` | `[A-Za-z_][A-Za-z0-9_]*` (키워드와 `_` 하나는 제외) | `x`, `foo_1`, `_tmp` |
+| `UNDERSCORE` | `_` (와일드카드 패턴, 쓰지 않는 인자) | |
+| 키워드 | `let` `rec` `in` `fun` `if` `then` `else` `true` `false` `not` `match` `with` `when` | |
 | `EQUALS` | `=` | |
 | `ARROW` | `->` | |
 | `NOTEQUAL` `LESS` `GREATER` `LESSEQUAL` `GREATEREQUAL` | `<>` `<` `>` `<=` `>=` | |
@@ -26,6 +27,7 @@ Calc 언어의 어휘 구조, 구문, 의미를 정리한 문서입니다. 구�
 | `PLUS` `MINUS` `STAR` `SLASH` | `+` `-` `*` `/` | |
 | `LPAREN` `RPAREN` | `(` `)` | |
 | `LBRACKET` `RBRACKET` `SEMI` | `[` `]` `;` | |
+| `COMMA` | `,` | |
 | `CONS` | `::` | |
 | `BAR` | `\|` | |
 | `EOF` | 입력의 끝 | |
@@ -70,11 +72,12 @@ program = expr EOF ;
 
 expr    = app
         | "let" IDENT "=" expr "in" expr
+        | "let" tuplePat "=" expr "in" expr              (* 튜플 분해 *)
         | "let" IDENT params "=" expr "in" expr          (* 함수 정의 *)
         | "let" "rec" IDENT params "=" expr "in" expr    (* 재귀 함수 정의 *)
         | "fun" params "->" expr                         (* 람다 *)
         | "if" expr "then" expr "else" expr
-        | "match" expr "with" [ "|" ] arms               (* 리스트 패턴 매칭 *)
+        | "match" expr "with" [ "|" ] arm { "|" arm }    (* 패턴 매칭 *)
         | expr binop expr
         | "-" expr
         | "not" expr ;
@@ -87,14 +90,22 @@ atom    = NUMBER
         | "true" | "false"
         | IDENT
         | "(" expr ")"
+        | "(" expr "," expr { "," expr } ")"             (* 튜플 *)
         | "[" [ expr { ";" expr } ] "]" ;                (* 리스트 리터럴 *)
 
-arms    = nilArm "|" consArm
-        | consArm "|" nilArm ;                           (* 순서 무관, 각각 정확히 하나 *)
-nilArm  = "[" "]" "->" expr ;
-consArm = IDENT "::" IDENT "->" expr ;
+arm     = pattern [ "when" expr ] "->" expr ;
 
-params  = IDENT { IDENT } ;
+pattern = atomPat [ "::" pattern ] ;                     (* :: 는 오른쪽 결합 *)
+atomPat = IDENT | "_"
+        | NUMBER | "-" NUMBER | STRING | "true" | "false"
+        | "[" "]"
+        | "[" pattern { ";" pattern } "]"                (* 리스트 패턴 *)
+        | "(" pattern ")"
+        | tuplePat ;
+tuplePat = "(" pattern "," pattern { "," pattern } ")" ;
+
+params  = param { param } ;
+param   = IDENT | "_" ;
 
 binop   = "+" | "-" | "*" | "/"
         | "=" | "<>" | "<" | ">" | "<=" | ">="
@@ -183,17 +194,57 @@ F#과 같은 순서입니다. 함수 호출은 어떤 연산자보다 먼저 묶
 - `let`의 `=`와 비교 연산자 `=`는 같은 토큰이지만 위치로 구분됩니다.
   - `let x = 1 = 1 in x`에서 첫 번째 `=`는 바인딩이고, 두 번째 `=`는 비교입니다. 결과는 `true`입니다.
 
-### 리스트와 `match`
+### 리스트와 튜플
 
 - 리스트 리터럴 `[a; b; c]`는 `a :: b :: c :: []`의 문법 설탕입니다. 원소 구분자는 `;`이고, 끝에 `;`를 붙이면(`[1;]`) parse error입니다.
-- `match`는 리스트만 다룹니다. 분기는 **`[]` 분기 하나와 `h :: t` 분기 하나**가 꼭 있어야 하고, 순서는 상관없습니다. 첫 분기 앞의 `|`는 생략할 수 있습니다.
-  - 분기가 하나뿐이거나(`match xs with [] -> 0`), 같은 종류가 둘이면 parse error입니다.
-  - `h`, `t` 자리에는 변수 이름만 올 수 있습니다. 중첩 패턴(`h :: []`, `1 :: t`)은 지원하지 않습니다. `_`는 보통 변수 이름으로 취급됩니다.
+- 튜플은 **괄호 안에** 원소를 `,`로 구분해서 씁니다. 원소는 2개 이상입니다. `(1, "a", true)`, `((1, 2), [3])`
+  - `(e)`는 튜플이 아니라 괄호식입니다.
+  - F#과 달리 괄호 없는 튜플(`1, 2`)은 지원하지 않습니다. parse error입니다.
+  - 리스트 원소 구분자 `;`와 튜플 원소 구분자 `,`는 다릅니다. `[1, 2]`는 parse error이고, `[(1, 2)]`가 튜플 하나짜리 리스트입니다.
+
+### 패턴 매칭
+
+```
+match e with
+| pattern1 -> e1
+| pattern2 when guard -> e2
+| ...
+```
+
+- 분기는 하나 이상이고, 첫 분기 앞의 `|`는 생략할 수 있습니다.
+- **위에서부터** 패턴이 일치하고 가드(`when`)가 `true`인 첫 분기를 고릅니다. 일치하는 분기가 없으면 `Match failure: <값>` 오류입니다.
+
+| 패턴 | 일치하는 값 | 묶는 이름 |
+|---|---|---|
+| `x` | 모든 값 | `x` |
+| `_` | 모든 값 | 없음 |
+| `42`, `-1`, `"a"`, `true` | 같은 리터럴 | 없음 |
+| `[]` | 빈 리스트 | 없음 |
+| `p1 :: p2` | 첫 원소가 `p1`, 나머지 리스트가 `p2`와 일치하는 리스트 | `p1`, `p2`가 묶는 이름 |
+| `[p1; p2]` | 원소가 정확히 2개인 리스트 (`p1 :: p2 :: []`와 같음) | |
+| `(p1, p2, ...)` | 원소 수가 같고 각 원소가 일치하는 튜플 | |
+| `(p)` | `p`와 같음 (괄호로 묶기) | |
+
+- 패턴은 중첩할 수 있습니다. `(n, s) :: _`, `[[x]]`, `(x :: xt, y :: yt)`
+- `::` 패턴은 오른쪽 결합입니다. `a :: b :: t`는 `a :: (b :: t)`입니다.
+- **한 패턴 안에서 같은 이름을 두 번 쓸 수 없습니다.** `(a, a)`는 `Duplicate variable in pattern: a (line L, column C)` 오류입니다. 위치는 패턴의 시작입니다.
+- **타입이 달라도 오류가 아니라 불일치입니다.** `match "1" with 1 -> ... | _ -> ...`는 두 번째 분기를 고릅니다. `match 1 with [] -> 0 | h :: t -> h`는 `Match failure: 1`입니다.
+- 패턴이 묶은 이름은 그 분기의 가드와 본문에서만 보이고, 바깥의 같은 이름을 가립니다.
+- 가드는 bool이어야 합니다. 아니면 `Type error: expected bool but got <타입>`입니다.
 - 마지막 분기의 본문은 `->`의 우선순위가 가장 낮으므로 오른쪽 끝까지 이어집니다.
   - `match xs with [] -> 0 | h :: t -> h + 1`의 마지막 본문은 `h + 1`입니다.
-- 분기 개수가 고정되어 있기 때문에 `match` 안에 `match`를 괄호 없이 넣어도 모호하지 않습니다. 안쪽 `match`가 분기 두 개를 가져가고, 그다음 `|`부터는 바깥 `match`의 분기입니다.
-  - `match a with [] -> match b with [] -> 1 | x :: y -> 2 | h :: t -> 3`에서 `| h :: t -> 3`은 바깥 `match`의 분기입니다.
-  - F#은 분기 수가 정해져 있지 않아서 안쪽 `match`가 뒤의 분기를 모두 가져갑니다. 읽기 쉽게 하려면 안쪽 `match`를 괄호로 감싸는 것이 좋습니다.
+- **중첩 `match`**: 분기 본문에 괄호 없이 `match`를 쓰면, 그 뒤의 `|` 분기는 **모두 안쪽 `match`의 것**입니다. F#과 같습니다.
+  - `match a with [] -> match b with [] -> 1 | x :: y -> 2 | h :: t -> 3`에서 `x :: y`와 `h :: t` 분기는 모두 안쪽 `match b`의 분기입니다.
+  - 바깥 분기로 쓰려면 안쪽 `match`를 괄호로 감쌉니다. `match a with [] -> (match b with ...) | h :: t -> 3`
+  - 문법에서는 분기 목록을 끝내는 규칙에 `%prec NOBAR`를 주어 이 동작을 정했습니다(충돌 없음).
+
+### 튜플 분해 `let`
+
+`let (a, b) = e1 in e2`처럼 `let` 왼쪽에 튜플 패턴을 쓸 수 있습니다. 튜플 안에는 어떤 패턴이든 올 수 있습니다(`let (h :: t, n) = ... in ...`).
+- 일치하지 않으면 `Match failure: <값>`입니다. `let (a, b) = (1, 2, 3) in a`도 원소 수가 달라서 실패입니다.
+- `let` 왼쪽에는 이름 하나 또는 튜플 패턴만 올 수 있습니다. `let [x] = ...`, `let _ = ...`는 지원하지 않습니다.
+- `fun`과 함수 정의의 인자는 이름이나 `_`만 됩니다. `fun (a, b) -> ...`는 아직 지원하지 않습니다. 대신 `fun p -> let (a, b) = p in ...`으로 씁니다.
+- `_` 인자(`fun _ -> 1`, `let f _ x = x`)는 값을 받아서 버립니다. `_`는 식에 쓸 수 없으므로 참조할 방법이 없습니다.
 
 ### 함수 정의의 문법 설탕
 
@@ -231,7 +282,12 @@ F#과 같은 순서입니다. 함수 호출은 어떤 연산자보다 먼저 묶
 | `[]` | `Nil` |
 | `e1 :: e2` | `Cons (e1, e2)` |
 | `[e1; e2]` | `Cons (e1, Cons (e2, Nil))` (리터럴은 AST에 남지 않음) |
-| `match e with [] -> e1 \| h :: t -> e2` | `Match (e, e1, "h", "t", e2)` (분기 순서와 상관없이 같은 AST) |
+| `(e1, e2)` | `Tuple [e1; e2]` |
+| `match e with p1 -> e1 \| p2 when g -> e2` | `Match (e, [ (p1, None, e1); (p2, Some g, e2) ])` (분기 순서 유지) |
+| `let (a, b) = e1 in e2` | `LetPattern (PTuple [PVar "a"; PVar "b"], e1, e2)` |
+| 패턴 `x` / `_` / `1` / `true` / `"s"` | `PVar "x"` / `PWildcard` / `PInt 1` / `PBool true` / `PString "s"` |
+| 패턴 `[]` / `p1 :: p2` / `[p1; p2]` | `PNil` / `PCons (p1, p2)` / `PCons (p1, PCons (p2, PNil))` |
+| 패턴 `(p1, p2)` | `PTuple [p1; p2]` |
 | `(e)` | `e` (괄호는 AST에 남지 않음) |
 
 ## 4. 의미 (평가 규칙)
@@ -246,6 +302,7 @@ type Value =
     | VClosure of param * body * env                      // fun param -> body + 정의 시점의 환경
     | VRecClosure of name * param * body * env            // let rec name param = body
     | VList of Value list                                 // [v1; v2; ...]
+    | VTuple of Value list                                // (v1, v2, ...)
     | VBuiltin of name * args                             // 내장 함수 (args: 지금까지 받은 인자)
 ```
 
@@ -255,8 +312,9 @@ type Value =
 - 문자열은 따옴표와 이스케이프를 붙인 리터럴 형태로 출력됩니다. 예: `"say \"hi\"\n"`. 출력을 그대로 다시 입력하면 같은 값이 됩니다.
 - 함수는 `<fun>`으로 출력됩니다. 내장 함수도 같습니다.
 - 리스트는 `[1; 2; 3]`, `[]`, `[[true]; []]`처럼 출력됩니다.
+- 튜플은 `(1, "a", [true])`처럼 출력됩니다.
 
-타입 오류 메시지에서 문자열의 타입 이름은 `string`, 함수는 `function`, 리스트는 `list`입니다.
+타입 오류 메시지에서 문자열의 타입 이름은 `string`, 함수는 `function`, 리스트는 `list`, 튜플은 `tuple`입니다.
 
 ### 규칙
 
@@ -275,12 +333,14 @@ type Value =
 | `Subtract` `Multiply` `Divide` | int, int | int |
 | `Negate` | int | int |
 | `Less` `Greater` `LessEqual` `GreaterEqual` | int, int 또는 string, string | bool. 문자열은 문자 코드 순서(ordinal)로 비교 |
-| `Equal` `NotEqual` | 같은 타입끼리 (int, bool, string, list). 리스트는 원소를 차례로 비교. 함수는 비교할 수 없음 | bool |
+| `Equal` `NotEqual` | 같은 타입끼리 (int, bool, string, list, tuple). 리스트와 튜플은 원소를 차례로 비교하고, 원소 수가 다르면 `false`. 함수는 비교할 수 없음 | bool |
 | `And` `Or` | bool, bool | bool. **단락 평가** |
 | `Not` | bool | bool |
 | `Nil` | | `VList []` |
 | `Cons (e1, e2)` | `e1`: 아무 타입, `e2`: list | `e1`, `e2` 순서로 평가하고 `e2` 리스트 앞에 `e1` 값을 붙임 |
-| `Match (e, e1, h, t, e2)` | `e`: list | 빈 리스트면 `e1`을 평가. 아니면 `env`에 `h = 첫 원소`, `t = 나머지 리스트`를 추가하고 `e2`를 평가. **선택된 분기만** 평가함 |
+| `Tuple [e1; ...]` | 아무 타입 | 왼쪽부터 평가한 `VTuple` |
+| `Match (e, cases)` | 아무 타입 | `e`를 평가하고, 위에서부터 패턴이 일치하고 가드가 `true`인 첫 분기의 본문을 패턴이 묶은 이름을 추가한 환경에서 평가. 없으면 `Match failure`. **선택된 분기만** 평가함 |
+| `LetPattern (p, e1, e2)` | 아무 타입 | `e1`의 값이 `p`와 일치하면 묶은 이름을 추가한 환경에서 `e2`를 평가. 아니면 `Match failure` |
 
 ### 함수 호출
 
@@ -322,7 +382,7 @@ type Value =
   - `let add x y = x + y in let inc = add 1 in inc 41`은 `42`입니다.
 - **값에 의한 호출(call-by-value)**: 인자는 함수 본문을 실행하기 전에 평가합니다. 쓰이지 않는 인자도 평가합니다.
   - `let k x = 1 in k (1 / 0)`은 0으로 나누기 오류입니다.
-- **함수는 비교할 수 없음**: `(fun x -> x) = (fun x -> x)`는 `Type error: expected int, bool, string or list but got function`입니다.
+- **함수는 비교할 수 없음**: `(fun x -> x) = (fun x -> x)`는 `Type error: expected int, bool, string, list or tuple but got function`입니다.
 - **문자열 비교는 문자 코드 순서**: 사전 순서나 현재 문화권의 정렬 규칙을 쓰지 않습니다. 그래서 대문자가 소문자보다 앞입니다.
   - `"B" < "a"`는 `true`, `"ab" < "abc"`는 `true`입니다.
 - **문자열 처리는 내장 함수로**: 길이, 부분 문자열, 검색, 나누기, 숫자 변환은 아래 "내장 함수"를 씁니다.
@@ -400,6 +460,14 @@ type Value =
 - **`exists`/`forall`**: 결과가 정해지면 나머지 원소에는 함수를 호출하지 않습니다. 빈 리스트에서 `exists`는 `false`, `forall`은 `true`입니다.
 - **`range`**: 결과 리스트를 한 번에 만듭니다. 아주 큰 범위는 메모리를 그만큼 씁니다.
 
+#### 튜플
+
+| 함수 | 타입 | 예 | 결과 |
+|---|---|---|---|
+| `fst p`, `snd p` | 원소 2개짜리 튜플 → 원소 | `fst (1, "a")`, `snd (1, "a")` | `1`, `"a"` |
+
+원소가 3개 이상인 튜플은 패턴으로 꺼냅니다. `let (a, b, c) = t in ...`
+
 ## 5. 오류
 
 | 단계 | 원인 | 메시지 |
@@ -410,9 +478,11 @@ type Value =
 | 렉서 | `int` 범위를 넘는 숫자 | `Integer literal out of range: 2147483648 (line L, column C)` |
 | 파서 | 문법에 맞지 않는 토큰 (예: `1 + + 2`, `let in = 1 in 2`, `[1;]`) | `parse error: unexpected '<토큰>' (line L, column C)` |
 | 파서 | 식이 끝나지 않았는데 입력이 끝남 (예: `1 +`, `let x = 1`, `if c then 1`, `match xs with [] -> 0`) | `parse error: unexpected end of input (line L, column C)` |
+| 파서 | 한 패턴 안에 같은 이름이 두 번 (예: `(a, a)`) | `Duplicate variable in pattern: a (line L, column C)`. 위치는 패턴의 시작 |
 | 평가 | 정의되지 않은 변수 | `Unbound variable: <이름>` |
-| 평가 | 피연산자 타입 불일치 | `Type error: expected <기대 타입> but got <int\|bool\|string\|function\|list>` |
-| 평가 | 리스트가 아닌 값에 `::`나 `match` 사용 (예: `1 :: 2`) | `Type error: expected list but got int` |
+| 평가 | 피연산자 타입 불일치 | `Type error: expected <기대 타입> but got <int\|bool\|string\|function\|list\|tuple>` |
+| 평가 | `::` 오른쪽이 리스트가 아님 (예: `1 :: 2`) | `Type error: expected list but got int` |
+| 평가 | `match`나 `let` 튜플 분해에서 일치하는 패턴이 없음 | `Match failure: <값>` |
 | 평가 | 함수가 아닌 값을 호출 (예: `1 2`) | `Type error: expected function but got int` |
 | 평가 | 0으로 나누기 | `Attempted to divide by zero.` |
 | 평가 | `substr`의 범위가 문자열 밖 | `substr: index out of range (length 5, start 3, count 5)` |
@@ -420,6 +490,7 @@ type Value =
 | 평가 | `toInt`가 정수로 읽을 수 없는 문자열 | `toInt: invalid integer: "abc"` |
 | 평가 | 빈 리스트에 `head`/`tail` | `head: empty list`, `tail: empty list` |
 | 평가 | `nth`의 위치가 리스트 밖 | `nth: index out of range (length 1, index 1)` |
+| 평가 | `fst`/`snd`에 원소 2개짜리 튜플이 아닌 값 | `Type error: expected pair but got <타입>` |
 | 평가 | 재귀가 너무 깊음 | `Stack overflow.` (프로세스 종료, 잡을 수 없음) |
 
 ### 오류 위치

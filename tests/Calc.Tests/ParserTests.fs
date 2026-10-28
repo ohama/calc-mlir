@@ -289,34 +289,110 @@ let tests =
                 ""
         }
         test "match" {
+            Expect.equal (parse "match xs with [] -> 0 | h :: t -> h") (Match (Var "xs", [ (PNil, None, Number 0); (PCons (PVar "h", PVar "t"), None, Var "h") ])) ""
+        }
+        test "match: 첫 | 생략 가능" {
+            Expect.equal (parse "match xs with | [] -> 0 | h :: t -> h") (Match (Var "xs", [ (PNil, None, Number 0); (PCons (PVar "h", PVar "t"), None, Var "h") ])) ""
+        }
+        test "match: 분기 순서를 그대로 유지" {
             Expect.equal
-                (parse "match xs with [] -> 0 | h :: t -> h")
-                (Match (Var "xs", Number 0, "h", "t", Var "h"))
+                (parse "match xs with h :: t -> h | [] -> 0")
+                (Match (Var "xs", [ (PCons (PVar "h", PVar "t"), None, Var "h"); (PNil, None, Number 0) ]))
                 ""
         }
-        test "match: 첫 | 생략 가능, 분기 순서 무관" {
-            let expected = Match (Var "xs", Number 0, "h", "t", Var "h")
-            Expect.equal (parse "match xs with | [] -> 0 | h :: t -> h") expected ""
-            Expect.equal (parse "match xs with h :: t -> h | [] -> 0") expected ""
-            Expect.equal (parse "match xs with | h :: t -> h | [] -> 0") expected ""
+        test "match: 분기 하나, 분기 여러 개" {
+            Expect.equal (parse "match x with _ -> 0") (Match (Var "x", [ (PWildcard, None, Number 0) ])) ""
+            Expect.equal
+                (parse "match x with 1 -> 10 | 2 -> 20 | _ -> 0")
+                (Match (Var "x", [ (PInt 1, None, Number 10); (PInt 2, None, Number 20); (PWildcard, None, Number 0) ]))
+                ""
         }
         test "match 마지막 분기 본문은 오른쪽으로 최대한 확장" {
             Expect.equal
                 (parse "match xs with [] -> 0 | h :: t -> h + 1")
-                (Match (Var "xs", Number 0, "h", "t", Add (Var "h", Number 1)))
+                (Match (Var "xs", [ (PNil, None, Number 0); (PCons (PVar "h", PVar "t"), None, Add (Var "h", Number 1)) ]))
                 ""
         }
-        test "중첩 match: 분기가 둘뿐이므로 괄호 없이 가능" {
+        test "중첩 match: 뒤의 분기는 모두 안쪽 match 것 (F# 와 같음)" {
             Expect.equal
                 (parse "match a with [] -> match b with [] -> 1 | x :: y -> 2 | h :: t -> 3")
-                (Match (Var "a", Match (Var "b", Number 1, "x", "y", Number 2), "h", "t", Number 3))
+                (Match (Var "a",
+                        [ (PNil, None,
+                           Match (Var "b",
+                                  [ (PNil, None, Number 1)
+                                    (PCons (PVar "x", PVar "y"), None, Number 2)
+                                    (PCons (PVar "h", PVar "t"), None, Number 3) ])) ]))
                 ""
         }
-        test "match 분기가 하나면 parse error" {
-            Expect.throws (fun () -> parse "match xs with [] -> 0" |> ignore) ""
+        test "중첩 match: 괄호로 감싸면 바깥 분기" {
+            Expect.equal
+                (parse "match a with [] -> (match b with _ -> 1) | _ -> 2")
+                (Match (Var "a", [ (PNil, None, Match (Var "b", [ (PWildcard, None, Number 1) ])); (PWildcard, None, Number 2) ]))
+                ""
         }
-        test "같은 종류 분기 둘은 parse error" {
-            Expect.throws (fun () -> parse "match xs with [] -> 0 | [] -> 1" |> ignore) ""
+        test "when 가드" {
+            Expect.equal
+                (parse "match n with x when x > 0 -> x | _ -> 0")
+                (Match (Var "n", [ (PVar "x", Some (Greater (Var "x", Number 0)), Var "x"); (PWildcard, None, Number 0) ]))
+                ""
+        }
+        test "패턴: 리터럴" {
+            let arm p = match parse (sprintf "match x with %s -> 0" p) with
+                        | Match (_, [ (pat, _, _) ]) -> pat
+                        | e -> failtestf "%A" e
+            Expect.equal (arm "42") (PInt 42) ""
+            Expect.equal (arm "-1") (PInt -1) ""
+            Expect.equal (arm "true") (PBool true) ""
+            Expect.equal (arm "\"a\"") (PString "a") ""
+            Expect.equal (arm "[]") PNil ""
+            Expect.equal (arm "_") PWildcard ""
+        }
+        test "패턴: :: 는 오른쪽 결합, 리스트 패턴은 PCons 로 바뀜" {
+            let arm p = match parse (sprintf "match x with %s -> 0" p) with
+                        | Match (_, [ (pat, _, _) ]) -> pat
+                        | e -> failtestf "%A" e
+            Expect.equal (arm "a :: b :: t") (PCons (PVar "a", PCons (PVar "b", PVar "t"))) ""
+            Expect.equal (arm "[a; b]") (PCons (PVar "a", PCons (PVar "b", PNil))) ""
+            Expect.equal (arm "[x]") (PCons (PVar "x", PNil)) ""
+            Expect.equal (arm "(a, _)") (PTuple [ PVar "a"; PWildcard ]) ""
+            Expect.equal (arm "(a, (b, c))") (PTuple [ PVar "a"; PTuple [ PVar "b"; PVar "c" ] ]) ""
+            Expect.equal (arm "(h :: t)") (PCons (PVar "h", PVar "t")) ""
+            Expect.equal (arm "(1, x) :: _") (PCons (PTuple [ PInt 1; PVar "x" ], PWildcard)) ""
+        }
+        test "패턴 안의 같은 이름은 오류 (위치 포함)" {
+            expectParseError "match p with (a, a) -> a" "Duplicate variable in pattern: a" 1 14
+            expectParseError "match p with | _ -> 0 | x :: x -> 1" "Duplicate variable in pattern: x" 1 25
+            expectParseError "let (x, x) = p in x" "Duplicate variable in pattern: x" 1 5
+        }
+        test "튜플" {
+            Expect.equal (parse "(1, 2)") (Tuple [ Number 1; Number 2 ]) ""
+            Expect.equal (parse "(1, x + 1, \"a\")") (Tuple [ Number 1; Add (Var "x", Number 1); Str "a" ]) ""
+            Expect.equal (parse "((1, 2), 3)") (Tuple [ Tuple [ Number 1; Number 2 ]; Number 3 ]) ""
+        }
+        test "괄호 하나짜리는 튜플이 아님" {
+            Expect.equal (parse "(1)") (Number 1) ""
+        }
+        test "튜플은 함수 인자가 될 수 있음 (Atom)" {
+            Expect.equal (parse "f (1, 2)") (App (Var "f", Tuple [ Number 1; Number 2 ])) ""
+        }
+        test "let 튜플 분해" {
+            Expect.equal
+                (parse "let (a, b) = p in a")
+                (LetPattern (PTuple [ PVar "a"; PVar "b" ], Var "p", Var "a"))
+                ""
+        }
+        test "_ 인자" {
+            Expect.equal (parse "fun _ -> 1") (Lambda ("_", Number 1)) ""
+            Expect.equal (parse "let f _ x = x in f") (Let ("f", Lambda ("_", Lambda ("x", Var "x")), Var "f")) ""
+        }
+        test "_ 는 식에 쓸 수 없음" {
+            expectParseError "_ + 1" "parse error: unexpected '_'" 1 1
+        }
+        test "괄호 없는 튜플은 지원하지 않음" {
+            expectParseError "1, 2" "parse error: unexpected ','" 1 2
+        }
+        test "match 분기가 없으면 parse error" {
+            Expect.throws (fun () -> parse "match xs with" |> ignore) ""
         }
         test "리스트 끝 ; 는 parse error" {
             Expect.throws (fun () -> parse "[1;]" |> ignore) ""

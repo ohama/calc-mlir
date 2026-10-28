@@ -1,5 +1,20 @@
 module Ast
 
+type Pattern =
+    /// x: 무엇이든 일치하고 x 에 묶음
+    | PVar of string
+    /// _: 무엇이든 일치, 묶지 않음
+    | PWildcard
+    | PInt of int
+    | PBool of bool
+    | PString of string
+    /// []
+    | PNil
+    /// head :: tail. 리스트 패턴 [a; b] 는 PCons(a, PCons(b, PNil)) 로 바뀜
+    | PCons of Pattern * Pattern
+    /// (p1, p2, ...) 원소 2개 이상
+    | PTuple of Pattern list
+
 type Expr =
     | Number of int
     | Bool of bool
@@ -29,5 +44,9 @@ type Expr =
     | Nil
     /// head :: tail. 리스트 리터럴 [a; b] 는 Cons(a, Cons(b, Nil)) 로 바뀜
     | Cons of Expr * Expr
-    /// match e with [] -> nilCase | head :: tail -> consCase
-    | Match of scrutinee: Expr * nilCase: Expr * head: string * tail: string * consCase: Expr
+    /// (e1, e2, ...) 원소 2개 이상
+    | Tuple of Expr list
+    /// match e with | pattern [when guard] -> body | ...  (위에서부터 처음 일치하는 분기)
+    | Match of scrutinee: Expr * cases: (Pattern * Expr option * Expr) list
+    /// let (a, b) = e in body. 일치하지 않으면 Match failure
+    | LetPattern of Pattern * Expr * Expr

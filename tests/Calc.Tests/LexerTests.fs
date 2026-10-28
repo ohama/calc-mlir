@@ -110,6 +110,18 @@ let tests =
         test "| 와 || 구분 (가장 긴 일치)" {
             Expect.equal (tokens "| ||") [ BAR; OR; EOF ] ""
         }
+        test "_ 하나는 UNDERSCORE, 더 길면 IDENT" {
+            Expect.equal (tokens "_ _a a_ __") [ UNDERSCORE; IDENT "_a"; IDENT "a_"; IDENT "__"; EOF ] ""
+        }
+        test "쉼표와 when" {
+            Expect.equal
+                (tokens "(a, b) when")
+                [ LPAREN; IDENT "a"; COMMA; IDENT "b"; RPAREN; WHEN; EOF ]
+                ""
+        }
+        test "키워드로 시작하는 식별자: whenever" {
+            Expect.equal (tokens "whenever") [ IDENT "whenever"; EOF ] ""
+        }
         test "키워드로 시작하는 식별자: matches, without" {
             Expect.equal (tokens "matches without") [ IDENT "matches"; IDENT "without"; EOF ] ""
         }

@@ -11,6 +11,8 @@ type Value =
     /// let rec name param = body. 호출할 때 name 을 자기 자신으로 환경에 추가
     | VRecClosure of name: string * param: string * body: Expr * env: Map<string, Value>
     | VList of Value list
+    /// (v1, v2, ...) 원소 2개 이상
+    | VTuple of Value list
     /// 내장 함수. args 는 지금까지 받은 인자 (커링: 인자가 다 모이면 실행)
     | VBuiltin of name: string * args: Value list
 
@@ -30,6 +32,7 @@ let rec formatValue value =
     | VString s -> quote s
     | VClosure _ | VRecClosure _ | VBuiltin _ -> "<fun>"
     | VList items -> "[" + (items |> List.map formatValue |> String.concat "; ") + "]"
+    | VTuple items -> "(" + (items |> List.map formatValue |> String.concat ", ") + ")"
 
 let typeName value =
     match value with
@@ -38,6 +41,7 @@ let typeName value =
     | VString _ -> "string"
     | VClosure _ | VRecClosure _ | VBuiltin _ -> "function"
     | VList _ -> "list"
+    | VTuple _ -> "tuple"
 
 let typeError expected value =
     failwithf "Type error: expected %s but got %s" expected (typeName value)
@@ -48,13 +52,33 @@ let rec valueEquals a b =
     | VInt x, VInt y -> x = y
     | VBool x, VBool y -> x = y
     | VString x, VString y -> x = y
-    | VList xs, VList ys ->
+    | VList xs, VList ys
+    | VTuple xs, VTuple ys ->
         List.length xs = List.length ys && List.forall2 valueEquals xs ys
     | VInt _, v -> typeError "int" v
     | VBool _, v -> typeError "bool" v
     | VString _, v -> typeError "string" v
     | VList _, v -> typeError "list" v
-    | v, _ -> typeError "int, bool, string or list" v
+    | VTuple _, v -> typeError "tuple" v
+    | v, _ -> typeError "int, bool, string, list or tuple" v
+
+/// 패턴이 값과 일치하면 묶을 이름들을 env 에 추가해서 반환. 타입이 달라도 오류가 아니라 불일치
+let rec matchPattern pattern value (env: Env) : Env option =
+    match pattern, value with
+    | PVar name, v -> Some (Map.add name v env)
+    | PWildcard, _ -> Some env
+    | PInt n, VInt m -> if n = m then Some env else None
+    | PBool b, VBool c -> if b = c then Some env else None
+    | PString s, VString t -> if s = t then Some env else None
+    | PNil, VList [] -> Some env
+    | PCons (ph, pt), VList (h :: t) ->
+        matchPattern ph h env |> Option.bind (matchPattern pt (VList t))
+    | PTuple ps, VTuple vs when List.length ps = List.length vs ->
+        List.fold2 (fun acc p v -> acc |> Option.bind (matchPattern p v)) (Some env) ps vs
+    | _ -> None
+
+let matchFailure value =
+    failwithf "Match failure: %s" (formatValue value)
 
 /// < > <= >= 와 sort 의 순서. int 끼리 또는 string 끼리 (문자 코드 순서)
 let compareValues a b =
@@ -119,6 +143,9 @@ let builtinArity =
         "fold", 3
         "exists", 2
         "forall", 2
+        // 튜플
+        "fst", 1
+        "snd", 1
     ]
 
 /// 인자가 다 모인 내장 함수를 실행. 문자열 위치와 길이는 UTF-16 코드 단위 (.NET string 과 같음)
@@ -197,6 +224,9 @@ let callBuiltin (apply: Value -> Value -> Value) name args =
     | "fold", [ f; acc; xs ] -> list' xs |> List.fold (fun acc x -> apply (apply f acc) x) acc
     | "exists", [ f; xs ] -> VBool (list' xs |> List.exists (fun x -> bool' (apply f x)))
     | "forall", [ f; xs ] -> VBool (list' xs |> List.forall (fun x -> bool' (apply f x)))
+    | "fst", [ VTuple [ a; _ ] ] -> a
+    | "snd", [ VTuple [ _; b ] ] -> b
+    | ("fst" | "snd"), [ v ] -> typeError "pair" v
     | _ -> failwithf "Unknown builtin: %s" name
 
 /// 처음 환경. 내장 함수는 보통 변수처럼 let 으로 가릴 수 있음
@@ -249,10 +279,24 @@ let rec evalIn (env: Env) expr =
     | Cons (head, tail) ->
         let h = evalIn env head
         VList (h :: evalList env tail)
-    | Match (scrutinee, nilCase, head, tail, consCase) ->
-        match evalList env scrutinee with
-        | [] -> evalIn env nilCase
-        | h :: t -> evalIn (env |> Map.add head h |> Map.add tail (VList t)) consCase
+    | Tuple items -> VTuple (items |> List.map (evalIn env))
+    | Match (scrutinee, cases) ->
+        let value = evalIn env scrutinee
+        // 위에서부터 패턴과 가드가 모두 맞는 첫 분기
+        let rec tryCases cases =
+            match cases with
+            | [] -> matchFailure value
+            | (pattern, guard, body) :: rest ->
+                match matchPattern pattern value env with
+                | Some caseEnv when (match guard with None -> true | Some g -> evalBool caseEnv g) ->
+                    evalIn caseEnv body
+                | _ -> tryCases rest
+        tryCases cases
+    | LetPattern (pattern, value, body) ->
+        let v = evalIn env value
+        match matchPattern pattern v env with
+        | Some bodyEnv -> evalIn bodyEnv body
+        | None -> matchFailure v
 
 and evalInt env expr =
     match evalIn env expr with

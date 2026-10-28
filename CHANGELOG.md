@@ -4,6 +4,30 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.12.0] - 2026-10-28
+
+### 추가
+- 튜플 `(1, "a", true)`. 괄호 안에 원소 2개 이상을 씁니다. 같은 원소 수끼리 `=`로 비교할 수 있습니다.
+- 일반 패턴 매칭
+  - 분기 수 제한 없음. 위에서부터 첫 일치 분기를 고르고, 없으면 `Match failure: <값>`
+  - 패턴: 변수, `_`, 정수·문자열·불리언 리터럴, `[]`, `p :: p`, `[p; p]`, `(p, p)`, 중첩
+  - `when` 가드
+- 튜플 분해 `let (a, b) = e in body`
+- `_` 인자: `fun _ -> 1`, `let f _ x = x`
+- 내장 함수 `fst`, `snd`
+- 파서 오류 `Duplicate variable in pattern: <이름> (line L, column C)`
+- 렉서: 키워드 `when`, 토큰 `,`, `_`
+- AST: `Pattern`(`PVar`, `PWildcard`, `PInt`, `PBool`, `PString`, `PNil`, `PCons`, `PTuple`), `Tuple`, `LetPattern`. 값: `VTuple`
+- 테스트 72개 추가 (총 491개)
+
+### 변경
+- `Match`의 AST가 `Match (e, [ (pattern, guard, body) ... ])`로 바뀌었습니다. 예전의 두 분기 고정 `match`는 이 일반 형식에 포함됩니다.
+- 중첩 `match`의 뒤 분기는 이제 F#처럼 **안쪽** `match`의 것입니다. 예전에는 분기 수가 두 개로 고정이라 바깥 `match`의 것이었습니다. 바깥 분기로 쓰려면 안쪽 `match`를 괄호로 감쌉니다.
+- `match`에서 리스트가 아닌 값은 타입 오류 대신 `Match failure`입니다. 패턴은 타입이 달라도 불일치로 처리합니다.
+- `_` 하나는 이제 변수 이름이 아닙니다. 식에 쓰면 parse error입니다.
+- 함수를 비교할 때의 오류 메시지가 `expected int, bool, string, list or tuple but got function`으로 바뀌었습니다.
+- `docs/grammar.md`, `docs/testing.md`, `README.md`에 튜플과 패턴 매칭을 반영했습니다.
+
 ## [0.11.0] - 2026-10-28
 
 ### 추가
