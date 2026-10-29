@@ -776,9 +776,10 @@ type Value =
     | VString of string                                   // "..."
     | VClosure of Closure                                 // fun, let rec 의 함수 (정의된 곳의 환경을 가리킴)
     | VList of Value list                                 // [v1; v2; ...]
-    | VTuple of Value list                                // (v1, v2, ...)
+    | VTuple of Value[]                                   // (v1, v2, ...)
     | VBuiltin of name * args                             // 내장 함수 (args: 지금까지 받은 인자)
-    | VData of typeName * ctor * payload option           // None, Some 1, Rect (2, 3)
+    | VData of typeName * ctor * payload                  // Some 1, Rect (2, 3) (인자가 여럿이면 payload 는 VTuple)
+    | VData0 of typeName * ctor                           // None, Red (인자 없는 생성자)
     | VConstructor of typeName * ctor * fields            // 인자 있는 생성자 자체 (Some, Rect)
     | VUnit                                               // ()
     | VRef of Value ref                                   // ref v (:= 가 내용을 바꿈)
@@ -832,8 +833,8 @@ type Value =
 | `Tuple [e1; ...]` | 아무 타입 | 왼쪽부터 평가한 `VTuple` |
 | `Match (e, cases)` | 아무 타입 | `e`를 평가하고, 위에서부터 패턴이 일치하고 가드가 `true`인 첫 분기의 본문을 패턴이 묶은 이름을 추가한 환경에서 평가. 없으면 `Match failure`. **선택된 분기만** 평가함 |
 | `LetPattern (p, e1, e2)` | 아무 타입 | `e1`의 값이 `p`와 일치하면 묶은 이름을 추가한 환경에서 `e2`를 평가. 아니면 `Match failure` |
-| `Ctor c` | | `env`에서 `c`의 값(`VData` 또는 `VConstructor`). 없으면 `Unknown constructor: c` |
-| `TypeDecl (t, _, ctors, e)` | | 인자 없는 생성자는 `VData (t, c, None)`, 있는 생성자는 `VConstructor (t, c, 원소 수)`로 `env`에 추가하고 `e`를 평가 |
+| `Ctor c` | | `env`에서 `c`의 값(`VData0` 또는 `VConstructor`). 없으면 `Unknown constructor: c` |
+| `TypeDecl (t, _, ctors, e)` | | 인자 없는 생성자는 `VData0 (t, c)`, 있는 생성자는 `VConstructor (t, c, 원소 수)`로 `env`에 추가하고 `e`를 평가 |
 
 ### 함수 호출
 

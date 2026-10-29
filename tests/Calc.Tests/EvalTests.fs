@@ -226,10 +226,10 @@ let cases =
       // 사용자가 정의한 map 이 내장 map 을 가림
       "let map f xs = 0 in map 1 2", VInt 0
       // 튜플
-      "(1, 2)", VTuple [ VInt 1; VInt 2 ]
-      "(1, \"a\", true)", VTuple [ VInt 1; VString "a"; VBool true ]
-      "((1, 2), [3])", VTuple [ VTuple [ VInt 1; VInt 2 ]; VList [ VInt 3 ] ]
-      "(1 + 1, 2 * 3)", VTuple [ VInt 2; VInt 6 ]
+      "(1, 2)", VTuple [| VInt 1; VInt 2 |]
+      "(1, \"a\", true)", VTuple [| VInt 1; VString "a"; VBool true |]
+      "((1, 2), [3])", VTuple [| VTuple [| VInt 1; VInt 2 |]; VList [ VInt 3 ] |]
+      "(1 + 1, 2 * 3)", VTuple [| VInt 2; VInt 6 |]
       "(1, 2) = (1, 2)", VBool true
       "(1, 2) = (1, 3)", VBool false
       "(1, 2) <> (2, 1)", VBool true
@@ -269,14 +269,14 @@ let cases =
       // 패턴 변수는 바깥 이름을 가리고, 분기 밖에서는 사라짐
       "let x = 100 in (match 1 with x -> x) + x", VInt 101
       "let rec zip xs ys = match (xs, ys) with (x :: xt, y :: yt) -> (x, y) :: zip xt yt | _ -> [] in zip [1; 2] [\"a\"; \"b\"; \"c\"]",
-          VList [ VTuple [ VInt 1; VString "a" ]; VTuple [ VInt 2; VString "b" ] ]
+          VList [ VTuple [| VInt 1; VString "a" |]; VTuple [| VInt 2; VString "b" |] ]
       "let rec last xs = match xs with [x] -> x | _ :: t -> last t | [] -> 0 in last [1; 2; 3]", VInt 3
       "let f _ = 1 in f 2", VInt 1
       // option
       "Some 1", some (VInt 1)
       "None", none
       "Some (Some 1)", some (some (VInt 1))
-      "Some (1, \"a\")", some (VTuple [ VInt 1; VString "a" ])
+      "Some (1, \"a\")", some (VTuple [| VInt 1; VString "a" |])
       "map Some [1; 2]", VList [ some (VInt 1); some (VInt 2) ]
       "Some 1 = Some 1", VBool true
       "Some 1 = Some 2", VBool false
@@ -297,18 +297,18 @@ let cases =
       "defaultValue 0 (Some 5)", VInt 5
       // 사용자 정의 타입
       "type shape = Circle of int | Rect of int * int in let area s = match s with Circle r -> 3 * r * r | Rect (w, h) -> w * h in map area [Circle 2; Rect (2, 3)]", VList [ VInt 12; VInt 6 ]
-      "type shape = Circle of int | Rect of int * int in Rect (2, 3)", VData ("shape", "Rect", Some (VTuple [ VInt 2; VInt 3 ]))
+      "type shape = Circle of int | Rect of int * int in Rect (2, 3)", VData ("shape", "Rect", VTuple [| VInt 2; VInt 3 |])
       "type color = Red | Green | Blue in match Green with Red -> 1 | Green -> 2 | Blue -> 3", VInt 2
       "type color = Red | Green | Blue in Red = Red", VBool true
       "type color = Red | Green | Blue in Red <> Blue", VBool true
-      "type color = | Red | Green in Red", VData ("color", "Red", None)
+      "type color = | Red | Green in Red", VData0 ("color", "Red")
       "type 'a tree = Leaf | Node of 'a tree * 'a * 'a tree in let rec sum t = match t with Leaf -> 0 | Node (l, x, r) -> sum l + x + sum r in sum (Node (Node (Leaf, 1, Leaf), 2, Node (Leaf, 3, Leaf)))", VInt 6
       "type 'a tree = Leaf | Node of 'a tree * 'a * 'a tree in let rec size t = match t with Leaf -> 0 | Node (l, _, r) -> size l + 1 + size r in size (Node (Leaf, 1, Node (Leaf, 2, Node (Leaf, 3, Leaf))))", VInt 3
       "type ('k, 'v) entry = Entry of 'k * 'v in match Entry (\"a\", 1) with Entry (k, v) -> v", VInt 1
       "type t = F of int -> int in match F (fun x -> x + 1) with F f -> f 1", VInt 2
-      "type t = A of int list * string option in A ([1], Some \"x\")", VData ("t", "A", Some (VTuple [ VList [ VInt 1 ]; some (VString "x") ]))
+      "type t = A of int list * string option in A ([1], Some \"x\")", VData ("t", "A", VTuple [| VList [ VInt 1 ]; some (VString "x") |])
       // 대문자로 시작하는 타입 이름도 됨
-      "type Answer = Yes | No in No", VData ("Answer", "No", None)
+      "type Answer = Yes | No in No", VData0 ("Answer", "No")
       // 안쪽 type 선언의 같은 이름 생성자는 다른 타입이라 일치하지 않음
       "type t = A in let v = A in type u = A in match v with A -> 1 | _ -> 2", VInt 2
       // type 선언 밖에서는 생성자를 쓸 수 없지만 값은 남아 있음
@@ -316,7 +316,7 @@ let cases =
       // 타입 표기: 실행에는 영향 없음
       "(1 + 2 : int)", VInt 3
       "let f (x: int) (y: string) : string = y + toString x in f 1 \"a\"", VString "a1"
-      "let id (x: 'a) : 'a = x in (id 1, id \"a\")", VTuple [ VInt 1; VString "a" ]
+      "let id (x: 'a) : 'a = x in (id 1, id \"a\")", VTuple [| VInt 1; VString "a" |]
       "let rec fact (n: int) : int = if n = 0 then 1 else n * fact (n - 1) in fact 5", VInt 120
       "let xs : int list = [] in 1 :: xs", VList [ VInt 1 ]
       "(fun (_ : int) -> 0) 5", VInt 0
@@ -324,36 +324,36 @@ let cases =
       // 예외
       "try failwith \"boom\" with Failure m -> \"caught \" + m", VString "caught boom"
       "try 1 + 2 with _ -> 0", VInt 3
-      "exception Neg of int in let check n = if n < 0 then raise (Neg n) else n in (try check 5 with Neg n -> n, try check (-3) with Neg n -> n * 10)", VTuple [ VInt 5; VInt -30 ]
+      "exception Neg of int in let check n = if n < 0 then raise (Neg n) else n in (try check 5 with Neg n -> n, try check (-3) with Neg n -> n * 10)", VTuple [| VInt 5; VInt -30 |]
       "exception E in try (try raise E with Not_found -> 1) with E -> 2", VInt 2
       "exception E in try (try raise Not_found with Not_found -> raise E) with E -> 3", VInt 3
       "try raise Not_found with Failure _ -> 1 | x when x = Not_found -> 2", VInt 2
       "try head [] with Failure m -> m", VString "head: empty list"
       "try toString (nth [1; 2] 5) with Failure m -> m", VString "nth: index out of range (length 2, index 5)"
       "let rec loop n = if n = 0 then raise Not_found else loop (n - 1) in try loop 100000 with Not_found -> \"deep\"", VString "deep"
-      "exception E of int in [E 1; Failure \"x\"; Not_found]", VList [ VData ("exn", "E", Some (VInt 1)); VData ("exn", "Failure", Some (VString "x")); VData ("exn", "Not_found", None) ]
+      "exception E of int in [E 1; Failure \"x\"; Not_found]", VList [ VData ("exn", "E", VInt 1); VData ("exn", "Failure", VString "x"); VData0 ("exn", "Not_found") ]
       "exception E of int in E 1 = E 1 && E 1 <> E 2", VBool true
       // 문자열 포맷
       "sprintf \"%d is %s\" 42 \"answer\"", VString "42 is answer"
       "sprintf \"%b|%A|%A|100%%\" true [Some \"a\"] \"s\"", VString "true|[Some \"a\"]|s|100%"
       "map (sprintf \"<%d>\") [1; 2]", VList [ VString "<1>"; VString "<2>" ]
-      "let f = sprintf \"%s-%s\" \"a\" in (f \"b\", f \"c\")", VTuple [ VString "a-b"; VString "a-c" ]
+      "let f = sprintf \"%s-%s\" \"a\" in (f \"b\", f \"c\")", VTuple [| VString "a-b"; VString "a-c" |]
       "let sprintf x = x + 1 in sprintf 2", VInt 3
       "let name = \"Kim\" in let age = 30 in $\"Hello {name}, {age + 1} next year\"", VString "Hello Kim, 31 next year"
       "$\"{{x}} %d{1 + 2} {[1; 2]} {(1, \"a\")} 5%\"", VString "{x} 3 [1; 2] (1, \"a\") 5%"
       "let toString x = \"shadowed\" in $\"{1}\" + sprintf \"%A\" 2", VString "12" // 포맷은 가린 toString 을 쓰지 않음
-      "let safeDiv a b = try Some (if b = 0 then failwith \"div\" else a / b) with Failure _ -> None in (safeDiv 6 2, safeDiv 1 0)", VTuple [ some (VInt 3); none ]
+      "let safeDiv a b = try Some (if b = 0 then failwith \"div\" else a / b) with Failure _ -> None in (safeDiv 6 2, safeDiv 1 0)", VTuple [| some (VInt 3); none |]
       // 가변 참조와 반복문
       "let r = ref 0 in r := !r + 1; !r", VInt 1
       "let r = ref 5 in let f x = r := !r * x in f 2; f 3; !r", VInt 30
       "let c = ref 0 in incr c; incr c; decr c; !c", VInt 1
       "let r = ref [] in r := [1]; r := 2 :: !r; !r", VList [ VInt 2; VInt 1 ]
       "ref (Some (ref (-1)))", VRef (ref (some (VRef (ref (VInt -1)))))
-      "(ref 1 = ref 1, ref 1 = ref 2, [ref \"a\"])", VTuple [ VBool true; VBool false; VList [ VRef (ref (VString "a")) ] ]
+      "(ref 1 = ref 1, ref 1 = ref 2, [ref \"a\"])", VTuple [| VBool true; VBool false; VList [ VRef (ref (VString "a")) ] |]
       "let a = ref 1 in let b = a in b := 2; !a", VInt 2 // 같은 칸
       "let r = ref (fun x -> x) in r := (fun x -> x + 1); !r 1", VInt 2
       "let counter () = let n = ref 0 in fun () -> n := !n + 1; !n in let c = counter () in c (); c (); c ()", VInt 3
-      "let f () = ref [] in let a = f () in let b = f () in a := [1]; b := [\"x\"]; (!a, !b)", VTuple [ VList [ VInt 1 ]; VList [ VString "x" ] ]
+      "let f () = ref [] in let a = f () in let b = f () in a := [1]; b := [\"x\"]; (!a, !b)", VTuple [| VList [ VInt 1 ]; VList [ VString "x" ] |]
       "let s = ref 0 in for i = 1 to 10 do s := !s + i done; !s", VInt 55
       "let s = ref [] in for i = 1 to 3 do s := i :: !s done; !s", VList [ VInt 3; VInt 2; VInt 1 ]
       "let s = ref [] in for i = 3 downto 1 do s := i :: !s done; !s", VList [ VInt 1; VInt 2; VInt 3 ]
@@ -369,60 +369,60 @@ let cases =
       "let ref x = x + 1 in ref 1", VInt 2 // ref 는 보통 이름 (가릴 수 있음)
       "let do_ = 1 in let done_ = 2 in do_ + done_", VInt 3
       // 레코드
-      "type p = { x: int; y: int } in let a = { y = 2; x = 1 } in (a, a.x * 10 + a.y)", VTuple [ VRecord ("p", [ "x", VInt 1; "y", VInt 2 ]); VInt 12 ]
-      "type p = { x: int; y: int } in let a = { x = 1; y = 2 } in let b = { a with x = 10 } in (a.x, b.x, b.y)", VTuple [ VInt 1; VInt 10; VInt 2 ]
+      "type p = { x: int; y: int } in let a = { y = 2; x = 1 } in (a, a.x * 10 + a.y)", VTuple [| VRecord ("p", [ "x", VInt 1; "y", VInt 2 ]); VInt 12 |]
+      "type p = { x: int; y: int } in let a = { x = 1; y = 2 } in let b = { a with x = 10 } in (a.x, b.x, b.y)", VTuple [| VInt 1; VInt 10; VInt 2 |]
       "type p = { x: int; y: int } in { { x = 1; y = 2 } with y = 3; x = 4 }", VRecord ("p", [ "x", VInt 4; "y", VInt 3 ])
-      "type 'a box = { value: 'a; label: string } in let b = { value = [1]; label = \"l\" } in (b.value, { b with label = \"m\" }.label)", VTuple [ VList [ VInt 1 ]; VString "m" ]
-      "type p = { x: int; y: int } in ({ x = 1; y = 2 } = { y = 2; x = 1 }, { x = 1; y = 2 } <> { x = 1; y = 3 })", VTuple [ VBool true; VBool true ]
+      "type 'a box = { value: 'a; label: string } in let b = { value = [1]; label = \"l\" } in (b.value, { b with label = \"m\" }.label)", VTuple [| VList [ VInt 1 ]; VString "m" |]
+      "type p = { x: int; y: int } in ({ x = 1; y = 2 } = { y = 2; x = 1 }, { x = 1; y = 2 } <> { x = 1; y = 3 })", VTuple [| VBool true; VBool true |]
       "type p = { x: int } in type q = { x: string } in { x = \"a\" }.x", VString "a" // 같은 필드 이름은 뒤의 타입
       "type v = { x: int; y: int } in let p = { x = 1; y = 2 } in let f a b = a - b in f p.y p.x", VInt 1 // f p.x == f (p.x)
       "type t = { r: int ref } in let a = { r = ref 0 } in a.r := 5; incr a.r; !a.r", VInt 6
       "type n = { value: int; next: n option } in let rec sum o = match o with None -> 0 | Some c -> c.value + sum c.next in sum (Some { value = 1; next = Some { value = 2; next = None } })", VInt 3
       "type inner = { v: int } in type outer = { i: inner } in let o = { i = { v = 7 } } in o.i.v", VInt 7
-      "type p = { x: int; y: int } in let s = ref \"\" in let f t v = s := !s + t; v in let r = { y = f \"y\" 1; x = f \"x\" 2 } in (!s, r)", VTuple [ VString "yx"; VRecord ("p", [ "x", VInt 2; "y", VInt 1 ]) ] // 쓴 순서대로 계산
+      "type p = { x: int; y: int } in let s = ref \"\" in let f t v = s := !s + t; v in let r = { y = f \"y\" 1; x = f \"x\" 2 } in (!s, r)", VTuple [| VString "yx"; VRecord ("p", [ "x", VInt 2; "y", VInt 1 ]) |] // 쓴 순서대로 계산
       "type p = { name: string; tags: string list } in [{ name = \"a\"; tags = [] }; { name = \"b\"; tags = [\"t\"] }]", VList [ VRecord ("p", [ "name", VString "a"; "tags", VList [] ]); VRecord ("p", [ "name", VString "b"; "tags", VList [ VString "t" ] ]) ]
       "type p = { x: int } in Some { x = -1 }", some (VRecord ("p", [ "x", VInt -1 ]))
       "type p = { x: int; y: int; } in { x = 1; y = 2; }.y", VInt 2
       // 배열
-      "let a = [| 3; 1; 2 |] in a.[0] <- 10; (a, Array.length a, a.[1] + a.[2])", VTuple [ VArray [| VInt 10; VInt 1; VInt 2 |]; VInt 3; VInt 3 ]
+      "let a = [| 3; 1; 2 |] in a.[0] <- 10; (a, Array.length a, a.[1] + a.[2])", VTuple [| VArray [| VInt 10; VInt 1; VInt 2 |]; VInt 3; VInt 3 |]
       "Array.init 5 (fun i -> i * i)", VArray [| VInt 0; VInt 1; VInt 4; VInt 9; VInt 16 |]
       "let t = ref 0 in Array.iter (fun x -> t := !t + x) [| 1; 2; 3 |]; !t", VInt 6
-      "(Array.map (fun x -> x + 1) [| 1; 2 |], Array.fold (fun acc x -> acc + x) 0 [| 1; 2; 3 |], Array.toList [| \"a\" |])", VTuple [ VArray [| VInt 2; VInt 3 |]; VInt 6; VList [ VString "a" ] ]
-      "let a = [| 1; 2 |] in let b = Array.copy a in b.[0] <- 0; (a, b, a = b, [| 1 |] = [| 1 |])", VTuple [ VArray [| VInt 1; VInt 2 |]; VArray [| VInt 0; VInt 2 |]; VBool false; VBool true ]
+      "(Array.map (fun x -> x + 1) [| 1; 2 |], Array.fold (fun acc x -> acc + x) 0 [| 1; 2; 3 |], Array.toList [| \"a\" |])", VTuple [| VArray [| VInt 2; VInt 3 |]; VInt 6; VList [ VString "a" ] |]
+      "let a = [| 1; 2 |] in let b = Array.copy a in b.[0] <- 0; (a, b, a = b, [| 1 |] = [| 1 |])", VTuple [| VArray [| VInt 1; VInt 2 |]; VArray [| VInt 0; VInt 2 |]; VBool false; VBool true |]
       "let a = [| 1 |] in let b = a in b.[0] <- 5; a.[0]", VInt 5 // 같은 배열
       "let g = Array.create 3 0 in for i = 0 to 2 do g.[i] <- i * 10 done; Array.toList g", VList [ VInt 0; VInt 10; VInt 20 ]
       "let a = Array.ofList [[1]; []] in a.[1] <- [2; 3]; a", VArray [| VList [ VInt 1 ]; VList [ VInt 2; VInt 3 ] |]
-      "(Array.length [||], Array.init 0 (fun i -> i))", VTuple [ VInt 0; VArray [||] ]
+      "(Array.length [||], Array.init 0 (fun i -> i))", VTuple [| VInt 0; VArray [||] |]
       "let m = Array.init 2 (fun i -> Array.create 2 i) in m.[1].[0] <- 9; m", VArray [| VArray [| VInt 0; VInt 0 |]; VArray [| VInt 9; VInt 1 |] |]
       "let fib n = let a = Array.create (n + 1) 0 in a.[1] <- 1; for i = 2 to n do a.[i] <- a.[i - 1] + a.[i - 2] done; a.[n] in fib 30", VInt 832040
       // 레코드 패턴
       "type p = { x: int; y: int } in let f r = match r with { x = 0; y = 0 } -> \"origin\" | { x = 0 } -> \"y axis\" | { x = a; y = b } when a = b -> \"diagonal\" | _ -> \"other\" in map f [{ x = 0; y = 0 }; { x = 0; y = 5 }; { x = 3; y = 3 }; { x = 1; y = 2 }]", VList [ VString "origin"; VString "y axis"; VString "diagonal"; VString "other" ]
       "type p = { x: int; y: int } in let { x = a; y = b } = { y = 4; x = 3 } in a * 10 + b", VInt 34
       "type p = { x: int; y: int } in let { y = b } = { x = 1; y = 2 } in b", VInt 2
-      "type 'a box = { value: 'a; label: string } in let unbox b = match b with { value = v } -> v in (unbox { value = [1]; label = \"l\" }, unbox { value = \"s\"; label = \"m\" })", VTuple [ VList [ VInt 1 ]; VString "s" ]
+      "type 'a box = { value: 'a; label: string } in let unbox b = match b with { value = v } -> v in (unbox { value = [1]; label = \"l\" }, unbox { value = \"s\"; label = \"m\" })", VTuple [| VList [ VInt 1 ]; VString "s" |]
       "type p = { x: int; y: int } in match Some { x = 1; y = 2 } with Some { x = 1; y = y } -> y | _ -> 0", VInt 2
       "type p = { name: string; tags: string list } in match { name = \"a\"; tags = [\"t\"; \"u\"] } with { tags = t :: _ } -> t | { tags = [] } -> \"\"", VString "t"
       "type inner = { v: int } in type outer = { i: inner; n: int } in match { n = 2; i = { v = 7 } } with { i = { v = v }; n = n } -> v * n", VInt 14
       "type p = { x: int; y: int } in match { x = 1; y = 2 } with { x = 1; y = 3 } | { x = 1; y = 2 } -> true | _ -> false", VBool true
       "module G = struct type point = { x: int; y: int } end;; match { x = 1; y = 2 } with { y = y } -> y", VInt 2
       // 모듈
-      "module M = struct let x = 1 let f y = y + x end;; (M.f 2, M.x)", VTuple [ VInt 3; VInt 1 ]
+      "module M = struct let x = 1 let f y = y + x end;; (M.f 2, M.x)", VTuple [| VInt 3; VInt 1 |]
       "module M = struct let x = 10 end let x = 1;; x + M.x", VInt 11
       "module M = struct let x = 10 end;; let x = 1 in x + M.x", VInt 11
-      "module M = struct let id x = x end;; (M.id 1, M.id \"a\")", VTuple [ VInt 1; VString "a" ]
+      "module M = struct let id x = x end;; (M.id 1, M.id \"a\")", VTuple [| VInt 1; VString "a" |]
       "module S = struct type 'a t = Empty | Push of 'a * 'a t let rec size s = match s with Empty -> 0 | Push (_, r) -> 1 + size r end;; S.size (S.Push (1, S.Push (2, S.Empty)))", VInt 2
-      "module M = struct type t = A | B let flip x = match x with A -> B | B -> A end;; (M.flip M.A, match M.B with M.A -> 1 | M.B -> 2)", VTuple [ VData ("M.t", "M.B", None); VInt 2 ]
+      "module M = struct type t = A | B let flip x = match x with A -> B | B -> A end;; (M.flip M.A, match M.B with M.A -> 1 | M.B -> 2)", VTuple [| VData0 ("M.t", "M.B"); VInt 2 |]
       "module M = struct exception E of int let check n = if n < 0 then raise (E n) else n end;; try M.check (-3) with M.E n -> n * 10", VInt -30
       "module G = struct type point = { x: int; y: int } let origin = { x = 0; y = 0 } end;; { G.origin with y = 5 }.y + G.origin.x", VInt 5
-      "module M = struct module N = struct let g x = x * 2 end let h x = N.g x + 1 end;; (M.h 3, M.N.g 4)", VTuple [ VInt 7; VInt 8 ]
+      "module M = struct module N = struct let g x = x * 2 end let h x = N.g x + 1 end;; (M.h 3, M.N.g 4)", VTuple [| VInt 7; VInt 8 |]
       "module M = struct let x = 1 let f y = y + x end open M;; f 10 + x", VInt 12
-      "module M = struct let x = 1 end open M let x = 5;; (x, M.x)", VTuple [ VInt 5; VInt 1 ]
+      "module M = struct let x = 1 end open M let x = 5;; (x, M.x)", VTuple [| VInt 5; VInt 1 |]
       "module M = struct type t = A | B end open M;; match A with A -> 1 | B -> 2", VInt 1
       "module M = struct let r = ref 0 let bump () = incr r end;; M.bump (); M.bump (); !M.r", VInt 2
-      "module M = struct let map f xs = 0 let g = map (fun x -> x) [1] end;; (M.g, map (fun x -> x + 1) [1])", VTuple [ VInt 0; VList [ VInt 2 ] ] // 모듈의 map 은 prelude 를 가리지 않음
-      "module A = struct let v = 1 end module B = struct open A let w = v + 1 end;; (B.w, (fun (x: int) -> x) A.v)", VTuple [ VInt 2; VInt 1 ]
+      "module M = struct let map f xs = 0 let g = map (fun x -> x) [1] end;; (M.g, map (fun x -> x + 1) [1])", VTuple [| VInt 0; VList [ VInt 2 ] |] // 모듈의 map 은 prelude 를 가리지 않음
+      "module A = struct let v = 1 end module B = struct open A let w = v + 1 end;; (B.w, (fun (x: int) -> x) A.v)", VTuple [| VInt 2; VInt 1 |]
       "module M = struct let x = 1 end module M = struct let y = 2 end;; M.y", VInt 2
-      "module A = struct module B = struct let v = 1 end open B let w = v + 1 end;; (A.w, A.B.v)", VTuple [ VInt 2; VInt 1 ] // 모듈 안의 모듈을 open
+      "module A = struct module B = struct let v = 1 end open B let w = v + 1 end;; (A.w, A.B.v)", VTuple [| VInt 2; VInt 1 |] // 모듈 안의 모듈을 open
       "module A = struct module B = struct let v = 1 end end open A.B;; v", VInt 1 ]
 
 /// 오류 메시지가 정확히 일치하는지 확인
@@ -456,13 +456,13 @@ let tests =
 
         testList "작은 문법" [
             test "% 는 .NET 과 같음: 부호는 왼쪽을 따름, 0 과 MinValue % -1 은 오류" {
-                Expect.equal (calc "(7 % 3, -7 % 3, 7 % -3)") (VTuple [ VInt 1; VInt -1; VInt 1 ]) ""
+                Expect.equal (calc "(7 % 3, -7 % 3, 7 % -3)") (VTuple [| VInt 1; VInt -1; VInt 1 |]) ""
                 Expect.throwsT<System.DivideByZeroException> (fun () -> calc "5 % 0" |> ignore) ""
                 Expect.throwsT<System.OverflowException> (fun () -> calc "(-2147483647 - 1) % -1" |> ignore) ""
             }
             test "|> 와 >>" {
                 Expect.equal (calc "[1; 2; 3] |> map (fun x -> x * x) |> sum") (VInt 14) ""
-                Expect.equal (calc "let inc x = x + 1 in let dbl x = x * 2 in ((inc >> dbl) 5, (dbl >> inc) 5)") (VTuple [ VInt 12; VInt 11 ]) ""
+                Expect.equal (calc "let inc x = x + 1 in let dbl x = x * 2 in ((inc >> dbl) 5, (dbl >> inc) 5)") (VTuple [| VInt 12; VInt 11 |]) ""
             }
             test "function" {
                 Expect.equal (calc "map (function Some x -> x | None -> 0) [Some 1; None]") (VList [ VInt 1; VInt 0 ]) ""
@@ -474,7 +474,7 @@ let tests =
             test "let rec ... and ...: 서로 부름, 바깥 변수도 봄" {
                 Expect.equal
                     (calc "let rec even n = if n = 0 then true else odd (n - 1) and odd n = if n = 0 then false else even (n - 1) in (even 10, odd 7)")
-                    (VTuple [ VBool true; VBool true ])
+                    (VTuple [| VBool true; VBool true |])
                     ""
                 Expect.equal (calc "let k = 100 in let rec f x = if x = 0 then k else g (x - 1) and g y = f y + 1 in f 5") (VInt 105) ""
                 Expect.equal (formatValue (calc "let rec f x = g x and g x = x in f")) "<fun>" ""
@@ -518,13 +518,13 @@ let tests =
         testList "빠른 경로의 경계" [
             test "미리 만든 정수의 경계와 넘침" {
                 Expect.equal (calc "(1022 + 1, 1023 + 1, -255 - 1, -256 - 1, 2147483647 + 1, 0 - 0)")
-                    (VTuple [ VInt 1023; VInt 1024; VInt -256; VInt -257; VInt -2147483648; VInt 0 ]) ""
-                Expect.equal (calc "(1024 = 1023 + 1, -257 = -256 - 1, 5000 * 3 = 15000)") (VTuple [ VBool true; VBool true; VBool true ]) ""
+                    (VTuple [| VInt 1023; VInt 1024; VInt -256; VInt -257; VInt -2147483648; VInt 0 |]) ""
+                Expect.equal (calc "(1024 = 1023 + 1, -257 = -256 - 1, 5000 * 3 = 15000)") (VTuple [| VBool true; VBool true; VBool true |]) ""
             }
             test "조건식: int, string 비교와 단락 평가" {
                 Expect.equal (calc "if \"a\" < \"b\" && not (2 > 3) || 1 / 0 = 0 then 1 else 2") (VInt 1) ""
                 Expect.equal (calc "if [1; 2] = [1; 2] && (1, \"a\") <> (1, \"b\") then 1 else 2") (VInt 1) ""
-                Expect.equal (calc "let x = 3 in (x >= 3, x <= 2, x <> 3, not (x = 3))") (VTuple [ VBool true; VBool false; VBool false; VBool false ]) ""
+                Expect.equal (calc "let x = 3 in (x >= 3, x <= 2, x <> 3, not (x = 3))") (VTuple [| VBool true; VBool false; VBool false; VBool false |]) ""
             }
             expectError "if 1 = true then 1 else 0" "Type error: expected int but got bool"
             expectError "if 1 < \"a\" then 1 else 0" "Type error: expected int but got string"
@@ -535,9 +535,9 @@ let tests =
             // 피연산자가 숫자 상수나 지금 함수의 변수일 때 (Eval.operand)
             test "상수와 지금 함수의 변수를 피연산자로" {
                 Expect.equal (calc "let f a b = (a - b, a * b, a / 3, a % b, a - 1, 5 - a, a < b, a >= 3, a = 7, a <> b, b = 2) in f 7 2")
-                    (VTuple [ VInt 5; VInt 14; VInt 2; VInt 1; VInt 6; VInt -2; VBool false; VBool true; VBool true; VBool true; VBool true ]) ""
-                Expect.equal (calc "let f s t = (s < t, s >= \"b\", s = \"a\") in f \"a\" \"b\"") (VTuple [ VBool true; VBool false; VBool true ]) "string"
-                Expect.equal (calc "let f xs = xs = [] in (f [], f [1])") (VTuple [ VBool true; VBool false ]) "int 가 아닌 = 는 valueEquals"
+                    (VTuple [| VInt 5; VInt 14; VInt 2; VInt 1; VInt 6; VInt -2; VBool false; VBool true; VBool true; VBool true; VBool true |]) ""
+                Expect.equal (calc "let f s t = (s < t, s >= \"b\", s = \"a\") in f \"a\" \"b\"") (VTuple [| VBool true; VBool false; VBool true |]) "string"
+                Expect.equal (calc "let f xs = xs = [] in (f [], f [1])") (VTuple [| VBool true; VBool false |]) "int 가 아닌 = 는 valueEquals"
                 Expect.throwsT<System.DivideByZeroException> (fun () -> calc "let f x = x / 0 in f 1" |> ignore) ""
             }
             expectError "let f x = x - 1 in f true" "Type error: expected int but got bool"
@@ -555,12 +555,27 @@ let tests =
             // match xs with [] -> … | x :: rest -> … 는 패턴 함수 없이 바로 나눔 (분기 순서, _, 가드가 있으면 일반 경로)
             test "리스트 match 의 빠른 경로" {
                 Expect.equal (calc "let rec len xs = match xs with [] -> 0 | _ :: rest -> 1 + len rest in len [1; 2; 3]") (VInt 3) ""
-                Expect.equal (calc "match [1; 2] with x :: rest -> (x, rest) | [] -> (0, [])") (VTuple [ VInt 1; VList [ VInt 2 ] ]) "순서가 반대"
+                Expect.equal (calc "match [1; 2] with x :: rest -> (x, rest) | [] -> (0, [])") (VTuple [| VInt 1; VList [ VInt 2 ] |]) "순서가 반대"
                 Expect.equal (calc "match [] with [] -> 0 | x :: _ -> x") (VInt 0) ""
                 Expect.equal (calc "let rest = 5 in (match [1; 2] with [] -> 0 | x :: rest -> x + length rest) + rest") (VInt 7) "바깥 rest 를 가렸다가 돌아옴"
                 Expect.equal (calc "match [7] with [] -> 0 | x :: _ when x > 5 -> 1 | _ -> 2") (VInt 1) "가드는 일반 경로"
             }
             expectError "match 1 with [] -> 0 | x :: _ -> x" "Match failure: 1"
+            // match (a, b) with (p, q) -> … 는 튜플을 만들지 않음 (분기가 모두 같은 길이의 튜플 패턴이나 _)
+            test "튜플 match 의 빠른 경로" {
+                use writer = new System.IO.StringWriter()
+                let value = evalWithOutput writer (Program.load "match ((print 1; [1]), (print 2; [])) with ([], _) -> 0 | (_, []) -> 2 | (x :: _, y :: _) -> x + y")
+                Expect.equal (writer.ToString(), value) ("12", VInt 2) "원소는 왼쪽부터"
+                Expect.equal (calc "let x = 10 in (match (1, 2) with (x, 3) -> x | (a, b) when a > b -> 0 | _ -> x) + x") (VInt 20) "_ 분기, 가드, 실패한 분기의 x 는 바깥을 가리지 않음"
+                Expect.equal (calc "match (Some 1, [2; 3]) with (Some a, b :: _) -> a + b | _ -> 0") (VInt 3) ""
+                Expect.equal (calc "match (1, (2, 3)) with (a, (b, c)) -> a + b + c") (VInt 6) "안쪽 튜플은 일반 패턴"
+            }
+            expectError "match (1, 2) with (0, _) -> 0 | (_, 0) -> 1" "Match failure: (1, 2)"
+            test "인자가 있는 생성자와 없는 생성자" {
+                Expect.equal (calc "(None = Some 1, Some 1 = Some 1, Some 1 = None, [None; Some 2] = [None; Some 2])") (VTuple [| VBool false; VBool true; VBool false; VBool true |]) ""
+                Expect.equal (formatValue (calc "type t = A | B of int * int in (A, B (1, 2), Some (Some None), Some (-1))")) "(A, B (1, 2), Some (Some None), Some (-1))" ""
+                Expect.equal (calc "type t = A | B of int in match [A; B 3] with [A; B n] -> n | _ -> 0") (VInt 3) ""
+            }
             test "세 단계 넘게 바깥 함수의 칸" {
                 Expect.equal (calc "let a = 1 in let f b = let g c = let h d = let k e = a + b + c + d + e in k in h in g in f 2 3 4 5") (VInt 15) ""
             }
@@ -834,13 +849,13 @@ let tests =
             Expect.equal (writer2.ToString(), value2) ("12", VInt 7) "인자가 다 모인 호출도 왼쪽부터"
         }
         test "partial application, 남는 인자, 인자 표기가 있는 여러 인자 함수" {
-            Expect.equal (calc "let g a b c = a * 100 + b * 10 + c in let h = g 1 in let k = h 2 in (k 3, h 4 5, g 6 7 8)") (VTuple [ VInt 123; VInt 145; VInt 678 ]) ""
+            Expect.equal (calc "let g a b c = a * 100 + b * 10 + c in let h = g 1 in let k = h 2 in (k 3, h 4 5, g 6 7 8)") (VTuple [| VInt 123; VInt 145; VInt 678 |]) ""
             Expect.equal (calc "let id x = x in id (fun y -> y + 1) 2") (VInt 3) "인자 하나 함수에 인자 둘"
-            Expect.equal (calc "let f (a: int) (b: int) : int = a - b in (f 5 3, (f 5) 3)") (VTuple [ VInt 2; VInt 2 ]) ""
-            Expect.equal (calc "let rec f a b = if a = 0 then b else f (a - 1) (b + 1) in let p = f 3 in (p 0, p 10)") (VTuple [ VInt 3; VInt 13 ]) "let rec 의 partial application"
+            Expect.equal (calc "let f (a: int) (b: int) : int = a - b in (f 5 3, (f 5) 3)") (VTuple [| VInt 2; VInt 2 |]) ""
+            Expect.equal (calc "let rec f a b = if a = 0 then b else f (a - 1) (b + 1) in let p = f 3 in (p 0, p 10)") (VTuple [| VInt 3; VInt 13 |]) "let rec 의 partial application"
         }
         test "같은 함수를 여러 번 불러도 칸은 호출마다 새로 (클로저가 서로의 값을 보지 않음)" {
-            Expect.equal (calc "let mk x = fun () -> x in let a = mk 1 in let b = mk 2 in (a (), b ())") (VTuple [ VInt 1; VInt 2 ]) ""
+            Expect.equal (calc "let mk x = fun () -> x in let a = mk 1 in let b = mk 2 in (a (), b ())") (VTuple [| VInt 1; VInt 2 |]) ""
             Expect.equal (calc "let rec build n acc = if n = 0 then acc else build (n - 1) ((fun () -> n) :: acc) in map (fun f -> f ()) (build 3 [])") (VList [ VInt 1; VInt 2; VInt 3 ]) ""
         }
         test "interpreter 의 tail call: 인자 두 개, and 그룹, 깊이 100만" {
@@ -952,7 +967,7 @@ let tests =
                 calc (sprintf "fold (fun acc x -> acc + 1) 0 %s" src) = calc (sprintf "length %s" src)
 
             testProperty "let (a, b) = (x, y) in (b, a) 는 순서를 바꿈" <| fun (NonNegativeInt x) (NonNegativeInt y) ->
-                calc (sprintf "let (a, b) = (%d, %d) in (b, a)" x y) = VTuple [ VInt y; VInt x ]
+                calc (sprintf "let (a, b) = (%d, %d) in (b, a)" x y) = VTuple [| VInt y; VInt x |]
 
             testProperty "정수 리터럴 패턴은 = 와 같음" <| fun (NonNegativeInt a) (NonNegativeInt b) ->
                 calc (sprintf "match %d with %d -> true | _ -> false" a b) = VBool (a = b)

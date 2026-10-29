@@ -27,11 +27,11 @@ let rec valueMatches value t =
     | VString _, TyCon ("string", [])
     | VUnit, TyCon ("unit", []) -> true
     | VList items, TyCon ("list", [ e ]) -> items |> List.forall (fun v -> valueMatches v e)
-    | VData ("option", _, payload), TyCon ("option", [ e ]) ->
-        payload |> Option.forall (fun v -> valueMatches v e)
-    | VData ("exn", _, _), TyCon ("exn", []) -> true
-    | VData (typeName, _, _), TyCon (name, _) -> name.StartsWith(typeName + "@")
-    | VTuple vs, TyTuple ts -> List.length vs = List.length ts && List.forall2 valueMatches vs ts
+    | VData ("option", _, payload), TyCon ("option", [ e ]) -> valueMatches payload e
+    | VData0 ("option", _), TyCon ("option", [ _ ]) -> true
+    | (VData ("exn", _, _) | VData0 ("exn", _)), TyCon ("exn", []) -> true
+    | (VData (typeName, _, _) | VData0 (typeName, _)), TyCon (name, _) -> name.StartsWith(typeName + "@")
+    | VTuple vs, TyTuple ts -> vs.Length = List.length ts && List.forall2 valueMatches (List.ofArray vs) ts
     | VRef cell, TyCon ("ref", [ e ]) -> valueMatches cell.Value e
     | VArray items, TyCon ("array", [ e ]) -> items |> Array.forall (fun v -> valueMatches v e)
     | VRecord (typeName, _), TyCon (name, _) -> name.StartsWith(typeName + "@")

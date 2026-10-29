@@ -15,11 +15,13 @@ type Value =
     | VClosure of Closure
     | VList of Value list
     /// (v1, v2, ...) 원소 2개 이상
-    | VTuple of Value list
+    | VTuple of Value[]
     /// 내장 함수. args 는 지금까지 받은 인자 (커링: 인자가 다 모이면 실행)
     | VBuiltin of name: string * args: Value list
-    /// 생성자로 만든 값. None, Some 1, Rect (2, 3). typeName 은 선언한 타입 이름 (option, shape)
-    | VData of typeName: string * ctor: string * payload: Value option
+    /// 인자가 있는 생성자로 만든 값. Some 1, Rect (2, 3). typeName 은 선언한 타입 이름 (option, shape).
+    /// 인자 없는 생성자(None, Red)는 VData0 (payload 를 option 으로 두면 값마다 Some 을 하나 더 만듦)
+    | VData of typeName: string * ctor: string * payload: Value
+    | VData0 of typeName: string * ctor: string
     /// 인자가 있는 생성자 자체 (함수처럼 호출). fields 는 선언의 튜플 원소 수 (of int * int 면 2)
     | VConstructor of typeName: string * ctor: string * fields: int
     /// () : unit
@@ -73,9 +75,9 @@ let rec formatValue value =
     | VString s -> quote s
     | VClosure _ | VBuiltin _ | VConstructor _ -> "<fun>"
     | VList items -> "[" + (items |> List.map formatValue |> String.concat "; ") + "]"
-    | VTuple items -> "(" + (items |> List.map formatValue |> String.concat ", ") + ")"
-    | VData (_, ctor, None) -> ctor
-    | VData (_, ctor, Some payload) -> applied ctor payload
+    | VTuple items -> "(" + (items |> Array.map formatValue |> String.concat ", ") + ")"
+    | VData0 (_, ctor) -> ctor
+    | VData (_, ctor, payload) -> applied ctor payload
     | VRef cell -> applied "ref" cell.Value
     | VArray items -> "[|" + (items |> Array.map formatValue |> String.concat "; ") + "|]"
     | VRecord (_, fields) -> "{ " + (fields |> List.map (fun (f, v) -> f + " = " + formatValue v) |> String.concat "; ") + " }"
@@ -85,7 +87,7 @@ let rec formatValue value =
 /// 튜플은 이미 괄호가 있음
 and private applied (name: string) (payload: Value) =
     match payload with
-    | VData (_, _, Some _) | VRef _ -> sprintf "%s (%s)" name (formatValue payload)
+    | VData _ | VRef _ -> sprintf "%s (%s)" name (formatValue payload)
     | VInt n when n < 0 -> sprintf "%s (%s)" name (formatValue payload)
     | _ -> sprintf "%s %s" name (formatValue payload)
 
@@ -94,7 +96,7 @@ and private applied (name: string) (payload: Value) =
 exception CalcException of value: Value with
     override this.Message =
         match this.value with
-        | VData ("exn", "Failure", Some (VString s)) -> s
+        | VData ("exn", "Failure", VString s) -> s
         | v -> "exception " + formatValue v
 
 let typeName value =
@@ -106,7 +108,7 @@ let typeName value =
     | VClosure _ | VBuiltin _ | VConstructor _ -> "function"
     | VList _ -> "list"
     | VTuple _ -> "tuple"
-    | VData (typeName, _, _) -> typeName
+    | VData (typeName, _, _) | VData0 (typeName, _) -> typeName
     | VRef _ -> "ref"
     | VArray _ -> "array"
     | VRecord (typeName, _) | VRecordType (typeName, _) -> typeName
@@ -114,7 +116,7 @@ let typeName value =
 /// 오류 메시지용: 튜플은 원소 수까지
 let describe value =
     match value with
-    | VTuple items -> sprintf "tuple of %d" (List.length items)
+    | VTuple items -> sprintf "tuple of %d" items.Length
     | v -> typeName v
 
 let typeError expected value =
@@ -127,15 +129,12 @@ let rec valueEquals a b =
     | VInt x, VInt y -> x = y
     | VBool x, VBool y -> x = y
     | VString x, VString y -> x = y
-    | VList xs, VList ys
-    | VTuple xs, VTuple ys ->
-        List.length xs = List.length ys && List.forall2 valueEquals xs ys
+    | VList xs, VList ys -> List.length xs = List.length ys && List.forall2 valueEquals xs ys
+    | VTuple xs, VTuple ys -> xs.Length = ys.Length && Array.forall2 valueEquals xs ys
     // 같은 타입끼리: 생성자가 다르면 false, 같으면 인자를 비교
-    | VData (t1, c1, p1), VData (t2, c2, p2) when t1 = t2 ->
-        c1 = c2
-        && (match p1, p2 with
-            | Some x, Some y -> valueEquals x y
-            | _ -> true)
+    | VData (t1, c1, x), VData (t2, c2, y) when t1 = t2 -> c1 = c2 && valueEquals x y
+    | VData0 (t1, c1), VData0 (t2, c2) when t1 = t2 -> c1 = c2
+    | (VData (t1, _, _) | VData0 (t1, _)), (VData (t2, _, _) | VData0 (t2, _)) when t1 = t2 -> false
     // 내용을 비교 (OCaml, F# 와 같음). 같은 칸인지는 보지 않음
     | VRef x, VRef y -> valueEquals x.Value y.Value
     // 원소를 차례로 비교 (F#, OCaml 과 같음). 같은 배열인지는 보지 않음
@@ -147,7 +146,7 @@ let rec valueEquals a b =
     | VString _, v -> typeError "string" v
     | VList _, v -> typeError "list" v
     | VTuple _, v -> typeError "tuple" v
-    | VData (t, _, _), v -> typeError t v
+    | (VData (t, _, _) | VData0 (t, _)), v -> typeError t v
     | VRef _, v -> typeError "ref" v
     | VArray _, v -> typeError "array" v
     | VRecord (t, _), v -> typeError t v
@@ -177,20 +176,20 @@ let rec matchPattern pattern value (env: Env) : Env option =
                     | Some (_, v) -> matchPattern p v env
                     | None -> None))
             (Some env)
-    | PTuple ps, VTuple vs when List.length ps = List.length vs ->
-        List.fold2 (fun acc p v -> acc |> Option.bind (matchPattern p v)) (Some env) ps vs
+    | PTuple ps, VTuple vs when List.length ps = vs.Length ->
+        List.fold2 (fun acc p v -> acc |> Option.bind (matchPattern p v)) (Some env) ps (List.ofArray vs)
     | PCtor (name, argPattern), v ->
         // 오타 난 생성자가 조용히 "불일치"가 되지 않도록, 지금 보이는 생성자인지와 인자 유무를 먼저 확인
         let typeName =
             match Map.tryFind name env, argPattern with
-            | Some (VData (t, _, None)), None -> t
+            | Some (VData0 (t, _)), None -> t
             | Some (VConstructor (t, _, _)), Some _ -> t
-            | Some (VData _), Some _ -> failwithf "Constructor %s takes no argument" name
+            | Some (VData0 _), Some _ -> failwithf "Constructor %s takes no argument" name
             | Some (VConstructor _), None -> failwithf "Constructor %s requires an argument" name
             | _ -> failwithf "Unknown constructor: %s" name
         match v, argPattern with
-        | VData (t, c, None), None when t = typeName && c = name -> Some env
-        | VData (t, c, Some payload), Some p when t = typeName && c = name -> matchPattern p payload env
+        | VData0 (t, c), None when t = typeName && c = name -> Some env
+        | VData (t, c, payload), Some p when t = typeName && c = name -> matchPattern p payload env
         | _ -> None
     | _ -> None
 
@@ -271,8 +270,8 @@ let builtinArity =
         // fst, map, fold, range, head, failwith 같은 함수는 Calc 로 쓴 prelude (prelude.calc)
     ]
 
-let none = VData ("option", "None", None)
-let some v = VData ("option", "Some", Some v)
+let none = VData0 ("option", "None")
+let some v = VData ("option", "Some", v)
 
 /// print, println 이 쓰는 곳. 테스트는 evalWithOutput 으로 바꿈 (병렬 테스트끼리 섞이지 않게 AsyncLocal).
 /// 설정하지 않은 스레드에서는 null 이므로 표준 출력
@@ -383,14 +382,14 @@ let builtins: Env =
     |> Map.add "Some" (VConstructor ("option", "Some", 1))
     // 처음부터 있는 예외 (OCaml 과 같음): failwith 가 쓰는 Failure, 찾지 못함을 뜻하는 Not_found
     |> Map.add "Failure" (VConstructor ("exn", "Failure", 1))
-    |> Map.add "Not_found" (VData ("exn", "Not_found", None))
+    |> Map.add "Not_found" (VData0 ("exn", "Not_found"))
 
 /// type 선언의 생성자를 환경에 추가: 인자 없는 생성자는 값, 인자 있는 생성자는 함수처럼 호출하는 값
 let declareConstructors (env: Env) (typeName: string) (ctors: (string * TypeExpr option) list) =
     let bindCtor env (ctor, argType) =
         let value =
             match argType with
-            | None -> VData (typeName, ctor, None)
+            | None -> VData0 (typeName, ctor)
             | Some (TTuple items) -> VConstructor (typeName, ctor, List.length items)
             | Some _ -> VConstructor (typeName, ctor, 1)
         Map.add ctor value env
@@ -616,13 +615,11 @@ and private patternFunction (scope: Scope) (pattern: Pattern) : Value -> Frame -
         let items = items |> List.map sub |> Array.ofList
         fun v fr ->
             match v with
-            | VTuple vs when List.length vs = items.Length ->
-                let mutable rest = vs
+            | VTuple vs when vs.Length = items.Length ->
                 let mutable ok = true
                 let mutable i = 0
                 while ok && i < items.Length do
-                    ok <- items[i].Invoke(rest.Head, fr)
-                    rest <- rest.Tail
+                    ok <- items[i].Invoke(vs[i], fr)
                     i <- i + 1
                 ok
             | _ -> false
@@ -641,9 +638,9 @@ and private patternFunction (scope: Scope) (pattern: Pattern) : Value -> Frame -
         // 오타 난 생성자가 조용히 "불일치"가 되지 않도록, 지금 보이는 생성자인지와 인자 유무를 먼저 확인
         let typeName =
             match Map.tryFind name scope.Consts, argPattern with
-            | Some (VData (t, _, None)), None -> Ok t
+            | Some (VData0 (t, _)), None -> Ok t
             | Some (VConstructor (t, _, _)), Some _ -> Ok t
-            | Some (VData _), Some _ -> Error (sprintf "Constructor %s takes no argument" name)
+            | Some (VData0 _), Some _ -> Error (sprintf "Constructor %s takes no argument" name)
             | Some (VConstructor _), None -> Error (sprintf "Constructor %s requires an argument" name)
             | _ -> Error (sprintf "Unknown constructor: %s" name)
         let arg = argPattern |> Option.map sub
@@ -652,8 +649,8 @@ and private patternFunction (scope: Scope) (pattern: Pattern) : Value -> Frame -
         | Ok typeName ->
             fun v fr ->
                 match v, arg with
-                | VData (t, c, None), None -> t = typeName && c = name
-                | VData (t, c, Some payload), Some p -> t = typeName && c = name && p.Invoke(payload, fr)
+                | VData0 (t, c), None -> t = typeName && c = name
+                | VData (t, c, payload), Some p -> t = typeName && c = name && p.Invoke(payload, fr)
                 | _ -> false
 
 /// match, try 의 분기: (패턴, 가드, 본문). 패턴이 묶는 이름마다 칸 하나
@@ -805,19 +802,25 @@ and private compile (scope: Scope) (expr: Expr) : Code =
         fun fr ->
             let h = head fr
             VList (h :: asList tail fr)
-    // 원소는 왼쪽부터 계산. 원소 둘, 셋은 리스트를 바로 만듦 (ListCollector 를 거치지 않음)
+    // 원소는 왼쪽부터 계산. 원소 둘, 셋은 배열을 바로 만듦
     | Tuple items ->
         match List.map c items with
         | [ a; b ] ->
             fun fr ->
                 let x = a fr
-                VTuple [ x; b fr ]
+                VTuple [| x; b fr |]
         | [ a; b; d ] ->
             fun fr ->
                 let x = a fr
                 let y = b fr
-                VTuple [ x; y; d fr ]
-        | items -> fun fr -> VTuple [ for item in items -> item fr ]
+                VTuple [| x; y; d fr |]
+        | items ->
+            let items = Array.ofList items
+            fun fr ->
+                let values = Array.zeroCreate items.Length
+                for i in 0 .. items.Length - 1 do
+                    values[i] <- (items[i]) fr
+                VTuple values
     // match xs with [] -> a | x :: rest -> b (순서는 반대여도 됨, 변수나 _ 만): 패턴 함수 없이 바로 나누고 칸에 씀
     | Match (scrutinee, ([ (PNil, None, _); (PCons ((PVar _ | PWildcard), (PVar _ | PWildcard)), None, _) ]
                        | [ (PCons ((PVar _ | PWildcard), (PVar _ | PWildcard)), None, _); (PNil, None, _) ] as cases)) ->
@@ -843,6 +846,44 @@ and private compile (scope: Scope) (expr: Expr) : Code =
                 if tailSlot >= 0 then setSlot fr tailSlot (VList rest)
                 consBody fr
             | v -> matchFailure v
+    // match (a, b) with (p, q) -> …: 튜플을 만들지 않고 원소를 숨은 칸에 넣은 뒤 원소마다 패턴을 맞춤 (분기가 모두 같은 길이의 튜플 패턴이나 _)
+    | Match (Tuple items, cases)
+        when cases |> List.forall (fun (p, _, _) -> match p with PTuple ps -> ps.Length = items.Length | PWildcard -> true | _ -> false) ->
+        let items = items |> List.map c |> Array.ofList
+        let n = items.Length
+        // $ 로 시작하는 이름은 사용자가 쓸 수 없음
+        let slots, inner =
+            List.fold (fun (acc, s) i -> let slot, s = bindSlot s (sprintf "$match%d" i) in acc @ [ slot ], s) ([], scope) [ 0 .. n - 1 ]
+        let slots = Array.ofList slots
+        let any = OptimizedClosures.FSharpFunc<_, _, _>.Adapt (fun (_: Value) (_: Frame) -> true)
+        let arms =
+            cases
+            |> List.map (fun (pattern, guard, body) ->
+                let armScope = patternNames pattern |> List.distinct |> List.fold (fun s name -> snd (bindSlot s name)) inner
+                let subs =
+                    match pattern with
+                    | PTuple ps -> ps |> List.map (compilePattern armScope) |> Array.ofList
+                    | _ -> Array.create n any
+                subs, guard |> Option.map (compile armScope), compile armScope body)
+            |> Array.ofList
+        fun fr ->
+            for i in 0 .. n - 1 do
+                setSlot fr slots[i] ((items[i]) fr)
+            let mutable found = -1
+            let mutable a = 0
+            while found < 0 && a < arms.Length do
+                let subs, guard, _ = arms[a]
+                let mutable ok = true
+                let mutable i = 0
+                while ok && i < n do
+                    ok <- subs[i].Invoke(slotOf fr slots[i], fr)
+                    i <- i + 1
+                if ok && (match guard with None -> true | Some g -> asBool g fr) then found <- a
+                a <- a + 1
+            if found < 0 then matchFailure (VTuple [| for s in slots -> slotOf fr s |])
+            else
+                let _, _, body = arms[found]
+                body fr
     | Match (scrutinee, cases) ->
         let scrutinee = c scrutinee
         let arms = cases |> List.map (compileArm scope) |> Array.ofList
@@ -861,7 +902,7 @@ and private compile (scope: Scope) (expr: Expr) : Code =
             if m.Invoke(v, fr) then body fr else matchFailure v
     | Ctor name ->
         match Map.tryFind name scope.Consts with
-        | Some (VData _ | VConstructor _ as v) -> fun _ -> v
+        | Some (VData0 _ | VConstructor _ as v) -> fun _ -> v
         | _ -> fun _ -> failwithf "Unknown constructor: %s" name
     | TypeDecl (typeName, _, ctors, body) -> compile { scope with Consts = declareConstructors scope.Consts typeName ctors } body
     | RecordDecl (typeName, _, fields, body) -> compile { scope with Consts = declareRecord scope.Consts typeName fields } body
@@ -1029,8 +1070,8 @@ and apply fv av =
     | VConstructor (typeName, ctor, fields) ->
         // of int * int 처럼 원소가 여럿이면 그 수만큼의 튜플을 받아야 함
         match av with
-        | _ when fields = 1 -> VData (typeName, ctor, Some av)
-        | VTuple items when List.length items = fields -> VData (typeName, ctor, Some av)
+        | _ when fields = 1 -> VData (typeName, ctor, av)
+        | VTuple items when items.Length = fields -> VData (typeName, ctor, av)
         | v -> failwithf "Constructor %s expects %d fields but got %s" ctor fields (describe v)
     | v -> typeError "function" v
 
@@ -1049,7 +1090,7 @@ and evalIn (env: Env) (expr: Expr) : Value =
 /// let rec f x = ... and g y = ...: 그룹의 함수를 만들어 환경에 추가 (REPL 의 최상위 let rec)
 let declareRecGroup (env: Env) (bindings: (string * string * Expr) list) =
     match evalIn env (LetRecs (bindings, Tuple (bindings |> List.map (fun (name, _, _) -> Var name)))) with
-    | VTuple values -> List.fold2 (fun acc (name, _, _) v -> Map.add name v acc) env bindings values
+    | VTuple values -> List.fold2 (fun acc (name, _, _) v -> Map.add name v acc) env bindings (List.ofArray values)
     | _ -> failwith "unreachable"
 
 /// 내장 함수만 있는 환경에서 평가

@@ -69,8 +69,8 @@ let tests =
 
         test "reverse, append, map, filter" {
             Expect.equal (EvalTests.calc "(reverse [1; 2; 3], append [1; 2] [3], append [] [1], map (fun x -> x * 10) [1; 2], filter (fun x -> x > 1) [3; 1; 2])")
-                (Eval.VTuple [ Eval.VList [ Eval.VInt 3; Eval.VInt 2; Eval.VInt 1 ]; Eval.VList [ Eval.VInt 1; Eval.VInt 2; Eval.VInt 3 ]; Eval.VList [ Eval.VInt 1 ]
-                               Eval.VList [ Eval.VInt 10; Eval.VInt 20 ]; Eval.VList [ Eval.VInt 3; Eval.VInt 2 ] ]) ""
+                (Eval.VTuple [| Eval.VList [ Eval.VInt 3; Eval.VInt 2; Eval.VInt 1 ]; Eval.VList [ Eval.VInt 1; Eval.VInt 2; Eval.VInt 3 ]; Eval.VList [ Eval.VInt 1 ]
+                                Eval.VList [ Eval.VInt 10; Eval.VInt 20 ]; Eval.VList [ Eval.VInt 3; Eval.VInt 2 ] |]) ""
         }
 
         // calc prog.calc 는 Argu 를 거치지 않음 (Program.main). Console.Out 을 바꾸므로 다른 테스트와 겹치지 않게 차례로
