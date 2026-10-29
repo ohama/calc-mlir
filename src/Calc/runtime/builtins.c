@@ -167,6 +167,14 @@ value calc_builtin_join(value sep, value items) {
 /* 문자열은 그대로 (따옴표 없음), 나머지는 formatValue */
 value calc_builtin_toString(value v) {
     if (CALC_IS_KIND(v, CALC_KIND_STRING)) return v;
+    if (CALC_IS_INT(v)) { /* 가장 흔한 경우: 버퍼 없이 바로 문자열로 */
+        char text[16];
+        char *p = calc_format_int(INT(v), text + sizeof text);
+        int64_t length = text + sizeof text - p;
+        calc_string *s = calc_new_string(length);
+        for (int64_t i = 0; i < length; i++) s->units[i] = (uint16_t)p[i];
+        return (value)s;
+    }
     calc_buffer b = {0};
     calc_buffer_value(&b, v);
     return from_buffer(&b);
@@ -205,6 +213,23 @@ value calc_builtin_toInt(value s) {
 
 static int compare_for_sort(const void *a, const void *b) { return calc_compare(*(const value *)a, *(const value *)b); }
 
+/* 원소가 모두 int 일 때: tagged int 는 값 그대로 비교해도 순서가 같아 calc_compare 를 부르지 않음.
+   qsort 는 비교마다 함수 포인터를 부르므로 아래에서 위로 merge sort (stable) */
+static void sort_ints(value *items, int64_t n) {
+    value *a = items, *t = GC_MALLOC_ATOMIC((size_t)(n > 0 ? n : 1) * sizeof(value));
+    for (int64_t w = 1; w < n; w *= 2) {
+        for (int64_t lo = 0; lo < n; lo += 2 * w) {
+            int64_t mid = lo + w < n ? lo + w : n, hi = lo + 2 * w < n ? lo + 2 * w : n;
+            int64_t i = lo, j = mid, k = lo;
+            while (i < mid && j < hi) t[k++] = (int64_t)a[j] < (int64_t)a[i] ? a[j++] : a[i++];
+            while (i < mid) t[k++] = a[i++];
+            while (j < hi) t[k++] = a[j++];
+        }
+        value *x = a; a = t; t = x;
+    }
+    if (a != items) memcpy(items, a, (size_t)n * sizeof(value));
+}
+
 /* append (reverse xs) ys (Codegen 이 이 모양을 알아보고 부름): xs 의 원소를 하나씩 ys 앞에 붙임. 칸 n 개 */
 value calc_rev_append(value xs, value ys) {
     for (; xs != CALC_NIL; xs = TAIL(xs)) ys = calc_cons(HEAD(xs), ys);
@@ -240,8 +265,10 @@ value calc_builtin_range(value a, value b) {
 value calc_builtin_sort(value xs) {
     int64_t n = calc_list_length(xs);
     value *items = GC_MALLOC((size_t)(n > 0 ? n : 1) * sizeof(value));
-    for (int64_t i = 0; i < n; i++, xs = TAIL(xs)) items[i] = HEAD(xs);
-    qsort(items, (size_t)n, sizeof(value), compare_for_sort);
+    int all_int = 1;
+    for (int64_t i = 0; i < n; i++, xs = TAIL(xs)) { items[i] = HEAD(xs); all_int &= CALC_IS_INT(items[i]); }
+    if (all_int) sort_ints(items, n);
+    else qsort(items, (size_t)n, sizeof(value), compare_for_sort);
     value r = CALC_NIL;
     for (int64_t i = n - 1; i >= 0; i--) r = calc_cons(items[i], r);
     return r;
@@ -251,6 +278,12 @@ value calc_builtin_sort(value xs) {
 
 /* print, println: 문자열은 따옴표 없이, 나머지는 formatValue (toString 과 같음). UTF-8 로 표준 출력 */
 static void put_display(value v) {
+    if (CALC_IS_INT(v)) { /* 버퍼와 UTF-8 변환 없이 */
+        char text[16];
+        text[15] = 0;
+        fputs(calc_format_int(INT(v), text + 15), stdout);
+        return;
+    }
     calc_buffer b = {0};
     if (CALC_IS_KIND(v, CALC_KIND_STRING)) calc_buffer_units(&b, STR(v)->units, STR(v)->length);
     else calc_buffer_value(&b, v);

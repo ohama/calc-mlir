@@ -173,13 +173,22 @@ static void buffer_applied(calc_buffer *b, value p) {
     if (paren) buffer_ascii(b, ")");
 }
 
+/* 뒤에서부터 씀. Int32.MinValue 는 부호 없는 수로 바꿔서 */
+char *calc_format_int(int32_t n, char *end) {
+    uint32_t u = n < 0 ? 0u - (uint32_t)n : (uint32_t)n;
+    char *p = end;
+    do { *--p = (char)('0' + u % 10); u /= 10; } while (u != 0);
+    if (n < 0) *--p = '-';
+    return p;
+}
+
 void calc_buffer_value(calc_buffer *b, value v) {
     if (v == CALC_UNIT) {
         buffer_ascii(b, "()");
     } else if (CALC_IS_INT(v)) {
         char text[16];
-        snprintf(text, sizeof text, "%d", CALC_INT_VAL(v));
-        buffer_ascii(b, text);
+        char *p = calc_format_int(CALC_INT_VAL(v), text + sizeof text);
+        buffer_ascii_n(b, p, text + sizeof text - p);
     } else if (CALC_IS_BOOL(v)) {
         buffer_ascii(b, CALC_BOOL_VAL(v) ? "true" : "false");
     } else if (v == CALC_NIL) {

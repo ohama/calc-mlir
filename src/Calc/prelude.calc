@@ -100,12 +100,30 @@ let defaultValue d opt =
     | None -> d
 
 // 배열 (F# Array 모듈과 같은 이름). length, create, ofList, toList 와 a.[i], a.[i] <- v 는 내장 함수.
-// 안의 map, fold 는 위의 리스트 함수 (모듈의 같은 이름은 그 정의 뒤부터 보임)
+// 리스트를 거치지 않고 반복문으로 채움. 새 배열은 첫 원소로 Array.create 해서 bool 이면 바이트 배열이 됨.
+// f 는 앞 원소부터 호출 (리스트의 map 과 같은 순서)
 module Array =
-    let init (n: int) f = Array.ofList (map f (range 0 (n - 1)))
-    let copy a = Array.ofList (Array.toList a)
+    let init (n: int) f =
+        if n <= 0 then Array.ofList []
+        else
+            let a = Array.create n (f 0)
+            for i = 1 to n - 1 do
+                a.[i] <- f i
+            a
+    let map f a =
+        let n = Array.length a
+        if n = 0 then Array.ofList []
+        else
+            let b = Array.create n (f a.[0])
+            for i = 1 to n - 1 do
+                b.[i] <- f a.[i]
+            b
+    let copy a = map (fun x -> x) a
     let iter f a =
         for i = 0 to Array.length a - 1 do
             f a.[i]
-    let fold f acc a = fold f acc (Array.toList a)
-    let map f a = Array.ofList (map f (Array.toList a))
+    let fold f acc a =
+        let r = ref acc
+        for i = 0 to Array.length a - 1 do
+            r := f !r a.[i]
+        !r

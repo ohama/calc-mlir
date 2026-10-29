@@ -119,6 +119,8 @@ value calc_array_get(value a, int64_t i);
 void calc_array_set(value a, int64_t i, value v);
 value calc_data_payload(value v);
 int64_t calc_list_length(value list);
+/* int 의 10 진수 글자를 end 바로 앞에서 끝나게 씀 (snprintf 없이). 첫 글자의 위치 */
+char *calc_format_int(int32_t n, char *end);
 
 /* UTF-16 버퍼 (malloc). formatValue 결과를 모으고, 출력할 때 UTF-8 로 바꿈 */
 typedef struct {

@@ -4,6 +4,15 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.61.0] - 2026-10-30
+
+### 변경
+- 런타임과 prelude: 자주 쓰는 경우의 빠른 경로. 결과는 바뀌지 않습니다.
+  - `toString`, `print`, `println`이 int를 `snprintf`와 버퍼 없이 바로 10진수로 씁니다. `toString i` 2백만 번이 0.09초에서 0.02초, `println i` 3백만 번이 0.25초에서 0.09초, `sprintf "%d-%d:%s"` 2백만 번이 0.28초에서 0.12초가 되었습니다.
+  - `sort`가 원소가 모두 int이면 값을 그대로 비교하는 merge sort를 씁니다. int 2백만 개가 0.18초에서 0.12초가 되었습니다.
+  - prelude의 `Array.init`, `map`, `copy`, `fold`가 리스트를 거치지 않고 반복문으로 채웁니다. 3백만 개의 `init`, `map`, `fold`가 실행 파일에서 0.14초(238MB)에서 0.01초(48MB), 인터프리터에서 1.39초에서 0.72초가 되었습니다.
+- 테스트 1개 추가 (총 1223개): 컴파일 테스트에 int의 `toString`과 출력(Int32의 끝값), `sort`(빈 리스트, 같은 값, 10만 개), prelude `Array` 함수(빈 배열, `f`를 부르는 순서, `raise`, 수거 뒤) 10가지
+
 ## [0.60.0] - 2026-10-30
 
 ### 변경

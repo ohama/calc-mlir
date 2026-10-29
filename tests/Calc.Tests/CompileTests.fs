@@ -414,6 +414,19 @@ let private runCases =
           "let a = Array.create 4 (Some true) in a.[0] <- None; println (a, Array.create 2 [true], Array.create 2 (true, 1))", ("([|None; Some true; Some true; Some true|], [|[true]; [true]|], [|(true, 1); (true, 1)|])\n", "", 0), "bool 이 아닌 원소는 보통 배열"
           "let a = Array.create 300000 true in let junk = map (fun x -> (x, x)) (range 1 300000) in a.[299999] <- false; println (a.[0], a.[299999], length junk)", ("(true, false, 300000)\n", "", 0), "GC 가 훑지 않는 bool 배열이 수거 뒤에도 그대로"
         ]
+      "런타임의 빠른 경로 (int 의 toString 과 출력, int sort, prelude 의 Array 반복문)",
+        [
+          "println (toString 0, toString (-2147483647 - 1), toString 2147483647, toString (-5), toString 10, sprintf \"%d|%d\" (-12) 340, $\"{-7}\")", ("(\"0\", \"-2147483648\", \"2147483647\", \"-5\", \"10\", \"-12|340\", \"-7\")\n", "", 0), "toString 과 sprintf 의 int: 0, 음수, Int32 의 끝"
+          "print (-2147483647 - 1); print \" \"; print 2147483647; print \" \"; print 0; println (-9)", ("-2147483648 2147483647 0-9\n", "", 0), "print 의 int"
+          "println (toString [1; -2], toString (Some (-3)), toString (1, true), toString \"s\", toString ())", ("(\"[1; -2]\", \"Some (-3)\", \"(1, true)\", \"s\", \"()\")\n", "", 0), "int 가 아닌 값의 toString 은 그대로"
+          "println (sort [], sort [5], sort [3; -1; 3; 0; -2147483647 - 1; 2147483647; -1], sort [2; 1; 3; 0; 4], sort [\"b\"; \"a\"; \"c\"; \"a\"])", ("([], [5], [-2147483648; -1; -1; 0; 3; 3; 2147483647], [0; 1; 2; 3; 4], [\"a\"; \"a\"; \"b\"; \"c\"])\n", "", 0), "sort: 빈 리스트, 같은 값, 음수, 문자열"
+          "let rec ok xs = match xs with [] -> true | a :: rest -> (match rest with [] -> true | b :: _ -> a <= b && ok rest) in let xs = sort (map (fun i -> (i * 7919) % 10007 - 5000) (range 1 100001)) in println (ok xs, length xs, head xs, nth xs 100000)", ("(true, 100001, -5000, 5006)\n", "", 0), "int 10만 개 sort (merge 단계마다 홀수 길이)"
+          "println (Array.init 0 (fun i -> i), Array.init (-3) (fun i -> i), Array.map (fun x -> x + 1) (Array.ofList []), Array.copy (Array.ofList []), Array.fold (fun a x -> a + x) 7 (Array.ofList []))", ("([||], [||], [||], [||], 7)\n", "", 0), "prelude 의 Array 함수: 빈 배열과 음수 길이"
+          "let a = Array.init 4 (fun i -> print i; i * i) in let b = Array.map (fun x -> print x; x + 1) a in println (a, b, Array.fold (fun acc x -> acc + toString x) \"\" b)", ("01230149([|0; 1; 4; 9|], [|1; 2; 5; 10|], \"12510\")\n", "", 0), "Array.init, map 은 f 를 앞 원소부터 부름"
+          "let a = [| 1; 2; 3 |] in let c = Array.copy a in c.[0] <- 9; println (a, c, Array.init 3 (fun i -> i = 1), Array.map (fun x -> x > 1) a = [| false; true; true |])", ("([|1; 2; 3|], [|9; 2; 3|], [|false; true; false|], true)\n", "", 0), "copy 는 따로, init 과 map 의 bool 배열"
+          "println (try Array.init 3 (fun i -> if i = 1 then failwith \"init\" else i) with Failure m -> (print m; [| |]))", ("init[||]\n", "", 0), "Array.init 의 f 에서 raise"
+          "let a = Array.init 300000 (fun i -> (i, [i])) in let junk = map (fun x -> Some x) (range 1 300000) in println (Array.fold (fun n p -> n + fst p % 7) 0 (Array.map (fun p -> p) a), a.[299999], length junk)", ("(899997, (299999, [299999]), 300000)\n", "", 0), "Array.init 30만 개: 수거 뒤에도 그대로"
+        ]
       "생성자 값 (이름 칸 없는 블록, 인자 없는 생성자는 즉시값)",
         [
           "type t = A | B of int | C of int * int in println (A = B 1, B 1 = A, B 1 = B 1, A = A, B 1 = B 2, C (1, 2) = C (1, 2), C (1, 2) = A)", ("(false, false, true, true, false, true, false)\n", "", 0), "= : 즉시값과 블록, 헤더 비교"

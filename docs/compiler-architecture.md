@@ -441,6 +441,9 @@ let f = substr "hello" in (f 1 3, map length ["a"; "bb"], toInt "7")
 
 - **선언:** 모듈은 21개 내장 함수를 모두 `llvm.func @calc_builtin_<이름>(i64, ...) -> i64`로 선언합니다. 링커가 `builtins.o`와 이름으로 연결합니다. mutable reference의 `ref`, `!`, `:=`는 런타임 함수 없이 Codegen이 바로 만듭니다(16장).
 - **`calc_apply(f, x)`:** 런타임(C)이 클로저를 부를 때 씁니다. 클로저 1번 칸의 코드 포인터를 `tailcc`로 부릅니다. C는 `tailcc` 함수를 부를 수 없으므로 생성한 모듈이 `weak_odr`로 정의합니다(12장).
+- **int의 빠른 경로 (0.61.0부터):**
+  - **`toString`, `print`, `println`:** int이면 `calc_format_int`가 10진수 글자를 바로 씁니다. `snprintf`, 버퍼의 `malloc`/`free`, UTF-8 변환을 거치지 않습니다. `toString i` 2백만 번이 0.09초에서 0.02초, `println i` 3백만 번이 0.25초에서 0.09초(C의 `printf`는 0.13초)가 되었습니다. `sprintf`의 `%d`도 `toString`이라 같이 빨라집니다.
+  - **`sort`:** 원소가 모두 int이면 tagged 값을 그대로 비교하는 merge sort(stable)입니다. 태그가 같아서 값의 순서가 int의 순서와 같습니다. 그 밖에는 `qsort`에 `calc_compare`를 넘깁니다. int 2백만 개가 0.18초에서 0.12초가 되었습니다.
 - **option:** 생성 코드는 `Some`/`None`의 이름 전역을 따로 만들지 않고, 런타임의 `calc_name_some`, `calc_name_none`을 외부 전역으로 선언해서 씁니다(`llvm.mlir.global external constant`). `None`은 번호가 0이라 즉시값 `6`입니다. 0.29.0까지는 런타임의 `tryHead`, `tryFind`도 `Some`을 만들어서 패턴 검사의 포인터 비교가 맞으려면 이름이 한 곳에 있어야 했습니다. 지금은 option을 만드는 내장 함수가 없지만, 선언 없이 모든 프로그램에 있는 타입이라 그대로 런타임에 둡니다.
 
 ## 11. prelude (Calc로 쓴 표준 라이브러리)
@@ -618,7 +621,7 @@ type p = { x: int; y: int } in let a = { y = 2; x = 1 } in { a with x = a.y }
 
 - **표현:** 블록 `[헤더, 원소...]`이고, 헤더는 `8 | (n << 8)`입니다(`CALC_KIND_ARRAY`). 길이는 헤더의 단어 수입니다.
 - **bool 배열 (0.60.0부터):** 원소가 bool이면 `[헤더 9 | (n << 8), 바이트 n개]`입니다(`CALC_KIND_BOOL_ARRAY`). 원소마다 바이트 하나(0 또는 1)라서 8바이트 원소보다 메모리가 1/8입니다.
-  - **만드는 곳:** 런타임의 `Array.create`와 `Array.ofList`가 원소 값을 보고 정합니다. 타입 검사를 통과했으므로 원소 하나가 bool이면 모두 bool입니다. 리터럴과 prelude의 `init`, `map`, `copy`는 `Array.ofList`를 거칩니다. 빈 배열은 어느 종류여도 됩니다(`=`는 길이와 원소로 비교).
+  - **만드는 곳:** 런타임의 `Array.create`와 `Array.ofList`가 원소 값을 보고 정합니다. 타입 검사를 통과했으므로 원소 하나가 bool이면 모두 bool입니다. 리터럴은 `Array.ofList`를 거치고, prelude의 `init`, `map`, `copy`는 첫 원소로 `Array.create`합니다. 빈 배열은 어느 종류여도 됩니다(`=`는 길이와 원소로 비교).
   - **GC:** 안에 포인터가 없으므로 `GC_MALLOC_ATOMIC`으로 할당합니다. GC가 내용을 훑지 않습니다.
   - **접근:** 생성 코드는 헤더의 종류를 보고 바이트(`i8` load/store, bool 값 `(b << 3) | 3`과 바꿈) 또는 단어로 읽고 씁니다. 헤더 읽기에는 따로 TBAA 태그(`#calc_tbaa_header`)를 붙입니다. 헤더는 런타임이 만든 뒤 바뀌지 않습니다. 런타임 함수는 `calc_array_get`/`calc_array_set`으로 두 종류를 다룹니다.
   - **효과:** 체 1억이 0.65초에서 0.41초, 최대 메모리가 804MB에서 103MB가 되었습니다. int 배열의 반복은 종류 검사가 더해졌지만 그대로입니다(0.83초).
@@ -627,6 +630,7 @@ type p = { x: int; y: int } in let a = { y = 2; x = 1 } in { a with x = a.y }
   - 리터럴과 `Array.ofList`는 같은 C 함수(`calc_builtin_Array_ofList`)라서 선언은 한 번만 냅니다.
 - **범위 검사:** 생성 코드가 원소 수(헤더의 단어 수)와 비교하고, 범위 밖이면 `calc_error_index`가 인터프리터와 같은 문장(`Index was outside the bounds of the array.`)으로 끝냅니다. 음수 인덱스는 부호 없는 수로 비교해 한 번에 잡습니다. 값으로 쓴 `.[]`는 런타임 함수 `calc_builtin_array_get`/`set`을 부릅니다.
 - **prelude:** `Array.init`, `map`, `iter`, `fold`, `copy`는 prelude의 `module Array`에 Calc 코드로 있습니다. prelude도 파싱한 뒤 `Modules.resolve`로 펼치므로 `Array.init` 같은 이름의 선언이 됩니다. 프로그램의 `Array.init`은 선언하지 않은 모듈의 이름이라 바뀌지 않고, `Prelude.wrap`이 이름으로 찾아 붙입니다.
+  - **반복문으로 채움 (0.61.0부터):** `init`과 `map`은 `f`의 첫 결과로 `Array.create`한 뒤 `for`로 나머지를 채우고, `fold`는 ref 하나로 돕니다. 전에는 `Array.ofList (map f (range 0 (n - 1)))`처럼 리스트를 거쳐서 원소마다 리스트 칸을 두세 개 만들었습니다. `f`를 앞 원소부터 부르는 순서는 같습니다. 3백만 개의 `init`, `map`, `fold`가 실행 파일에서 0.14초(238MB)에서 0.01초(48MB), 인터프리터에서 1.39초에서 0.72초가 되었습니다.
 - **GC:** Boehm GC는 세대별이 아니므로 원소를 바꿀 때 write barrier가 필요 없습니다(mutable reference와 같음).
 
 ## 관련 문서
