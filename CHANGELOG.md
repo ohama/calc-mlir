@@ -4,6 +4,14 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.52.0] - 2026-10-29
+
+### 변경
+- 인터프리터도 `append (reverse xs) ys`를 한 번에 처리합니다(`Eval.revAppend`). 거꾸로 만든 리스트를 다시 복사하지 않아 리스트 칸을 n개만 만듭니다. 컴파일러의 `calc_rev_append`와 같습니다.
+  - 인터프리터의 merge sort 20만(`benchmarks/msort.calc`)이 0.665초에서 0.611초가 되었습니다.
+  - `append`와 `reverse`가 사용자 정의로 가려지지 않았을 때만 씁니다. 계산 순서와 오류(`reverse`의 인자를 먼저 확인)는 같습니다.
+- 테스트 2개 추가 (총 1211개)
+
 ## [0.51.0] - 2026-10-29
 
 ### 변경

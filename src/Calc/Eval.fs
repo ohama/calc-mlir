@@ -758,9 +758,12 @@ and private compile (scope: Scope) (expr: Expr) : Code =
             match e with
             | App (f, a) -> spine f (a :: args)
             | _ -> e, args
-        let head, args = spine expr []
+        let head, exprArgs = spine expr []
+        match revAppend scope head exprArgs with
+        | Some code -> code
+        | None ->
         let f = c head
-        let args = args |> List.map c |> Array.ofList
+        let args = exprArgs |> List.map c |> Array.ofList
         match saturatedBuiltin scope head args with
         | Some code -> code
         | None ->
@@ -979,6 +982,28 @@ and private compile (scope: Scope) (expr: Expr) : Code =
 /// 인자가 다 모인 내장 함수 호출 (f 가 범위의 변수가 아니라 내장 함수일 때): VBuiltin 에 인자를 하나씩 모으지 않고
 /// 인자를 모두 평가한 뒤 바로 부름. partial application 은 부수 효과가 없으므로 계산 순서와 오류는 같음.
 /// !, :=, a.[i], a.[i] <- v 는 이름으로 고르는 callBuiltin 도 거치지 않음
+/// append (reverse xs) ys: 거꾸로 만든 리스트를 다시 복사하지 않고 xs 의 원소를 하나씩 ys 앞에 붙임 (칸 n 개, 컴파일러의
+/// calc_rev_append 와 같음). 두 이름이 가려지지 않은 내장 함수일 때만. 계산 순서와 오류는 reverse 다음 append 와 같음
+and private revAppend (scope: Scope) (head: Expr) (args: Expr list) : Code option =
+    let isBuiltin name expr =
+        match expr with
+        | Var v when not (scope.Vars.ContainsKey v) ->
+            match Map.tryFind v scope.Consts with
+            | Some (VBuiltin (n, [])) -> n = name
+            | _ -> false
+        | _ -> false
+    match head, args with
+    | f, [ App (r, xs); ys ] when isBuiltin "append" f && isBuiltin "reverse" r ->
+        let xs, ys = compile scope xs, compile scope ys
+        fun fr ->
+            let xs = asList xs fr                      // reverse 의 인자를 먼저 확인 (ys 보다 앞)
+            let mutable acc = asList ys fr
+            for x in xs do
+                acc <- x :: acc
+            VList acc
+        |> Some
+    | _ -> None
+
 and private saturatedBuiltin (scope: Scope) (head: Expr) (args: Code[]) : Code option =
     let builtin =
         match head with

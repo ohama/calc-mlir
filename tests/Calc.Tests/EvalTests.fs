@@ -576,6 +576,19 @@ let tests =
                 Expect.equal (formatValue (calc "type t = A | B of int * int in (A, B (1, 2), Some (Some None), Some (-1))")) "(A, B (1, 2), Some (Some None), Some (-1))" ""
                 Expect.equal (calc "type t = A | B of int in match [A; B 3] with [A; B n] -> n | _ -> 0") (VInt 3) ""
             }
+            // append (reverse xs) ys 는 칸 n 개로 한 번에 (Eval.revAppend)
+            test "append (reverse xs) ys" {
+                Expect.equal (calc "(append (reverse [1; 2; 3]) [4], append (reverse []) [1], append (reverse [1]) [])")
+                    (VTuple [| VList [ VInt 3; VInt 2; VInt 1; VInt 4 ]; VList [ VInt 1 ]; VList [ VInt 1 ] |]) ""
+                Expect.equal (calc "let reverse xs = xs in append (reverse [1; 2]) [3]") (VList [ VInt 1; VInt 2; VInt 3 ]) "사용자가 가린 reverse 는 그대로"
+                use writer = new System.IO.StringWriter()
+                let value = evalWithOutput writer (Program.load "append (reverse (print 1; [1])) (print 2; [2])")
+                Expect.equal (writer.ToString(), value) ("12", VList [ VInt 1; VInt 2 ]) "인자는 왼쪽부터"
+                use writer = new System.IO.StringWriter()
+                Expect.throwsC (fun () -> evalWithOutput writer (Program.load "append (reverse 1) (print 2; [2])") |> ignore)
+                    (fun ex -> Expect.equal (writer.ToString(), ex.Message) ("", "Type error: expected list but got int") "reverse 의 인자를 먼저 확인")
+            }
+            expectError "append (reverse [1]) 2" "Type error: expected list but got int"
             test "세 단계 넘게 바깥 함수의 칸" {
                 Expect.equal (calc "let a = 1 in let f b = let g c = let h d = let k e = a + b + c + d + e in k in h in g in f 2 3 4 5") (VInt 15) ""
             }
