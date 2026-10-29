@@ -394,6 +394,8 @@ let private runCases =
         ]
       "타입이 int 인 연산",
         [
+          "println (2147483647 + 1, -2147483647 - 1 - 1, 5 - 7, 100 + -3, 0 - 0, 1073741824 + 1073741824, -1073741824 - 1073741825)", ("(-2147483648, 2147483647, -2, 97, 0, -2147483648, 2147483647)\n", "", 0), "태그를 떼지 않는 +, -: 32비트에서 한 바퀴"
+          "let f a b = (a + b, a - b) in println (f 2147483647 2147483647, f (-2147483647 - 1) 1)", ("((-2, 0), (-2147483647, 2147483647))\n", "", 0), "변수끼리"
           "let rec fib n = if n < 2 then n else fib (n - 1) + fib (n - 2) in println (fib 20, 2147483647 + 1, -3 < 2, 5 >= 5, 4 <> 4)", ("(6765, -2147483648, true, true, false)\n", "", 0), "int 로 정해진 연산"
           "let eq x y = x = y in let lt x y = x < y in let lts x y = x < y in println (eq 1 1, eq \"a\" \"b\", eq [1] [1], lt 1 2, lts \"b\" \"a\")", ("(true, false, true, true, false)\n", "", 0), "다형 함수 안의 = 와, 쓰인 곳에서 int 또는 string 으로 정해지는 <"
           "let max a b = if a > b then a else b in println (max 3 7, max 10 (-1))", ("(7, 10)\n", "", 0), "함수 안의 int 비교"

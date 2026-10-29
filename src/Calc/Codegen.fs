@@ -367,6 +367,16 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
         let x = untagInt fb (emitExpr fb env a)
         let y = untagInt fb (emitExpr fb env b)
         retagInt fb (emitOp fb op x y "i32")
+    // 태그를 떼지 않고 더하기, 빼기: (8x+1) ± (8y+1) ∓ 1 = 8(x±y)+1 을 64비트에서 계산한 뒤, 35비트에서 부호를 넓혀
+    // 32비트에서 한 바퀴 돈 값으로 (shl 29, ashr 29: arm64 에서 sbfx 하나)
+    let taggedSum op fix x y =
+        let t = emitOp fb fix (emitOp fb op x y "i64") (emitConst fb "i64" 1L) "i64"
+        let shifted = emitOp fb "arith.shli" t (emitConst fb "i64" 29L) "i64"
+        emitOp fb "arith.shrsi" shifted (emitConst fb "i64" 29L) "i64"
+    let taggedAddSub op fix a b =
+        let x = emitExpr fb env a
+        let y = emitExpr fb env b
+        taggedSum op fix x y
     // x 가 int 인가 (타입 검사를 통과했으므로 그러면 다른 쪽도 int)
     let isInt x =
         let tag = emitOp fb "arith.andi" x (emitConst fb "i64" 7L) "i64"
@@ -406,9 +416,9 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
         let x = emitExpr fb env a
         let y = emitExpr fb env b
         emitIf fb (isInt x)
-            (fun () -> retagInt fb (emitOp fb "arith.addi" (untagInt fb x) (untagInt fb y) "i32"))
+            (fun () -> taggedSum "arith.addi" "arith.subi" x y)
             (fun () -> emitCall fb "calc_add" [ x; y ] "i64")
-    | CPrim (PSubtract, [ a; b ]) -> intOp "arith.subi" a b
+    | CPrim (PSubtract, [ a; b ]) -> taggedAddSub "arith.subi" "arith.addi" a b
     | CPrim (PMultiply, [ a; b ]) -> intOp "arith.muli" a b
     | CPrim ((PDivide | PModulo) as op, [ a; b ]) ->
         let x = untagInt fb (emitExpr fb env a)
@@ -442,7 +452,7 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
                 retagBool fb eq)
             (fun () -> emitCall fb "calc_eq" [ x; y ] "i64")
     // 타입 추론이 int 로 정한 연산: 태그 검사 없이 (태그를 붙인 채로 비교해도 순서와 같음이 그대로)
-    | CPrim (PIntAdd, [ a; b ]) -> intOp "arith.addi" a b
+    | CPrim (PIntAdd, [ a; b ]) -> taggedAddSub "arith.addi" "arith.subi" a b
     | CPrim ((PIntEqual | PIntLess | PIntGreater | PIntLessEqual | PIntGreaterEqual) as op, [ a; b ]) ->
         let x = emitExpr fb env a
         let y = emitExpr fb env b
