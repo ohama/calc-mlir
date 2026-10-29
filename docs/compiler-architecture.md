@@ -31,7 +31,7 @@
 
 | 단계 | 파일 | 하는 일 |
 |---|---|---|
-| 파싱 | `Lexer.fsl`, `Parser.fsy`, `Modules.fs` | 소스 → `Ast.Expr` (인터프리터와 같음). 모듈은 이 단계에서 `M.f` 같은 이름의 선언으로 펼쳐지므로 뒤 단계에는 없음 |
+| 파싱 | `Lexer.fsl`, `LayoutFilter.fs`, `Parser.fsy`, `Modules.fs` | 소스 → `Ast.Expr` (인터프리터와 같음). 모듈은 이 단계에서 `M.f` 같은 이름의 선언으로 펼쳐지므로 뒤 단계에는 없음 |
 | prelude | `Prelude.fs`, `prelude.calc` | 프로그램이 쓰는 표준 라이브러리 정의(`map`, `fold` 등)를 AST 앞에 `let` 사슬로 붙임 (인터프리터와 같음). 그다음부터는 보통 함수 |
 | 타입 검사 | `Infer.fs` | 통과한 프로그램만 컴파일 (`--no-typecheck`와 함께 쓸 수 없음) |
 | lowering | `Core.fs`, `Lower.fs` | `Ast.Expr` → Core IR. 연산을 `Prim`으로, `&&`/`||`를 `if`로, closure conversion(함수를 최상위로). 지원하지 않는 기능은 `NotSupported` |

@@ -4,6 +4,20 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.38.0] - 2026-10-29
+
+### 추가
+- indentation 문법(F# light syntax). 들여쓴 블록이 `in`, `;`, `;;`, `done`, `struct … end`를 대신합니다. verbose syntax(지금까지의 문법)도 그대로 받습니다.
+  - 블록: `let … =`, `->`, `then`, `else`, `try`, `do` 다음의 식. 블록과 같은 열의 새 줄은 구분자(`in`, `;`), 0열의 새 줄은 새 최상위 항목, 왼쪽의 새 줄은 블록을 닫습니다.
+  - 바깥 `match`의 열에 쓴 `|`는 안쪽 `match`를 닫습니다. 리스트와 레코드는 줄바꿈으로 원소를 구분합니다. `module M =` 다음 줄부터 들여쓴 모듈, `done` 없는 `while`/`for`를 씁니다.
+  - 렉서와 파서 사이의 `LayoutFilter`가 F#의 `LexFilter`처럼 offside rule로 가상 토큰을 넣습니다. 문법에는 블록 괄호 규칙 하나만 더했습니다.
+  - 오류: `Tabs are not allowed in indentation`, `The block following this let is unfinished`
+  - 한 줄 코드는 뜻이 바뀌지 않습니다. 기존 예제 전부의 AST가 같은지 테스트로 확인합니다.
+- 테스트 42개 추가 (총 1118개)
+
+### 변경
+- 선언 다음 줄의 0열에서 시작하는 식은 새 항목입니다(전에는 앞 선언의 식에 이어져서 `;;`가 필요했음). `while c do a`처럼 `done`을 생략할 수 있습니다.
+
 ## [0.37.0] - 2026-10-29
 
 ### 추가

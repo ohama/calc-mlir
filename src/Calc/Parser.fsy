@@ -170,6 +170,8 @@ let makeTuple (items: TypeExpr list) =
 /// M.f, M.t 와 M.C (모듈 이름으로 한정한 이름)
 %token <string> QIDENT QCTOR
 %token MODULE STRUCT END OPEN
+/// indentation 문법의 블록 (LayoutFilter 가 넣는 가상 괄호)
+%token OBLOCKBEGIN OBLOCKEND
 %token NOBAR BELOWSEMI
 %token PLUS MINUS STAR SLASH PERCENT PIPE COMPOSE LPAREN RPAREN
 %token EOF
@@ -346,6 +348,7 @@ Primary:
     | QCTOR                         { at parseState (Ctor $1) }
     | LPAREN RPAREN                 { Unit }
     | LPAREN Expr RPAREN            { $2 }
+    | OBLOCKBEGIN SeqExpr OBLOCKEND { $2 }
     | LPAREN Expr COLON TypeExpr RPAREN
                                     { annotate (Some ($4, parseState.InputStartPosition 4)) $2 }
     | LPAREN Expr SEMI SeqExpr RPAREN

@@ -376,6 +376,11 @@ let private runCases =
           "let r = ref (fun x -> x) in r := (fun x -> x * 2); map !r [1; 2]", ("[2; 4]\n", "", 0), "내용이 함수"
           "map ref [1; 2]", ("[ref 1; ref 2]\n", "", 0), "ref 를 값으로 (클로저)"
         ]
+      "indentation 문법",
+        [
+          "let area x =\n    let pi = 3\n    pi * x\n\nlet rec loop i acc =\n    if i = 0 then acc\n    else\n        let next = acc + i\n        loop (i - 1) next\n\nprintln (map area [ 1\n                    2 ])\nloop 1000000 0", ("[3; 6]\n1784293664\n", "", 0), "블록, 같은 열의 let, 줄바꿈 원소, tail call"
+          "module M =\n    let x = 1\n    let f y = y + x\nlet n = ref 0\nwhile !n < 3 do\n    incr n\nM.f !n", ("4\n", "", 0), "모듈, done 없는 while"
+        ]
       "모듈",
         [
           "module M = struct type t = A | B of int let f x = match x with A -> 0 | B n -> n end;; (M.f (M.B 3), M.A, [M.B 1])", ("(3, M.A, [M.B 1])\n", "", 0), "생성자 이름은 M.A"

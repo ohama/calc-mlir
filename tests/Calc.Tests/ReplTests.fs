@@ -132,6 +132,12 @@ let tests =
                   "f;;", "- : int = 0\n"
                   "open N;;", "Error: Unknown module: N (line 1, column 6)\n  1 | open N;;\n    |      ^\n" ]
         }
+        test "indentation 문법: 입력 하나 안에서 들여쓴 블록" {
+            expectSession
+                [ "let f x =\n    let y = x * 2\n    y + 1;;", "val f : int -> int = <fun>\n"
+                  "f 20;;", "- : int = 41\n"
+                  "let a = 1\nlet b = a + 1\nb;;", "val a : int = 1\nval b : int = 2\n- : int = 2\n" ]
+        }
         test "레코드 선언과 값" {
             expectSession
                 [ "type point = { x: int; y: int };;", "type point\n"

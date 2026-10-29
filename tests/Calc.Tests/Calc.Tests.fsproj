@@ -16,6 +16,7 @@
     <Compile Include="ReplTests.fs" />
     <Compile Include="PreludeTests.fs" />
     <Compile Include="CompileTests.fs" />
+    <Compile Include="LayoutTests.fs" />
     <Compile Include="Main.fs" />
   </ItemGroup>
 

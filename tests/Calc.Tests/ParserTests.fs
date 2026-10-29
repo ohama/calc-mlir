@@ -511,7 +511,7 @@ let tests =
                 expectParseError "  \n (" "parse error: unexpected end of input" 2 3
             }
             test "여러 줄" {
-                expectParseError "let x = 1 in\n  let y = 2\n  x + y" "parse error: unexpected end of input" 3 8
+                expectParseError "let x = 1 in\n  let y = 2" "The block following this let is unfinished" 2 3
                 expectParseError "1 +\n\n  )" "parse error: unexpected ')'" 3 3
             }
             test "렉서 오류도 위치와 함께 전달" {
@@ -557,8 +557,10 @@ let tests =
             test "식 사이의 ;; 는 순서 실행" {
                 Expect.equal (parse "1;; 2;;") (Seq (Number 1, Number 2)) "끝의 ;; 도 됨"
             }
-            test "선언 바로 뒤의 식은 앞 선언에 이어짐 (OCaml 과 같음, ;; 가 필요)" {
-                Expect.equal (parse "let x = f\ng") (Let ("x", App (Var "f", Var "g"), Unit)) ""
+            test "선언 다음 줄의 0열은 새 항목, 더 들여쓰면 이어짐 (indentation 문법, F# 와 같음)" {
+                Expect.equal (parse "let x = f\ng") (Let ("x", Var "f", Var "g")) ""
+                Expect.equal (parse "let x = f\n  g") (Let ("x", App (Var "f", Var "g"), Unit)) ""
+                Expect.equal (Frontend.parseVerbose "let x = f\ng") (Let ("x", App (Var "f", Var "g"), Unit)) "verbose syntax 는 OCaml 과 같이 ;; 가 필요"
             }
             test "식 하나만 있는 프로그램은 예전과 같음" {
                 Expect.equal (parse "let x = 1 in x") (Let ("x", Number 1, Var "x")) ""
@@ -799,7 +801,7 @@ let tests =
                 Expect.equal (parse "for i = 1 to 2 do while c do a done done") (parse "for i = 1 to 2 do (while c do a done) done") "중첩"
             }
             test "오류" {
-                expectParseError "while c do a" "parse error: unexpected end of input" 1 13
+                expectParseError "while c a" "parse error: unexpected end of input" 1 10
                 expectParseError "for i = 1 do a done" "parse error: unexpected 'do'" 1 11
                 expectParseError "let do = 1 in do" "parse error: unexpected 'do'" 1 5
             }

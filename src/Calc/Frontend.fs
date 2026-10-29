@@ -5,11 +5,12 @@ open System.Reflection
 open FSharp.Text.Lexing
 open Ast
 
-/// 파서 시작 기호 하나로 파싱. 파서 오류는 위치가 있는 SyntaxError 로
-let private parseWith (start: (LexBuffer<char> -> Parser.token) -> LexBuffer<char> -> 'a) (input: string) : 'a =
+/// 파서 시작 기호 하나로 파싱. layout 이면 indentation 문법(LayoutFilter)을 씀. 파서 오류는 위치가 있는 SyntaxError 로
+let private parseUsing (layout: bool) (start: (LexBuffer<char> -> Parser.token) -> LexBuffer<char> -> 'a) (input: string) : 'a =
     let lexbuf = LexBuffer<char>.FromString input
+    let tokenize = if layout then LayoutFilter.create input Lexer.tokenize else Lexer.tokenize
     try
-        start Lexer.tokenize lexbuf
+        start tokenize lexbuf
     with Errors.ParseFailure ->
         // 오류를 낸 토큰은 마지막으로 읽은 토큰 (StartPos ~ EndPos)
         let startPos, endPos = lexbuf.StartPos, lexbuf.EndPos
@@ -24,11 +25,16 @@ let private parseWith (start: (LexBuffer<char> -> Parser.token) -> LexBuffer<cha
             let token = input.Substring(startPos.AbsoluteOffset, endPos.AbsoluteOffset - startPos.AbsoluteOffset)
             Errors.syntaxError (sprintf "parse error: unexpected '%s'" token) startPos
 
+let private parseWith start input = parseUsing true start input
+
 /// 프로그램 전체를 식 하나로 (최상위 선언은 let ... in 사슬)
 let parse (input: string) : Expr = parseWith Parser.start input
 
 /// 최상위 항목들 그대로 (REPL)
 let parseItems (input: string) : TopItem list = parseWith Parser.startItems input
+
+/// indentation 문법 없이 (verbose syntax 만). 테스트가 두 결과를 비교함
+let parseVerbose (input: string) : Expr = parseUsing false Parser.start input
 
 /// Calc.fsproj 의 <Version> 값 (빌드 메타데이터 "+<git hash>" 는 제거)
 let version () =

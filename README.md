@@ -44,6 +44,7 @@ Result: 10
 | 문자열 포맷 | `sprintf "%d is %s" 42 "x"`, `printfn "%A" xs`, `$"Hello {name}, {age + 1}"` |
 | 레코드 | `type point = { x: int; y: int }`, `{ x = 1; y = 2 }`, `p.x`, `{ p with x = 1 }` |
 | 모듈 | `module Stack = struct type 'a t = … let push x s = … end`, `Stack.push`, `open Stack` |
+| indentation 문법 (F# light syntax) | 들여쓴 블록이 `in`, `;`, `;;`, `done`, `struct … end`를 대신함. 0열의 새 줄은 새 항목 |
 | mutable reference, 반복문 | `let r = ref 0 in r := !r + 1`, `incr r`, `for i = 1 to 10 do … done`, `while !n > 0 do … done` |
 
 - 우선순위 (낮은 것부터): `;` < `let`/`if`/`fun`/`match` < `:=` < `||` < `&&` < 비교, `|>`, `>>` < `::` < `+ -` < `* / %` < 단항 `-`, `not` < 함수 호출 < `!` < `.` (필드)
@@ -85,7 +86,7 @@ dotnet run --project src/Calc
 ```
 
 ```
-calc 0.37.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
+calc 0.38.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
 # let add a b = a + b;;
 val add : int -> int -> int = <fun>
 # add 1 2;;
@@ -149,6 +150,7 @@ Error: parse error: unexpected '+' (line 1, column 5)
 │   ├── runtime/              # 컴파일한 프로그램의 C 런타임 (Boehm GC, 내장 함수, Unicode 표)
 │   ├── Parser.fsy            # fsyacc 문법 → Parser.fs (빌드 시 생성)
 │   ├── Lexer.fsl             # fslex 규칙 → Lexer.fs (빌드 시 생성)
+│   ├── LayoutFilter.fs       # indentation 문법: 렉서와 파서 사이에서 가상 토큰을 넣음
 │   └── Program.fs            # 명령줄 처리 (Argu)
 ├── tests/Calc.Tests/         # Expecto + FsCheck 테스트
 ├── docs/                     # 빌드, 테스트, 문법 문서
@@ -161,7 +163,7 @@ Error: parse error: unexpected '+' (line 1, column 5)
 처리 흐름:
 
 ```
-문자열 → Lexer.tokenize → Parser.start (Modules.resolveProgram) → Ast.Expr → Prelude.wrap (표준 라이브러리) → Infer.typecheck (타입) → Eval.eval → Value
+문자열 → Lexer.tokenize → LayoutFilter → Parser.start (Modules.resolveProgram) → Ast.Expr → Prelude.wrap (표준 라이브러리) → Infer.typecheck (타입) → Eval.eval → Value
 ```
 
 `Lexer.fs`와 `Parser.fs`는 빌드할 때 `.fsl`과 `.fsy`에서 생성되며 git에 포함되지 않습니다. 직접 수정하지 말고 `.fsl`, `.fsy` 파일을 고치세요.

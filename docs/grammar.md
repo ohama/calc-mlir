@@ -5,6 +5,7 @@ Calc 언어의 어휘 구조, 구문, 의미를 정리한 문서입니다. 구�
 | 단계 | 파일 |
 |---|---|
 | 어휘 (토큰) | `src/Calc/Lexer.fsl` |
+| indentation 문법 | `src/Calc/LayoutFilter.fs` (렉서와 파서 사이) |
 | 구문 (파서) | `src/Calc/Parser.fsy` |
 | AST | `src/Calc/Ast.fs` |
 | 타입 추론 | `src/Calc/Infer.fs` |
@@ -286,13 +287,70 @@ area (Circle 1)
 ```
 
 - **선언:** `in` 없는 `let`, `let rec`, `let (a, b) =`, `let () =`, `let _ =`, `type`. 앞의 선언은 뒤의 모든 항목에서 보입니다. 파서가 `let … in (나머지 항목)` 사슬로 풀어 쓰므로, 의미는 `let … in`과 같습니다.
-- **선언 뒤의 식은 `;;` 다음에:** 선언의 오른쪽 식은 다음 선언이나 `;;`까지 이어집니다. 그래서 `let x = f` 다음 줄의 `g`는 `f g`(함수 호출)가 됩니다(OCaml과 같음). 프로그램의 처음에는 `;;` 없이 식을 쓸 수 있습니다.
+- **선언 뒤의 식:** 0열에서 시작하는 새 줄은 새 항목입니다(아래 "indentation 문법"). 한 줄에 이어 쓸 때는 `;;` 다음에 씁니다(`let x = 1;; x + 1`). 선언의 오른쪽 식은 다음 선언, `;;`, 0열의 새 줄까지 이어집니다. 그래서 `let x = f` 다음 줄의 `g`는 0열이면 새 식, 들여쓰면 `f g`(함수 호출)입니다.
 - **결과:** 마지막 항목이 식이면 그 값, 선언이면 `()`입니다. 식 항목이 여럿이면 앞의 것은 순서대로 실행하고 버립니다(`e1;; e2`는 `e1; e2`와 같음). 빈 프로그램(주석만 있는 파일 포함)은 `()`입니다.
 - **`;` (순서 실행):** `e1; e2`는 `e1`을 평가하고 버린 뒤 `e2`의 값이 됩니다.
   - **어디까지 이어지는지:** `let`의 본문과 오른쪽, `fun`의 본문, `match` 분기, 괄호 안, 최상위에서 오른쪽 끝까지 이어집니다. `let x = 1 in a; b`는 `let x = 1 in (a; b)`입니다.
   - **`if`:** `if`의 `else` 분기는 `;` 앞에서 끝납니다. `if c then a else b; d`는 `(if c then a else b); d`입니다(OCaml과 같음).
   - **리스트 안:** 리스트 리터럴 안의 `;`는 원소 구분자입니다. 순서 실행을 넣으려면 괄호로 감쌉니다(`[(a; b)]`).
   - **우선순위:** `;`는 모든 연산자보다 약합니다.
+
+### indentation 문법
+
+F#의 light syntax처럼 들여쓰기로 블록을 구분합니다. `in`, `;`, `;;`, `done`, `struct … end`를 쓴 코드(verbose syntax)도 그대로 받습니다.
+
+```
+type shape = Circle of int | Rect of int * int
+
+let rec fact n =
+    if n = 0 then 1
+    else n * fact (n - 1)
+
+let area shape =
+    let pi = 3                       (* let pi = 3 in … *)
+    match shape with
+    | Circle r -> pi * r * r
+    | Rect (w, h) -> w * h
+
+println (fact 5)                     (* ;; 없이 새 항목 *)
+println (area (Rect (2, 3)))
+```
+
+- **블록:** `let … =`, `->`(`fun`과 `match`/`function`/`try`의 분기), `then`, `else`, `try`, `do` 다음의 식이 블록입니다. 블록의 첫 토큰의 열이 블록의 열입니다.
+- **같은 열의 새 줄은 구분자:**
+  - 블록 안의 `let`(아직 `in`이 없는) 다음이면 `in`
+  - 블록 안이면 `;`
+  - 최상위(0열)와 모듈 안이면 `;;`
+  - 괄호 안이면 `;`(리스트와 레코드에서는 원소 구분자, `(a⏎ b)`는 `(a; b)`)
+  - 앞 줄의 마지막 토큰이 식을 끝낼 수 있고(이름, 리터럴, 닫는 괄호, `done`, `end`), 새 줄의 첫 토큰이 식을 시작할 수 있을 때만 넣습니다. 그래서 `… in`, `a +`, `let x =`로 끝나는 줄 다음은 이어집니다.
+- **더 들여쓴 새 줄은 앞 줄을 잇습니다:** `f a` 다음 줄의 들여쓴 `b`는 인자입니다.
+- **블록보다 왼쪽인 새 줄은 블록을 닫습니다(offside rule).** `while`/`for`의 `do` 블록이 닫히면 `done`을, `module M =` 다음의 들여쓴 선언이 끝나면 `end`를 넣습니다.
+- **이어지는 줄:** infix 연산자(`+ - * / % = <> < > <= >= && || |> >> :: :=`), `|`, `then`, `else`, `with`, `in`, `and`, `->`, `do`, `,`, 닫는 괄호로 시작하는 줄은 앞 줄을 잇습니다. 줄 머리의 연산자는 블록의 열보다 "연산자 길이 + 1"만큼 왼쪽에 있어도 됩니다(F#과 같음).
+
+  ```
+  let total =
+      xs
+      |> map f
+      |> sum
+  ```
+
+- **`match`의 분기:** `|`의 열이 분기의 주인을 정합니다. 바깥 `match`의 열에 쓴 `|`는 안쪽 `match`를 닫습니다(괄호가 필요 없음). `|`는 `match`가 있는 줄의 머리까지 왼쪽에 둘 수 있습니다(`let f x = match x with` 다음 줄의 `    | A -> …`).
+
+  ```
+  match a with
+  | A ->
+      match b with
+      | X -> 1
+      | Y -> 2
+  | B -> 3                           (* 바깥 match 의 분기 *)
+  ```
+
+- **한 줄 안에서는 지금과 같습니다.** 구분자를 넣지 않으므로 한 줄로 쓴 `let … in`, `;`, 중첩 `match`의 뜻은 바뀌지 않습니다. 테스트가 기존 예제 전부를 indentation 문법을 켜고 끄고 파싱해서 AST가 같은지 확인합니다(`LayoutTests`).
+- **오류:**
+  - `Tabs are not allowed in indentation`: 들여쓰기에 탭을 쓰면 오류입니다(F#과 같음).
+  - `The block following this let is unfinished`: 블록이 몸 없는 `let`으로 끝납니다. 위치는 그 `let`입니다.
+- **구현:** `LayoutFilter`가 렉서와 파서 사이에서 F#의 `LexFilter`처럼 context 스택으로 가상 토큰을 넣습니다. 블록은 가상 괄호(`OBLOCKBEGIN … OBLOCKEND`)로 감싸고, 구분자는 문법의 `in`, `;`, `;;`, `done`, `struct`, `end`를 그대로 씁니다. 설계는 [indentation-design.md](indentation-design.md)에 있습니다.
+- **F#과 다른 점:** F#의 모든 permitted undentation, `begin … end`, `elif`, `#indent "off"`는 없습니다. 괄호 안에서 블록보다 왼쪽에 쓴 줄은 오류가 아니라 이어지는 줄입니다.
 
 ### 함수 인자
 
@@ -502,7 +560,7 @@ let s = Stack.push 1 Stack.empty in
 (fst (Stack.pop s), (fun (t: int Stack.t) -> t) s)      (* (1, Stack.Push (1, Stack.Empty)) *)
 ```
 
-- **선언:** `module M = struct … end`. 안에는 최상위와 같은 선언(`let`, `let rec … and`, `type`, 레코드 타입, `exception`, `module`, `open`)만 쓸 수 있습니다. 식을 실행하려면 `let _ = e`로 씁니다. 모듈 이름은 대문자로 시작합니다.
+- **선언:** `module M = struct … end`, 또는 `module M =` 다음 줄부터 들여쓴 선언(indentation 문법). 안에는 최상위와 같은 선언(`let`, `let rec … and`, `type`, 레코드 타입, `exception`, `module`, `open`)만 쓸 수 있습니다. 식을 실행하려면 `let _ = e`로 씁니다. 모듈 이름은 대문자로 시작합니다.
 - **밖에서 쓰기:** `M.f`(값), `M.C`(생성자, 패턴에서도), `M.t`(타입 표기). 모듈 안의 모듈은 `M.N.g`입니다. 점 앞뒤에 공백을 둘 수 없습니다(`M . f`는 생성자 `M`의 필드 읽기).
 - **안에서 쓰기:** 모듈 안에서는 앞에서 선언한 이름을 `M.` 없이 씁니다. 모듈 안의 모듈 `N`도 `N.g`로 씁니다.
 - **`open M`:** 그 뒤에서 `M`의 이름을 `M.` 없이 씁니다. 뒤에서 같은 이름을 다시 선언하면 그쪽이 가립니다. 모듈 안의 `open`은 그 모듈이 끝날 때까지만입니다. 선언하지 않은 모듈은 `Unknown module: M`입니다.
