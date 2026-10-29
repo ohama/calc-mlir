@@ -158,6 +158,10 @@ let inferred =
       "let xs = [] in (1 :: xs, \"a\" :: xs)", "int list * string list"
       "let p = (None, []) in let (a, b) = p in (Some 1 = a, Some \"x\" = a, 1 :: b, \"a\" :: b)", "bool * bool * int list * string list"
       "let mk = fun () -> let r = ref [] in r in let a = mk () in a := [1]; let b = mk () in b := [true]; (!a, !b)", "int list * bool list"
+      // 모듈
+      "module M = struct type 'a t = Leaf | Node of 'a t * 'a end;; M.Node (M.Leaf, 1)", "int M.t"
+      "module M = struct type t = A end;; fun (x: M.t) -> x", "M.t -> M.t"
+      "module M = struct let id x = x end;; M.id", "'a -> 'a"
       // 레코드: 필드 이름이 타입을 정함
       "type p = { x: int; y: int } in { x = 1; y = 2 }", "p"
       "type p = { x: int; y: int } in fun r -> r.x + r.y", "p -> int"
@@ -240,6 +244,12 @@ let tests =
             expectTypeError "sprintf \"%q\" 1" "Unknown format specifier: %q"
             expectTypeError "sprintf \"50%\"" "Missing format specifier after %"
             expectTypeError "$\"%s{1}\"" "Type mismatch: expected string but got int"
+            // 모듈
+            expectTypeError "module M = struct let f x = x end;; M.g" "Unbound variable: M.g"
+            expectTypeError "module M = struct let f x = x end;; f" "Unbound variable: f"
+            expectTypeError "module M = struct type t = A end;; A" "Unknown constructor: A"
+            expectTypeError "module M = struct type t = A end;; fun (x: t) -> x" "Unknown type: t"
+            expectTypeError "module M = struct let f x = x + 1 end;; M.f true" "Type mismatch: expected int but got bool"
             // 레코드
             expectTypeError "fun r -> r.x" "Unknown record field: x"
             expectTypeError "type p = { x: int; y: int } in { x = 1 }" "Missing record field: y"

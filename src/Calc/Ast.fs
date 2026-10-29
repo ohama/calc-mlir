@@ -108,4 +108,8 @@ type TopItem =
     | TopType of string * string list * (string * TypeExpr option) list * FSharp.Text.Lexing.Position
     | TopRecord of string * string list * (string * TypeExpr) list * FSharp.Text.Lexing.Position
     | TopException of string * TypeExpr option * FSharp.Text.Lexing.Position
+    /// module M = struct ... end. Modules.resolve 가 안의 선언을 M.x 같은 이름의 최상위 선언으로 펼침 (뒤 단계에는 없음)
+    | TopModule of string * TopItem list * FSharp.Text.Lexing.Position
+    /// open M: 뒤에서 M 의 이름을 M. 없이 씀 (Modules.resolve 가 처리, 뒤 단계에는 없음)
+    | TopOpen of string * FSharp.Text.Lexing.Position
     | TopExpr of Expr

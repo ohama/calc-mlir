@@ -4,6 +4,17 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.37.0] - 2026-10-29
+
+### 추가
+- 모듈(OCaml과 같은 문법). 인터프리터, 타입 추론, 컴파일러, REPL 모두 지원합니다.
+  - `module M = struct … end` (안에 `let`, `let rec`, `type`, 레코드 타입, `exception`, `module`, `open`), `M.f`, `M.C`(패턴 포함), 타입 `M.t`, 모듈 안의 모듈 `M.N.g`, `open M`
+  - 파서 직후 `Modules.resolve`가 모듈을 `M.f` 같은 이름의 최상위 선언으로 펼칩니다. 타입 추론, 평가기, 컴파일러는 바뀌지 않았습니다.
+  - 생성자와 타입은 전체 이름으로 출력합니다(`Stack.Empty`, `int Stack.t`). 레코드 필드 이름에는 모듈 이름을 붙이지 않습니다.
+  - 새 키워드: `module`, `struct`, `end`, `open`. 새 토큰: `M.f` 같은 한정한 이름(`QIDENT`, `QCTOR`)
+  - 시그니처, functor, `let module`은 아직 없습니다.
+- 테스트 35개 추가 (총 1076개)
+
 ## [0.36.0] - 2026-10-29
 
 ### 추가

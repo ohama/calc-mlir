@@ -382,7 +382,26 @@ let cases =
       "type p = { x: int; y: int } in let s = ref \"\" in let f t v = s := !s + t; v in let r = { y = f \"y\" 1; x = f \"x\" 2 } in (!s, r)", VTuple [ VString "yx"; VRecord ("p", [ "x", VInt 2; "y", VInt 1 ]) ] // 쓴 순서대로 계산
       "type p = { name: string; tags: string list } in [{ name = \"a\"; tags = [] }; { name = \"b\"; tags = [\"t\"] }]", VList [ VRecord ("p", [ "name", VString "a"; "tags", VList [] ]); VRecord ("p", [ "name", VString "b"; "tags", VList [ VString "t" ] ]) ]
       "type p = { x: int } in Some { x = -1 }", some (VRecord ("p", [ "x", VInt -1 ]))
-      "type p = { x: int; y: int; } in { x = 1; y = 2; }.y", VInt 2 ]
+      "type p = { x: int; y: int; } in { x = 1; y = 2; }.y", VInt 2
+      // 모듈
+      "module M = struct let x = 1 let f y = y + x end;; (M.f 2, M.x)", VTuple [ VInt 3; VInt 1 ]
+      "module M = struct let x = 10 end let x = 1;; x + M.x", VInt 11
+      "module M = struct let x = 10 end;; let x = 1 in x + M.x", VInt 11
+      "module M = struct let id x = x end;; (M.id 1, M.id \"a\")", VTuple [ VInt 1; VString "a" ]
+      "module S = struct type 'a t = Empty | Push of 'a * 'a t let rec size s = match s with Empty -> 0 | Push (_, r) -> 1 + size r end;; S.size (S.Push (1, S.Push (2, S.Empty)))", VInt 2
+      "module M = struct type t = A | B let flip x = match x with A -> B | B -> A end;; (M.flip M.A, match M.B with M.A -> 1 | M.B -> 2)", VTuple [ VData ("M.t", "M.B", None); VInt 2 ]
+      "module M = struct exception E of int let check n = if n < 0 then raise (E n) else n end;; try M.check (-3) with M.E n -> n * 10", VInt -30
+      "module G = struct type point = { x: int; y: int } let origin = { x = 0; y = 0 } end;; { G.origin with y = 5 }.y + G.origin.x", VInt 5
+      "module M = struct module N = struct let g x = x * 2 end let h x = N.g x + 1 end;; (M.h 3, M.N.g 4)", VTuple [ VInt 7; VInt 8 ]
+      "module M = struct let x = 1 let f y = y + x end open M;; f 10 + x", VInt 12
+      "module M = struct let x = 1 end open M let x = 5;; (x, M.x)", VTuple [ VInt 5; VInt 1 ]
+      "module M = struct type t = A | B end open M;; match A with A -> 1 | B -> 2", VInt 1
+      "module M = struct let r = ref 0 let bump () = incr r end;; M.bump (); M.bump (); !M.r", VInt 2
+      "module M = struct let map f xs = 0 let g = map (fun x -> x) [1] end;; (M.g, map (fun x -> x + 1) [1])", VTuple [ VInt 0; VList [ VInt 2 ] ] // 모듈의 map 은 prelude 를 가리지 않음
+      "module A = struct let v = 1 end module B = struct open A let w = v + 1 end;; (B.w, (fun (x: int) -> x) A.v)", VTuple [ VInt 2; VInt 1 ]
+      "module M = struct let x = 1 end module M = struct let y = 2 end;; M.y", VInt 2
+      "module A = struct module B = struct let v = 1 end open B let w = v + 1 end;; (A.w, A.B.v)", VTuple [ VInt 2; VInt 1 ] // 모듈 안의 모듈을 open
+      "module A = struct module B = struct let v = 1 end end open A.B;; v", VInt 1 ]
 
 /// 오류 메시지가 정확히 일치하는지 확인
 let expectError input message =

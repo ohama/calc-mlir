@@ -56,6 +56,11 @@ let tests =
             Expect.equal (tokens "X2 Some None_1") [ CTOR "X2"; CTOR "Some"; CTOR "None_1"; EOF ] ""
             Expect.equal (tokens "Let True") [ CTOR "Let"; CTOR "True"; EOF ] ""
         }
+        test "모듈 이름으로 한정한 이름은 토큰 하나, 점 앞뒤에 공백이 없어야 함" {
+            Expect.equal (tokens "M.f M.N.g M.C p.x") [ QIDENT "M.f"; QIDENT "M.N.g"; QCTOR "M.C"; IDENT "p"; DOT; IDENT "x"; EOF ] ""
+            Expect.equal (tokens "M . f") [ CTOR "M"; DOT; IDENT "f"; EOF ] ""
+            Expect.equal (tokens "module struct end open") [ MODULE; STRUCT; END; OPEN; EOF ] ""
+        }
         test "타입 선언 토큰" {
             Expect.equal
                 (tokens "type 'a t = A of 'a")

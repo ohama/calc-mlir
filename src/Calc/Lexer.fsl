@@ -65,6 +65,10 @@ rule tokenize = parse
     | "when"        { WHEN }
     | "type"        { TYPE }
     | "of"          { OF }
+    | "module"      { MODULE }
+    | "struct"      { STRUCT }
+    | "end"         { END }
+    | "open"        { OPEN }
     | "while"       { WHILE }
     | "for"         { FOR }
     | "to"          { TO }
@@ -73,6 +77,11 @@ rule tokenize = parse
     | "done"        { DONE }
     // _ 하나만 와일드카드. _a 처럼 더 길게 일치하면 IDENT (가장 긴 일치)
     | '_'           { UNDERSCORE }
+    // 모듈 이름으로 한정한 이름: M.f, M.N.g (값, 타입) 와 M.C (생성자). 점 앞뒤에 공백이 없어야 함
+    | (ctor_start ident_char* '.')+ ident_start ident_char*
+                    { QIDENT (lexeme lexbuf) }
+    | (ctor_start ident_char* '.')+ ctor_start ident_char*
+                    { QCTOR (lexeme lexbuf) }
     | ident_start ident_char*
                     { IDENT (lexeme lexbuf) }
     | ctor_start ident_char*

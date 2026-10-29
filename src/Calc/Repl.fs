@@ -10,7 +10,9 @@ type State =
     { /// 지금까지 받아들인 선언과 식. 타입 추론할 때 새 입력 앞에 let ... in 사슬로 붙임 (chain)
       Declarations: TopItem list
       /// 평가 환경. 선언을 다시 평가하지 않으므로 앞 입력의 print 가 되풀이되지 않음
-      Env: Eval.Env }
+      Env: Eval.Env
+      /// 앞 입력에서 선언한 모듈과 open 한 이름 (Modules.resolve 가 새 입력의 이름을 바꿀 때 씀)
+      Modules: Modules.Scope }
 
 /// prelude 의 선언을 모두 받아들인 상태. 값은 함수뿐이라 바로 만들 수 있음 (출력 없음)
 let private withPrelude =
@@ -22,7 +24,7 @@ let private withPrelude =
             | TopLetRecs (bindings, _) -> Eval.declareRecGroup env bindings
             | _ -> failwith "prelude.calc: only let and let rec declarations are supported"
          let items = Prelude.items ()
-         { Declarations = items; Env = List.fold declare Eval.builtins items })
+         { Declarations = items; Env = List.fold declare Eval.builtins items; Modules = Modules.empty })
 
 /// 처음 상태: prelude 의 정의가 모두 보임
 let initial () = withPrelude.Value
@@ -93,19 +95,19 @@ let private processItem (out: TextWriter) (input: string) (state: State) (item: 
         let t = bindingType declarations name
         let v = evaluate value
         out.WriteLine(sprintf "val %s : %s = %s" name t (Eval.formatValue v))
-        { Declarations = declarations; Env = Map.add name v state.Env }
+        { state with Declarations = declarations; Env = Map.add name v state.Env }
     | TopLetRec (name, param, body, _) ->
         warn (chain declarations Unit)
         let t = typeOf (chain declarations (Var name))
         let v = Eval.VRecClosure (name, param, body, state.Env)
         out.WriteLine(sprintf "val %s : %s = %s" name t (Eval.formatValue v))
-        { Declarations = declarations; Env = Map.add name v state.Env }
+        { state with Declarations = declarations; Env = Map.add name v state.Env }
     | TopLetRecs (bindings, _) ->
         warn (chain declarations Unit)
         let env = Eval.declareRecGroup state.Env bindings
         for name, _, _ in bindings do
             out.WriteLine(sprintf "val %s : %s = %s" name (typeOf (chain declarations (Var name))) (Eval.formatValue env[name]))
-        { Declarations = declarations; Env = env }
+        { state with Declarations = declarations; Env = env }
     | TopLetPattern (pattern, value, _) ->
         warn (chain declarations Unit)
         let types = patternNames pattern |> List.map (fun name -> name, bindingType declarations name)
@@ -119,7 +121,7 @@ let private processItem (out: TextWriter) (input: string) (state: State) (item: 
             | None ->
                 for name, t in types do
                     out.WriteLine(sprintf "val %s : %s = %s" name t (Eval.formatValue env[name]))
-            { Declarations = declarations; Env = env }
+            { state with Declarations = declarations; Env = env }
     | TopType (name, typeParams, _, _)
     | TopRecord (name, typeParams, _, _) ->
         typeOf (chain declarations Unit) |> ignore
@@ -134,23 +136,26 @@ let private processItem (out: TextWriter) (input: string) (state: State) (item: 
             | TopRecord (_, _, fields, _) -> Eval.declareRecord state.Env name fields
             | TopType (_, _, ctors, _) -> Eval.declareConstructors state.Env name ctors
             | _ -> failwith "unreachable"
-        { Declarations = declarations; Env = env }
+        { state with Declarations = declarations; Env = env }
     // OCaml 처럼 exception E of int. 인자 타입은 생성자의 타입 (int -> exn) 에서 꺼냄
     | TopException (name, argType, _) ->
         let ctorType = typeOf (chain declarations (Ctor name))
         let suffix = " -> exn"
         let shown = if ctorType.EndsWith suffix then sprintf "%s of %s" name (ctorType.Substring(0, ctorType.Length - suffix.Length)) else name
         out.WriteLine(sprintf "exception %s" shown)
-        { Declarations = declarations; Env = Eval.declareConstructors state.Env "exn" [ name, argType ] }
+        { state with Declarations = declarations; Env = Eval.declareConstructors state.Env "exn" [ name, argType ] }
+    | TopModule _ | TopOpen _ -> failwith "Repl: modules are resolved by Modules.resolve"
 
 /// 입력 하나(;; 로 끝나는 덩어리)를 처리. 오류가 나면 알리고, 그 앞 항목까지의 상태를 돌려줌
 let submit (state: State) (input: string) (out: TextWriter) : State =
-    let items =
+    // 모듈은 이름을 바꿔 펼친 선언으로 (Modules.resolve). 입력이 모두 처리되면 새 모듈 scope 를 남김
+    let resolved =
         try
-            Some (Frontend.parseItems input)
+            Some (Modules.resolve state.Modules (Frontend.parseItems input))
         with Errors.SyntaxError (message, line, column) ->
             report out input "Error" message (Some (line, column))
             None
+    let items = resolved |> Option.map snd
     let mutable current = state
     let mutable failed = false
     for item in defaultArg items [] do
@@ -164,7 +169,9 @@ let submit (state: State) (input: string) (out: TextWriter) : State =
             | ex ->
                 report out input "Error" ex.Message None
                 failed <- true
-    current
+    match resolved with
+    | Some (modules, _) when not failed -> { current with Modules = modules }
+    | _ -> current
 
 /// 줄을 읽어 ;; 로 끝나는 입력마다 처리. #quit;; 나 입력 끝(Ctrl-D)에서 끝냄
 let run (banner: string) (input: TextReader) (out: TextWriter) =

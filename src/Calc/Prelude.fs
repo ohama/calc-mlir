@@ -29,7 +29,8 @@ let chain (declarations: TopItem list) (body: Expr) =
             | TopType (name, typeParams, ctors, _) -> TypeDecl (name, typeParams, ctors, rest)
             | TopRecord (name, typeParams, fields, _) -> RecordDecl (name, typeParams, fields, rest)
             | TopException (name, argType, _) -> ExceptionDecl (name, argType, rest)
-            | TopExpr _ -> rest)
+            | TopExpr _ -> rest
+            | TopModule _ | TopOpen _ -> failwith "Prelude.chain: modules are resolved by Modules.resolve")
         declarations
         body
 

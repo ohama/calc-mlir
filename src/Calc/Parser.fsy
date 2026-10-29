@@ -86,6 +86,7 @@ let rec makeProgram (items: TopItem list) : Expr =
     | TopType (name, typeParams, ctors, pos) :: rest -> located pos (TypeDecl(name, typeParams, ctors, makeProgram rest))
     | TopRecord (name, typeParams, fields, pos) :: rest -> located pos (RecordDecl(name, typeParams, fields, makeProgram rest))
     | TopException (name, argType, pos) :: rest -> located pos (ExceptionDecl(name, argType, makeProgram rest))
+    | (TopModule _ | TopOpen _) :: _ -> failwith "makeProgram: modules are resolved by Modules.resolveProgram"
 
 /// [a; b; c]  ==  a :: b :: c :: []
 /// 안쪽 cons 에는 그 원소의 위치를 기록: [1; true] 의 오류가 true 를 가리키도록
@@ -166,6 +167,9 @@ let makeTuple (items: TypeExpr list) =
 %token TYPE OF COLON EXCEPTION
 %token WHILE FOR TO DOWNTO DO DONE BANG COLONEQUALS
 %token LBRACE RBRACE DOT
+/// M.f, M.t 와 M.C (모듈 이름으로 한정한 이름)
+%token <string> QIDENT QCTOR
+%token MODULE STRUCT END OPEN
 %token NOBAR BELOWSEMI
 %token PLUS MINUS STAR SLASH PERCENT PIPE COMPOSE LPAREN RPAREN
 %token EOF
@@ -207,7 +211,7 @@ let makeTuple (items: TypeExpr list) =
 %%
 
 start:
-    | Items EOF                     { makeProgram $1 }
+    | Items EOF                     { makeProgram (Modules.resolveProgram $1) }
 
 // REPL: 입력 하나의 항목들을 그대로 (선언마다 환경에 더함)
 startItems:
@@ -243,6 +247,16 @@ TopDecl:
     | TYPE TypeParams TypeName EQUALS LBRACE FieldDecls RBRACE
                                     { TopRecord($3, $2, checkFields (parseState.InputStartPosition 5) $6, parseState.InputStartPosition 1) }
     | EXCEPTION CtorDecl            { TopException(fst $2, snd $2, parseState.InputStartPosition 1) }
+    // 모듈 (OCaml 과 같음). 안에는 선언만 (식은 let _ = e)
+    | MODULE CTOR EQUALS STRUCT ModuleItems END
+                                    { TopModule($2, $5, parseState.InputStartPosition 1) }
+    | OPEN CTOR                     { TopOpen($2, parseState.InputStartPosition 2) }
+    | OPEN QCTOR                    { TopOpen($2, parseState.InputStartPosition 2) }
+
+ModuleItems:
+    |                               { [] }
+    | SEMISEMI ModuleItems          { $2 }
+    | TopDecl ModuleItems           { $1 :: $2 }
 
 // let 의 왼쪽에 오는 패턴: 튜플, (), _
 LetPattern:
@@ -328,6 +342,8 @@ Primary:
     | LBRACE Primary WITH RecordFields RBRACE
                                     { at parseState (RecordUpdate($2, checkFields (parseState.InputStartPosition 1) $4)) }
     | CTOR                          { at parseState (Ctor $1) }
+    | QIDENT                        { at parseState (Var $1) }
+    | QCTOR                         { at parseState (Ctor $1) }
     | LPAREN RPAREN                 { Unit }
     | LPAREN Expr RPAREN            { $2 }
     | LPAREN Expr COLON TypeExpr RPAREN
@@ -394,12 +410,14 @@ ConsPattern:
 
 CtorPattern:
     | CTOR AtomPattern              { at parseState (PCtor($1, Some $2)) }
+    | QCTOR AtomPattern             { at parseState (PCtor($1, Some $2)) }
     | AtomPattern                   { $1 }
 
 AtomPattern:
     | IDENT                         { at parseState (PVar $1) }
     | UNDERSCORE                    { PWildcard }
     | CTOR                          { at parseState (PCtor($1, None)) }
+    | QCTOR                         { at parseState (PCtor($1, None)) }
     | NUMBER                        { at parseState (PInt $1) }
     | MINUS NUMBER                  { at parseState (PInt -$2) }
     | TRUE                          { at parseState (PBool true) }
@@ -458,9 +476,14 @@ TypeProd:
 
 TypeApp:
     | TypeAtom                      { $1 }
-    | TypeApp IDENT                 { TName($2, [ $1 ]) }
-    | LPAREN TypeExpr COMMA TypeArgs RPAREN IDENT
+    | TypeApp TypeName0             { TName($2, [ $1 ]) }
+    | LPAREN TypeExpr COMMA TypeArgs RPAREN TypeName0
                                     { TName($6, $2 :: $4) }
+
+// 타입 표기의 타입 이름: int, M.t
+TypeName0:
+    | IDENT                         { $1 }
+    | QIDENT                        { $1 }
 
 // (int, string) pair 의 타입 인자
 TypeArgs:
@@ -468,7 +491,7 @@ TypeArgs:
     | TypeExpr COMMA TypeArgs       { $1 :: $3 }
 
 TypeAtom:
-    | IDENT                         { TName($1, []) }
+    | TypeName0                     { TName($1, []) }
     | TYVAR                         { TVar $1 }
     | LPAREN TypeExpr RPAREN        { $2 }
 

@@ -691,6 +691,53 @@ let tests =
             Expect.equal (parse "sprintf \"%d\" 1") (App (App (Var "sprintf", Str "%d"), Number 1)) "sprintf 는 파서에서 보통 함수 호출"
         }
 
+        testList "모듈" [
+            test "모듈 안의 선언은 M. 이 붙은 최상위 선언으로, 안의 짧은 이름도 바뀜 (Modules.resolve)" {
+                Expect.equal
+                    (parse "module M = struct let x = 1 let f y = y + x end;; M.f 2")
+                    (Let ("M.x", Number 1, Let ("M.f", Lambda ("y", Add (Var "y", Var "M.x")), App (Var "M.f", Number 2))))
+                    ""
+            }
+            test "인자와 지역 이름은 모듈 이름을 가림" {
+                Expect.equal
+                    (parse "module M = struct let x = 1 let f x = x let g y = let x = 2 in x end")
+                    (Let ("M.x", Number 1, Let ("M.f", Lambda ("x", Var "x"), Let ("M.g", Lambda ("y", Let ("x", Number 2, Var "x")), Unit))))
+                    ""
+            }
+            test "타입, 생성자, 예외, let rec, 패턴" {
+                Expect.equal
+                    (parse "module M = struct type t = A | B of t exception E let rec f n = f n let (a, B _) = (1, B A) end")
+                    (TypeDecl ("M.t", [], [ "M.A", None; "M.B", Some (TName ("M.t", [])) ],
+                               ExceptionDecl ("M.E", None,
+                                              LetRec ("M.f", "n", App (Var "M.f", Var "n"),
+                                                      LetPattern (PTuple [ PVar "M.a"; PCtor ("M.B", Some PWildcard) ],
+                                                                  Tuple [ Number 1; App (Ctor "M.B", Ctor "M.A") ], Unit)))))
+                    ""
+            }
+            test "모듈 안의 모듈, open" {
+                Expect.equal
+                    (parse "module M = struct module N = struct let g = 1 end let h = N.g end open M;; (h, N.g, M.N.g)")
+                    (Let ("M.N.g", Number 1, Let ("M.h", Var "M.N.g", Tuple [ Var "M.h"; Var "M.N.g"; Var "M.N.g" ])))
+                    ""
+                Expect.equal
+                    (parse "module M = struct let x = 1 end open M let x = 2;; x")
+                    (Let ("M.x", Number 1, Let ("x", Number 2, Var "x")))
+                    "open 뒤에 다시 선언한 이름"
+            }
+            test "레코드 필드 이름은 바꾸지 않음" {
+                Expect.equal
+                    (parse "module M = struct type p = { x: int } end;; { x = 1 }.x")
+                    (RecordDecl ("M.p", [], [ "x", TName ("int", []) ], Field (Record [ "x", Number 1 ], "x")))
+                    ""
+            }
+            test "오류" {
+                expectParseError "open M" "Unknown module: M" 1 6
+                expectParseError "module m = struct end" "parse error: unexpected 'm'" 1 8
+                expectParseError "module M = struct 1 end" "parse error: unexpected '1'" 1 19
+                expectParseError "module M = struct let x = 1" "parse error: unexpected end of input" 1 28
+            }
+        ]
+
         testList "레코드" [
             test "선언, 만들기, 필드 읽기, with" {
                 Expect.equal

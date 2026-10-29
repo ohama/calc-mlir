@@ -376,6 +376,12 @@ let private runCases =
           "let r = ref (fun x -> x) in r := (fun x -> x * 2); map !r [1; 2]", ("[2; 4]\n", "", 0), "내용이 함수"
           "map ref [1; 2]", ("[ref 1; ref 2]\n", "", 0), "ref 를 값으로 (클로저)"
         ]
+      "모듈",
+        [
+          "module M = struct type t = A | B of int let f x = match x with A -> 0 | B n -> n end;; (M.f (M.B 3), M.A, [M.B 1])", ("(3, M.A, [M.B 1])\n", "", 0), "생성자 이름은 M.A"
+          "module M = struct exception E of string end;; raise (M.E \"x\")", ("", "Error: exception M.E \"x\"\n", 1), "잡히지 않은 예외"
+          "module M = struct let rec even n = if n = 0 then true else odd (n - 1) and odd n = if n = 0 then false else even (n - 1) end;; M.even 1000000", ("true\n", "", 0), "and 그룹, tail call"
+        ]
       "레코드",
         [
           "type p = { x: int; y: int } in { y = 2; x = 1 }", ("{ x = 1; y = 2 }\n", "", 0), "선언한 순서로 출력"

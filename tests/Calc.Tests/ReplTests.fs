@@ -122,6 +122,16 @@ let tests =
                   "for i = 1 to 5 do incr c done; !c;;", "- : int = 5\n"
                   "1;;", "- : int = 1\n" ]
         }
+        test "모듈: 선언마다 val M.x, open 은 다음 입력까지" {
+            expectSession
+                [ "module M = struct let x = 1 let f y = y + x end;;", "val M.x : int = 1\nval M.f : int -> int = <fun>\n"
+                  "M.f 2;;", "- : int = 3\n"
+                  "open M;;", ""
+                  "f 5;;", "- : int = 6\n"
+                  "let f = 0;;", "val f : int = 0\n"
+                  "f;;", "- : int = 0\n"
+                  "open N;;", "Error: Unknown module: N (line 1, column 6)\n  1 | open N;;\n    |      ^\n" ]
+        }
         test "레코드 선언과 값" {
             expectSession
                 [ "type point = { x: int; y: int };;", "type point\n"

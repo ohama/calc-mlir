@@ -23,7 +23,7 @@ Calc 언어의 어휘 구조, 구문, 의미를 정리한 문서입니다. 구�
 | `CTOR` | `[A-Z][A-Za-z0-9_]*`. 생성자 (타입 이름으로도 쓸 수 있음) | `Some`, `None`, `Node`, `X2` |
 | `TYVAR` | `'` 다음에 `IDENT` 모양. type variable | `'a`, `'key` |
 | `UNDERSCORE` | `_` (와일드카드 패턴, 쓰지 않는 인자) | |
-| 키워드 | `let` `rec` `and` `in` `fun` `function` `if` `then` `else` `true` `false` `not` `match` `with` `when` `type` `of` `try` `exception` `while` `for` `to` `downto` `do` `done` | |
+| 키워드 | `let` `rec` `and` `in` `fun` `function` `if` `then` `else` `true` `false` `not` `match` `with` `when` `type` `of` `try` `exception` `while` `for` `to` `downto` `do` `done` `module` `struct` `end` `open` | |
 | `EQUALS` | `=` | |
 | `ARROW` | `->` | |
 | `NOTEQUAL` `LESS` `GREATER` `LESSEQUAL` `GREATEREQUAL` | `<>` `<` `>` `<=` `>=` | |
@@ -38,6 +38,7 @@ Calc 언어의 어휘 구조, 구문, 의미를 정리한 문서입니다. 구�
 | `COLON` | `:` (타입 표기) | |
 | `COLONEQUALS` `BANG` | `:=` `!` (mutable reference) | |
 | `LBRACE` `RBRACE` `DOT` | `{` `}` `.` (레코드) | |
+| `QIDENT` `QCTOR` | `(CTOR ".")+ IDENT`, `(CTOR ".")+ CTOR`. 모듈 이름으로 한정한 이름. 점 앞뒤에 공백이 없어야 함 | `M.f`, `M.N.g`, `M.t`, `M.Some` |
 | `BAR` | `\|` | |
 | `EOF` | 입력의 끝 | |
 
@@ -106,7 +107,9 @@ decl    = "let" IDENT [ params ] [ ":" type ] "=" seq
         | "let" "rec" recBinding { "and" recBinding }
         | "type" [ typeParams ] typeName "=" [ "|" ] ctorDecl { "|" ctorDecl }
         | "type" [ typeParams ] typeName "=" "{" fieldDecls "}"   (* 레코드 타입 *)
-        | "exception" ctorDecl ;                         (* 예외 선언 *)
+        | "exception" ctorDecl                           (* 예외 선언 *)
+        | "module" CTOR "=" "struct" { decl | ";;" } "end"   (* 모듈 *)
+        | "open" ( CTOR | QCTOR ) ;
 
 seq     = expr [ ";" seq ] ;                             (* e1; e2: 순서 실행 *)
 
@@ -140,6 +143,7 @@ primary = NUMBER
         | INTERP                                         (* $"a{e}b" *)
         | "true" | "false"
         | IDENT
+        | QIDENT | QCTOR                                 (* M.f, M.C *)
         | primary "." IDENT                              (* 필드 읽기 *)
         | "{" fields "}"                                 (* 레코드 *)
         | "{" primary "with" fields "}"                  (* 필드 몇 개를 바꾼 새 레코드 *)
@@ -481,6 +485,36 @@ p.x + q.x                              (* 11 *)
 - **필드는 바꿀 수 없음:** 바꿔야 하면 필드에 `ref`를 둡니다(`type t = { r: int ref }`, `a.r := 5`).
 - **아직 없는 것:** 레코드 패턴(`match p with { x = 0 } -> …`, `let { x; y } = p`), 필드 이름만 쓰는 줄임(`{ x; y }`), `mutable` 필드, F#처럼 타입 표기로 같은 이름의 필드를 고르는 것.
 
+### 모듈
+
+OCaml과 같은 문법의 모듈입니다. 최상위에서 선언합니다.
+
+```
+module Stack = struct
+  type 'a t = Empty | Push of 'a * 'a t
+  exception EmptyStack
+  let empty = Empty
+  let push x s = Push (x, s)
+  let pop s = match s with Empty -> raise EmptyStack | Push (x, rest) -> (x, rest)
+end
+;;
+let s = Stack.push 1 Stack.empty in
+(fst (Stack.pop s), (fun (t: int Stack.t) -> t) s)      (* (1, Stack.Push (1, Stack.Empty)) *)
+```
+
+- **선언:** `module M = struct … end`. 안에는 최상위와 같은 선언(`let`, `let rec … and`, `type`, 레코드 타입, `exception`, `module`, `open`)만 쓸 수 있습니다. 식을 실행하려면 `let _ = e`로 씁니다. 모듈 이름은 대문자로 시작합니다.
+- **밖에서 쓰기:** `M.f`(값), `M.C`(생성자, 패턴에서도), `M.t`(타입 표기). 모듈 안의 모듈은 `M.N.g`입니다. 점 앞뒤에 공백을 둘 수 없습니다(`M . f`는 생성자 `M`의 필드 읽기).
+- **안에서 쓰기:** 모듈 안에서는 앞에서 선언한 이름을 `M.` 없이 씁니다. 모듈 안의 모듈 `N`도 `N.g`로 씁니다.
+- **`open M`:** 그 뒤에서 `M`의 이름을 `M.` 없이 씁니다. 뒤에서 같은 이름을 다시 선언하면 그쪽이 가립니다. 모듈 안의 `open`은 그 모듈이 끝날 때까지만입니다. 선언하지 않은 모듈은 `Unknown module: M`입니다.
+- **가리기:** 모듈 밖의 이름은 모듈의 이름과 섞이지 않습니다. `module M = struct let x = 10 end let x = 1`의 두 `x`는 다른 값입니다. 같은 이름의 모듈을 다시 선언하면 뒤의 것이 가립니다.
+- **출력:** 생성자 값과 타입은 전체 이름으로 출력합니다(`Stack.Empty`, `int Stack.t`). REPL은 선언마다 `val M.f : int -> int = <fun>`을 보여 줍니다.
+- **레코드 필드:** 필드 이름은 모듈 이름을 붙이지 않습니다. 모듈 안에서 선언한 레코드도 밖에서 `p.x`, `{ x = 1 }`로 씁니다(OCaml은 `p.M.x`).
+- **구현:** 파서 직후 `Modules.resolve`가 모듈을 펼칩니다.
+  - 모듈 안의 선언은 `M.f`, `M.t`, `M.C` 같은 이름의 최상위 선언이 되고, 모듈 안의 짧은 이름과 `open`한 이름은 전체 이름으로 바뀝니다.
+  - 그래서 타입 추론, 평가기, 컴파일러는 모듈을 모릅니다. 점이 들어간 이름은 렉서가 `QIDENT`, `QCTOR`로만 만들므로 사용자가 쓴 다른 이름과 겹치지 않습니다.
+  - 바꾼 노드에는 원래 노드의 위치를 옮겨서 오류와 경고가 원래 자리를 가리킵니다.
+- **아직 없는 것:** 시그니처(`sig … end`, `module M : S`), functor, `let module M = … in`, `include`, 파일마다 모듈.
+
 ### mutable reference와 반복문
 
 OCaml, F#과 같은 mutable reference와 반복문입니다.
@@ -586,6 +620,7 @@ defaultValue 0 (tryFind (fun x -> x > 10) xs)
 | `type 'a p = { x: int; y: 'a } in e` | `RecordDecl ("p", ["a"], [ ("x", TName ("int", [])); ("y", TVar "a") ], e)` |
 | `{ y = 1; x = 2 }` | `Record [ ("y", Number 1); ("x", Number 2) ]` (쓴 순서) |
 | `e.x` | `Field (e, "x")` |
+| `module M = struct let f x = x end;; M.f 1` | `Let ("M.f", Lambda ("x", Var "x"), App (Var "M.f", Number 1))` (`Modules.resolve`가 펼침, `open`은 AST에 남지 않음) |
 | `{ e with x = 1 }` | `RecordUpdate (e, [ ("x", Number 1) ])` |
 | `while c do e done` | `LetRec ("$while", "$u", If (c, Seq (e, App (Var "$while", Unit)), Unit), App (Var "$while", Unit))` |
 | `for i = a to b do e done` | `Let ("$start", Annot (a, int), Let ("$stop", Annot (b, int), LetRec ("$for", "i", …)))` (위 "mutable reference와 반복문") |

@@ -43,6 +43,7 @@ Result: 10
 | 예외 | `exception Neg of int`, `raise (Neg 1)`, `failwith "bad"`, `try e with Failure m -> m \| Not_found -> ""` |
 | 문자열 포맷 | `sprintf "%d is %s" 42 "x"`, `printfn "%A" xs`, `$"Hello {name}, {age + 1}"` |
 | 레코드 | `type point = { x: int; y: int }`, `{ x = 1; y = 2 }`, `p.x`, `{ p with x = 1 }` |
+| 모듈 | `module Stack = struct type 'a t = … let push x s = … end`, `Stack.push`, `open Stack` |
 | mutable reference, 반복문 | `let r = ref 0 in r := !r + 1`, `incr r`, `for i = 1 to 10 do … done`, `while !n > 0 do … done` |
 
 - 우선순위 (낮은 것부터): `;` < `let`/`if`/`fun`/`match` < `:=` < `||` < `&&` < 비교, `|>`, `>>` < `::` < `+ -` < `* / %` < 단항 `-`, `not` < 함수 호출 < `!` < `.` (필드)
@@ -84,7 +85,7 @@ dotnet run --project src/Calc
 ```
 
 ```
-calc 0.36.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
+calc 0.37.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
 # let add a b = a + b;;
 val add : int -> int -> int = <fun>
 # add 1 2;;
@@ -134,6 +135,7 @@ Error: parse error: unexpected '+' (line 1, column 5)
 │   ├── Calc.fsproj           # <Version> 은 여기서 관리
 │   ├── Ast.fs                # AST (Expr)
 │   ├── Errors.fs             # 렉서·파서 오류 (SyntaxError, 위치 포함)
+│   ├── Modules.fs            # 모듈을 M.f 같은 이름의 최상위 선언으로 펼침 (파서 직후)
 │   ├── Eval.fs               # 평가기 (Value, Env, eval)
 │   ├── Infer.fs              # Hindley–Milner 타입 추론 (typecheck)
 │   ├── Core.fs               # 컴파일러: 중간 표현(Core IR)
@@ -159,7 +161,7 @@ Error: parse error: unexpected '+' (line 1, column 5)
 처리 흐름:
 
 ```
-문자열 → Lexer.tokenize → Parser.start → Ast.Expr → Prelude.wrap (표준 라이브러리) → Infer.typecheck (타입) → Eval.eval → Value
+문자열 → Lexer.tokenize → Parser.start (Modules.resolveProgram) → Ast.Expr → Prelude.wrap (표준 라이브러리) → Infer.typecheck (타입) → Eval.eval → Value
 ```
 
 `Lexer.fs`와 `Parser.fs`는 빌드할 때 `.fsl`과 `.fsy`에서 생성되며 git에 포함되지 않습니다. 직접 수정하지 말고 `.fsl`, `.fsy` 파일을 고치세요.
