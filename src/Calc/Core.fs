@@ -83,6 +83,9 @@ type CFunction =
       Self: string option
       /// 클로저에 저장한 변수. 순서가 클로저의 칸 순서
       Captured: string list
+      /// 인자가 여럿인 함수의 바깥 클로저: 인자를 모두 받는 direct 함수와 그 인자 수. 클로저의 마지막 칸에 direct 함수를 두고
+      /// 헤더에 인자 수를 적음. 모르는 함수에 인자를 그 수만큼 주는 호출(f a b)은 중간 클로저 없이 direct 함수를 부름
+      Direct: (string * int) option
       Body: CExpr }
 
 type CProgram = { Functions: CFunction list; Main: CExpr }

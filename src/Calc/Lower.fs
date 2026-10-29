@@ -32,11 +32,11 @@ type private State(ints: System.Collections.Generic.HashSet<obj>) =
         next <- next + 1
         name
 
-    member _.AddFunctionNamed(name: string, param: string, self: string option, body: CExpr) =
+    member _.AddFunctionNamed(name: string, param: string, self: string option, body: CExpr, ?direct: string * int) =
         // 자유 변수 중 인자와 자기 자신을 뺀 나머지를 캡처. 정렬된 순서가 클로저의 칸 순서
         let bound = Set.ofList (param :: Option.toList self)
         let captured = Set.toList (Set.difference (freeVars body) bound)
-        functions.Add { Name = name; Params = [ param ]; Self = self; Captured = captured; Body = body }
+        functions.Add { Name = name; Params = [ param ]; Self = self; Captured = captured; Direct = direct; Body = body }
         CMakeClosure (name, captured)
 
     member this.AddFunction(param: string, self: string option, body: CExpr) =
@@ -55,10 +55,11 @@ type private State(ints: System.Collections.Generic.HashSet<obj>) =
         match parameters with
         | first :: rest ->
             let inner = List.foldBack (fun p acc -> this.AddFunction(p, None, acc)) rest body
-            let closure = this.AddFunctionNamed(outer, first, self, inner)
+            let direct = if rest.IsEmpty then None else Some (outer + "_direct", parameters.Length)
+            let closure = this.AddFunctionNamed(outer, first, self, inner, ?direct = direct)
             match closure with
             | CMakeClosure (_, captured) when not rest.IsEmpty ->
-                functions.Add { Name = outer + "_direct"; Params = parameters; Self = self; Captured = captured; Body = body }
+                functions.Add { Name = outer + "_direct"; Params = parameters; Self = self; Captured = captured; Direct = None; Body = body }
             | _ -> ()
             closure
         | [] -> failwith "Lower: function without parameters"
@@ -143,6 +144,11 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Scope) (
     // 단락 평가: 오른쪽은 if 의 한 분기에서만 계산
     | And (a, b) -> CIf (lower state ctors scope a, lower state ctors scope b, CBool false)
     | Or (a, b) -> CIf (lower state ctors scope a, CBool true, lower state ctors scope b)
+    // fun a b -> body: 이름에 묶은 함수처럼 direct 함수도 만듦 (fold f acc xs 의 f acc x 가 중간 클로저 없이 부름)
+    | Lambda _ when (fst (lambdaChain expr)).Length >= 2 ->
+        let parameters, inner = lambdaChain expr
+        let outer, _ = state.Reserve parameters.Length
+        state.AddCurried(outer, parameters, None, lower state ctors (bindAll parameters scope) inner)
     | Lambda (param, body) -> state.AddFunction(param, None, lower state ctors (bind param scope) body)
     // let rec f x = body in e: 본문의 f 는 클로저 자신이라 캡처하지 않음. 본문의 재귀 호출도 direct 함수로
     // 파서가 while 을 바꾼 모양 (Parser.makeWhile): let rec $while $u = if c then (body; $while ()) else () in $while ()

@@ -403,6 +403,19 @@ let private runCases =
           "exception Stop of int in let r = ref 0 in (try while true do (r := !r + 1; if !r = 5 then raise (Stop !r) else ()) done with Stop k -> println k)", ("5\n", "", 0), "반복 안에서 raise"
           "let i = ref 0 in while !i < 1000000 do i := !i + 1 done; println !i", ("1000000\n", "", 0), "긴 반복 (스택이 자라지 않음)"
         ]
+      "인자가 여럿인 간접 호출 (클로저의 direct 함수)",
+        [
+          "let g h = h (print 1; 1) (print 2; 2) in println (g (fun a b -> a * 10 + b))", ("1212\n", "", 0), "인자 둘을 주는 간접 호출: 인자를 왼쪽부터"
+          "let f = fun a -> (print a; fun b -> a + b) in let g h = h 1 (print 2; 3) in println (g f)", ("124\n", "", 0), "인자 하나짜리 함수: f a 를 먼저 적용한 뒤 다음 인자"
+          "let g h = h 1 2 3 in println (g (fun a b -> let k = a + b in fun c -> k * c))", ("9\n", "", 0), "인자 수보다 많이 줌: 하나씩 적용"
+          "let g h = h 1 in println ((g (fun a b -> a + b)) 5)", ("6\n", "", 0), "인자 수보다 적게 줌: 부분 적용"
+          "let k = 100 in let g h = h 1 2 in println (g (fun a b -> a + b + k))", ("103\n", "", 0), "캡처한 값"
+          "let add a b c = a * 100 + b * 10 + c in let g h = h 1 2 3 in println (g add)", ("123\n", "", 0), "이름에 묶은 함수를 값으로"
+          "let rec sumTo acc x = if x = 0 then acc else sumTo (acc + 1) (x - 1) in println (fold sumTo 0 [1; 2; 3])", ("6\n", "", 0), "let rec 함수를 fold 에"
+          "let apply2 f a b = f a b in let rec count n acc = if n = 0 then acc else apply2 count (n - 1) (acc + 1) in println (count 1000000 0)", ("1000000\n", "", 0), "tail position 의 간접 호출 (스택이 자라지 않음)"
+          "let apply2 f a b = f a b in println (apply2 (fun a -> let t = a * 2 in fun b -> t + b) 3 4, apply2 append [1] [2])", ("(10, [1; 2])\n", "", 0), "인자 하나짜리 함수와 내장 함수를 tail position 에서"
+          "let pick b = if b then (fun x y -> x) else (fun x y -> y) in println (pick true 1 2, pick false 1 2, map (fun f -> f 7 8) [pick true; pick false])", ("(1, 2, [7; 8])\n", "", 0), "고른 함수를 부름"
+        ]
       "타입이 int 인 연산",
         [
           "println (2147483647 + 1, -2147483647 - 1 - 1, 5 - 7, 100 + -3, 0 - 0, 1073741824 + 1073741824, -1073741824 - 1073741825)", ("(-2147483648, 2147483647, -2, 97, 0, -2147483648, 2147483647)\n", "", 0), "태그를 떼지 않는 +, -: 32비트에서 한 바퀴"
@@ -647,6 +660,13 @@ let tests =
                 Expect.equal (mlir.Split([| "scf.while" |], System.StringSplitOptions.None).Length - 1) 2 "for 하나, while 하나"
                 Expect.isFalse (mlir.Contains "llvm.func internal tailcc @lambda_") "반복 몸체가 최상위 함수가 되지 않음"
             }
+            // 모르는 함수에 인자 둘: 헤더의 인자 수를 보고 클로저 마지막 칸의 direct 함수를 바로 부름
+            test "인자가 여럿인 간접 호출은 direct 함수를 부르는 경로가 있음" {
+                let mlir = Codegen.emitProgram (Program.parse "let g h = h 1 2 in g (fun a b -> a - b)")
+                Expect.stringContains mlir (sprintf "%d : i64" (Codegen.directClosureHeader 0 2)) "fun a b 의 클로저 헤더에 인자 수"
+                Expect.stringContains mlir "llvm.mlir.addressof @lambda_1_direct" "클로저 마지막 칸에 direct 함수"
+                Expect.stringContains mlir ": !llvm.ptr, (!llvm.ptr, i64, i64) -> i64" "인자 둘로 간접 호출"
+            }
             test "어떤 값과도 일치하는 분기 뒤는 생성하지 않음" {
                 // + 는 int 인지 보는 scf.if 를 만들므로 - 로 확인
                 let mlir = Codegen.emitProgram (Program.parse "let (a, b) = (1, 2) in a - b")
@@ -713,7 +733,8 @@ let tests =
             }
             test "tail position 의 match: 분기마다 블록, 마지막은 Match failure 뒤 unreachable" {
                 let mlir = Codegen.emitProgram (Program.parse "fun f -> fun n -> match n with 0 -> f 0 | 1 -> f 1")
-                Expect.equal (tailReturns mlir) [ true; true ] ""
+                // 안쪽 함수와 direct 함수가 같은 본문을 가짐
+                Expect.equal (tailReturns mlir) [ true; true; true; true ] ""
                 Expect.stringContains mlir "llvm.unreachable" ""
             }
         ]
@@ -737,8 +758,13 @@ let tests =
             }
             test "커링: 안쪽 함수가 바깥 인자를 캡처" {
                 let p = lowered "fun a -> fun b -> a + b"
-                // 안쪽 함수가 먼저 만들어짐
-                Expect.equal (p.Functions |> List.map (fun f -> f.Name, f.Params, f.Captured)) [ "lambda_0", [ "b" ], [ "a" ]; "lambda_1", [ "a" ], [] ] ""
+                // 바깥 클로저 이름을 먼저 정하고 안쪽 함수를 만듦. 인자가 둘이라 direct 함수도 (f a b 가 중간 클로저 없이 부름)
+                Expect.equal
+                    (p.Functions |> List.map (fun f -> f.Name, f.Params, f.Captured, f.Direct))
+                    [ "lambda_1", [ "b" ], [ "a" ], None
+                      "lambda_0", [ "a" ], [], Some ("lambda_0_direct", 2)
+                      "lambda_0_direct", [ "a"; "b" ], [], None ]
+                    ""
             }
             test "이름에 묶은 함수: 클로저들과 인자를 모두 받는 direct 함수, 호출은 CCallDirect" {
                 let p = lowered "let add a b = a + b in add 1 2"

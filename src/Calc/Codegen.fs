@@ -30,6 +30,9 @@ let unitValue = 7L
 
 let closureHeader (capturedCount: int) = kindClosure ||| (int64 (1 + capturedCount) <<< 8)
 
+/// 인자가 여럿인 함수의 바깥 클로저 = [헤더, 코드 포인터, 캡처한 값..., direct 함수 포인터]. 헤더의 32비트 위에 인자 수
+let directClosureHeader (capturedCount: int) (arity: int) = kindClosure ||| (int64 (2 + capturedCount) <<< 8) ||| (int64 arity <<< 32)
+
 /// cons 값 = 헤더 없는 [head, tail] 16바이트 블록의 주소 | 2 (runtime.h 의 CALC_TAG_CONS)
 let consTag = 2L
 
@@ -108,6 +111,9 @@ type private StringTable(prefix: string) =
 
     member _.CtorEntries = ctorOrder |> Seq.map (fun c -> ctorNames[c], c) |> List.ofSeq
     member _.UnitEntries = unitOrder |> Seq.map (fun c -> units[c]) |> List.ofSeq
+
+    /// 바깥 클로저 함수 이름 → (direct 함수, 인자 수) (CFunction.Direct). 클로저를 만들 때 마지막 칸과 헤더에 넣음
+    member val Directs = System.Collections.Generic.Dictionary<string, string * int>()
 
     /// 이 프로그램의 심볼(함수, 문자열 상수) 이름 앞에 붙임. 여러 프로그램을 한 모듈에 넣을 때 이름이 겹치지 않게
     member _.Prefix = prefix
@@ -267,6 +273,32 @@ let private emitSlot (fb: FunctionBuilder) (block: string) (index: int) =
     let r = fb.Fresh()
     fb.Emit(sprintf "%s = llvm.getelementptr %s[%d] : (!llvm.ptr) -> !llvm.ptr, i64" r block index)
     r
+
+/// 클로저 블록을 할당하고 헤더와 코드 포인터를 씀 (캡처한 값은 부르는 쪽이 2 번 칸부터).
+/// 인자가 여럿인 함수의 바깥 클로저면 마지막 칸에 direct 함수 포인터, 헤더에 인자 수
+let private emitClosureBlock (fb: FunctionBuilder) (funcName: string) (capturedCount: int) =
+    let direct = match fb.Strings.Directs.TryGetValue funcName with | true, d -> Some d | _ -> None
+    let words = 2 + capturedCount + (if direct.IsSome then 1 else 0)
+    let block = fb.Fresh()
+    fb.Emit(sprintf "%s = llvm.call @calc_alloc(%s) : (i64) -> !llvm.ptr" block (emitConst fb "i64" (int64 (8 * words))))
+    let header = match direct with Some (_, arity) -> directClosureHeader capturedCount arity | None -> closureHeader capturedCount
+    fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" (emitConst fb "i64" header) block)
+    let code = fb.Fresh()
+    fb.Emit(sprintf "%s = llvm.mlir.addressof @%s%s : !llvm.ptr" code fb.Strings.Prefix funcName)
+    fb.Emit(sprintf "llvm.store %s, %s : !llvm.ptr, !llvm.ptr" code (emitSlot fb block 1))
+    direct |> Option.iter (fun (directName, _) ->
+        let entry = fb.Fresh()
+        fb.Emit(sprintf "%s = llvm.mlir.addressof @%s%s : !llvm.ptr" entry fb.Strings.Prefix directName)
+        fb.Emit(sprintf "llvm.store %s, %s : !llvm.ptr, !llvm.ptr" entry (emitSlot fb block (2 + capturedCount))))
+    block
+
+/// f a1 a2 ... (CApply 가 겹친 것) 를 (f, [a1; a2; ...]) 로
+let rec private applySpine (expr: CExpr) =
+    match expr with
+    | CApply (f, a) ->
+        let head, args = applySpine f
+        head, args @ [ a ]
+    | _ -> expr, []
 
 /// cons 값 v 의 index 번째 단어 (0: head, 1: tail). 블록 주소는 v - 2
 let private emitConsField (fb: FunctionBuilder) (v: string) (index: int) =
@@ -479,18 +511,15 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
     // 클로저 블록 = [헤더, 코드 포인터, 캡처한 값...]. GC 가 관리하는 메모리에 할당
     | CMakeClosure (funcName, captured) ->
         let values = captured |> List.map (fun name -> emitExpr fb env (CVar name))
-        let size = emitConst fb "i64" (int64 (8 * (2 + captured.Length)))
-        let block = fb.Fresh()
-        fb.Emit(sprintf "%s = llvm.call @calc_alloc(%s) : (i64) -> !llvm.ptr" block size)
-        fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" (emitConst fb "i64" (closureHeader captured.Length)) block)
-        let code = fb.Fresh()
-        fb.Emit(sprintf "%s = llvm.mlir.addressof @%s%s : !llvm.ptr" code fb.Strings.Prefix funcName)
-        fb.Emit(sprintf "llvm.store %s, %s : !llvm.ptr, !llvm.ptr" code (emitSlot fb block 1))
+        let block = emitClosureBlock fb funcName captured.Length
         values |> List.iteri (fun i v -> fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" v (emitSlot fb block (2 + i))))
         let r = fb.Fresh()
         fb.Emit(sprintf "%s = llvm.ptrtoint %s : !llvm.ptr to i64" r block)
         r
-    | CApply (f, a) -> emitApply fb env "" f a
+    | CApply (f, a) ->
+        match applySpine expr with
+        | head, args when args.Length >= 2 -> emitApplyMany fb env false head args
+        | _ -> emitApply fb env "" f a
     | CCallDirect (funcName, closure, args) -> emitCallDirect fb env "" funcName closure args
     // 런타임의 calc_try 가 _setjmp 한 뒤 본문 클로저를 부름 (setjmp 를 한 함수가 살아 있는 동안만 longjmp 할 수 있으므로 C 에서)
     | CTry (body, handler) ->
@@ -640,6 +669,54 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
 and private emitApply (fb: FunctionBuilder) (env: Map<string, string>) (tailKind: string) (f: CExpr) (a: CExpr) =
     let fv = emitExpr fb env f
     let av = emitExpr fb env a
+    emitApplyValue fb tailKind fv av
+
+/// f a1 ... ak (k >= 2, f 는 모르는 함수): 클로저 헤더의 인자 수가 k 면 마지막 칸의 direct 함수를 (클로저, a1, ..., ak) 로 부름
+/// (중간 클로저를 만들지 않음). 아니면 하나씩 적용. 계산 순서는 하나씩 적용할 때와 같음: f, a1, (f a1), a2, ...
+/// direct 함수를 부를 때 건너뛰는 f a1 ... 은 클로저를 만들기만 하므로 결과가 같음.
+/// tail 이면 두 경우 모두 tail 호출 뒤 llvm.return (돌려주는 값 없음)
+and private emitApplyMany (fb: FunctionBuilder) (env: Map<string, string>) (tail: bool) (f: CExpr) (args: CExpr list) =
+    let fv = emitExpr fb env f
+    let block = fb.Fresh()
+    fb.Emit(sprintf "%s = llvm.inttoptr %s : i64 to !llvm.ptr" block fv)
+    let header = fb.Fresh()
+    fb.Emit(sprintf "%s = llvm.load %s : !llvm.ptr -> i64" header block)
+    let arity = emitOp fb "arith.shrui" header (emitConst fb "i64" 32L) "i64"
+    let isDirect = fb.Fresh()
+    fb.Emit(sprintf "%s = arith.cmpi eq, %s, %s : i64" isDirect arity (emitConst fb "i64" (int64 args.Length)))
+    // 마지막 인자 앞까지: direct 가 아니면 원래처럼 인자 하나를 계산할 때마다 적용
+    let first = emitExpr fb env args.Head
+    let partial, values =
+        args.Tail
+        |> List.fold (fun (current, values: string list) a ->
+            let pending = List.last values
+            let next = emitIf fb isDirect (fun () -> current) (fun () -> emitApplyValue fb "" current pending)
+            next, values @ [ emitExpr fb env a ]) (fv, [ first ])
+    let callDirect tailKind () =
+        let size = emitOp fb "arith.andi" (emitOp fb "arith.shrui" header (emitConst fb "i64" 8L) "i64") (emitConst fb "i64" 0xffffffL) "i64"
+        let slot = fb.Fresh()
+        fb.Emit(sprintf "%s = llvm.getelementptr %s[%s] : (!llvm.ptr, i64) -> !llvm.ptr, i64" slot block size)
+        let code = fb.Fresh()
+        fb.Emit(sprintf "%s = llvm.load %s : !llvm.ptr -> !llvm.ptr" code slot)
+        let r = fb.Fresh()
+        let types = List.replicate values.Length "i64" |> String.concat ", "
+        fb.Emit(sprintf "%s = llvm.call tailcc %s%s(%s) : !llvm.ptr, (!llvm.ptr, %s) -> i64" r tailKind code (String.concat ", " (block :: values)) types)
+        r
+    let callCurried tailKind () = emitApplyValue fb tailKind partial (List.last values)
+    if tail then
+        let directBlock = fb.FreshBlock()
+        let curriedBlock = fb.FreshBlock()
+        fb.Emit(sprintf "llvm.cond_br %s, %s, %s" isDirect directBlock curriedBlock)
+        fb.Label directBlock
+        fb.Emit(sprintf "llvm.return %s : i64" (callDirect "tail " ()))
+        fb.Label curriedBlock
+        fb.Emit(sprintf "llvm.return %s : i64" (callCurried "tail " ()))
+        ""
+    else
+        emitIf fb isDirect (callDirect "") (callCurried "")
+
+/// 클로저 값 fv 를 인자 값 av 로 부름: 1번 칸의 코드 포인터로 (클로저, 인자) 간접 호출
+and private emitApplyValue (fb: FunctionBuilder) (tailKind: string) (fv: string) (av: string) =
     let block = fb.Fresh()
     fb.Emit(sprintf "%s = llvm.inttoptr %s : i64 to !llvm.ptr" block fv)
     let code = fb.Fresh()
@@ -695,13 +772,7 @@ and private emitRecGroup (fb: FunctionBuilder) (env: Map<string, string>) (closu
         [ for name, closure in closures ->
               match closure with
               | CMakeClosure (funcName, captured) ->
-                  let size = emitConst fb "i64" (int64 (8 * (2 + captured.Length)))
-                  let block = fb.Fresh()
-                  fb.Emit(sprintf "%s = llvm.call @calc_alloc(%s) : (i64) -> !llvm.ptr" block size)
-                  fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" (emitConst fb "i64" (closureHeader captured.Length)) block)
-                  let code = fb.Fresh()
-                  fb.Emit(sprintf "%s = llvm.mlir.addressof @%s%s : !llvm.ptr" code fb.Strings.Prefix funcName)
-                  fb.Emit(sprintf "llvm.store %s, %s : !llvm.ptr, !llvm.ptr" code (emitSlot fb block 1))
+                  let block = emitClosureBlock fb funcName captured.Length
                   let value = fb.Fresh()
                   fb.Emit(sprintf "%s = llvm.ptrtoint %s : !llvm.ptr to i64" value block)
                   name, block, value, captured
@@ -807,6 +878,9 @@ and private emitTail (fb: FunctionBuilder) (env: Map<string, string>) (expr: CEx
     | CIf (cond, thenExpr, elseExpr) ->
         let c = untagBool fb (emitExpr fb env cond)
         branch c (fun () -> emitTail fb env thenExpr) (fun () -> emitTail fb env elseExpr)
+    | CApply _ when (snd (applySpine expr)).Length >= 2 ->
+        let head, args = applySpine expr
+        emitApplyMany fb env true head args |> ignore
     | CApply (f, a) -> fb.Emit(sprintf "llvm.return %s : i64" (emitApply fb env "tail " f a))
     | CCallDirect (funcName, closure, args) -> fb.Emit(sprintf "llvm.return %s : i64" (emitCallDirect fb env "tail " funcName closure args))
     | CMatch (CTuple items, cases) when tupleArms items.Length cases ->
@@ -920,6 +994,8 @@ let private declarations =
 let private emitBody (sb: StringBuilder) (prefix: string) (entry: string) (expr: Ast.Expr) =
     let program = Lower.lowerProgram expr
     let strings = StringTable(prefix)
+    for f in program.Functions do
+        f.Direct |> Option.iter (fun direct -> strings.Directs[f.Name] <- direct)
     let fb = FunctionBuilder(strings)
     let result = emitExpr fb Map.empty program.Main
     // 함수 본문을 먼저 만들어야 그 안의 문자열 상수도 모임

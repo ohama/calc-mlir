@@ -135,7 +135,7 @@ clang prog.o runtime.o builtins.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack
 | `CONS` | 0.52.0까지는 head, tail과 헤더 `3 \| (2 << 8)`. 지금은 헤더가 없는 `[head, tail]` 블록이고 값의 태그 `2`가 cons임을 나타냅니다. 24바이트 블록은 Boehm GC에서 32바이트를 써서, 헤더를 없애면 리스트 메모리가 반이 됩니다. 이를 위해 `calc_init`이 interior pointer를 끄고(`GC_set_all_interior_pointers(0)`, 16바이트 요청이 32바이트로 올라가지 않음) 주소 + 2를 `GC_register_displacement(2)`로 알립니다. 스택과 레지스터의 interior pointer는 이 설정과 상관없이 인정됩니다. `[]`는 블록이 아니라 immediate value `5` |
 | `TUPLE` | 원소 n개. 헤더 `4 \| (n << 8)` |
 | `DATA` | 생성자 이름(C 문자열 전역의 포인터), 인자(있으면). 헤더 `5 \| (단어 수 << 8)`. 단어 수 2는 튜플이 아닌 인자 하나이고, 3 이상이면 튜플 인자의 원소를 블록에 편 것입니다(`Node (l, v, r)`은 `[헤더, 이름, l, v, r]` 블록 하나, 0.50.0부터). 인자 전체를 묶는 패턴(`Node p`)은 런타임의 `calc_data_payload`가 튜플을 다시 만들고, 실행 중에 튜플인 인자(`map Node xs`)는 `calc_make_data`가 폅니다. 인자 없는 생성자는 8-byte aligned 전역 상수 블록. 처음 설계한 descriptor(이름, 타입 이름, 번호) 대신 이름만 둡니다. 타입 검사를 통과했으므로 같은 타입끼리만 비교하고, 인터프리터도 생성자를 이름으로 비교하기 때문입니다 |
-| `CLOSURE` | 코드 포인터, 캡처한 값들 |
+| `CLOSURE` | 코드 포인터, 캡처한 값들 (인자가 여럿인 함수는 끝에 direct 함수 포인터, 헤더에 인자 수) |
 | `REF` | 내용. 헤더 `6 \| (1 << 8)`. `r := v`가 내용을 바꿈 (0.35.0) |
 | `ARRAY` | 원소 n개. 헤더 `8 \| (n << 8)`. 원소 읽기와 쓰기는 생성 코드가 범위를 검사하고 바로 load/store함(0.50.0부터. 범위 밖이면 `calc_error_index`). 값으로 쓴 `.[]`는 런타임 함수 `calc_builtin_array_get`/`set` |
 | `RECORD` | 필드 이름들(`"x;y"` C 문자열 전역의 포인터), 값 n개(선언한 순서). 헤더 `7 \| ((1 + n) << 8)`. 이름은 결과 출력에만 씀 (0.36.0) |
@@ -162,7 +162,7 @@ clang prog.o runtime.o builtins.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack
 - **closure conversion**(`Lower`): `fun x -> body`의 free variable을 구해서 클로저 블록에 저장합니다. 본문은 최상위 함수 `@lambda_N`이 되고, free variable을 클로저에서 꺼냅니다.
 - **`let rec f x = ...`**: 클로저 포인터 `%closure`가 바로 자기 자신입니다. 그래서 본문 안의 `f`는 `%closure`가 됩니다. 인터프리터의 `let rec`(함수를 만든 뒤 자기 칸에 넣어 본문의 `f`가 자신을 가리킴)과 같은 생각입니다.
 - **호출** `f a`: 클로저의 0번 칸에서 코드 포인터를 꺼내 `llvm.call %code(%f, %a)`로 indirect call합니다.
-- 여러 인자 호출 `add 1 2`는 중간 클로저를 만듭니다. 느리지만 단순합니다. 이름에 묶은 함수(`let add a b = …`)에 인자를 모두 주는 호출은 0.34.0부터 인자를 모두 받는 함수를 direct call합니다([compiler-architecture.md](compiler-architecture.md) 15장).
+- 여러 인자 호출 `add 1 2`는 중간 클로저를 만듭니다. 느리지만 단순합니다. 이름에 묶은 함수(`let add a b = …`)에 인자를 모두 주는 호출은 0.34.0부터 인자를 모두 받는 함수를 direct call합니다. 0.58.0부터는 모르는 함수(`f acc x`)도 클로저의 인자 수가 맞으면 클로저에 담긴 direct 함수를 부릅니다([compiler-architecture.md](compiler-architecture.md) 15장).
 
 ### D5. 메모리: Boehm GC
 
