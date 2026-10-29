@@ -381,6 +381,13 @@ let private runCases =
           "let area x =\n    let pi = 3\n    pi * x\n\nlet rec loop i acc =\n    if i = 0 then acc\n    else\n        let next = acc + i\n        loop (i - 1) next\n\nprintln (map area [ 1\n                    2 ])\nloop 1000000 0", ("[3; 6]\n1784293664\n", "", 0), "블록, 같은 열의 let, 줄바꿈 원소, tail call"
           "module M =\n    let x = 1\n    let f y = y + x\nlet n = ref 0\nwhile !n < 3 do\n    incr n\nM.f !n", ("4\n", "", 0), "모듈, done 없는 while"
         ]
+      "리스트 내장 함수",
+        [
+          "println (reverse [1; 2; 3], append [1] [2; 3], append [] [4], range 3 5, range 5 3)", ("([3; 2; 1], [1; 2; 3], [4], [3; 4; 5], [])\n", "", 0), "reverse, append, range"
+          "println (range 2147483646 2147483647); println (length (range (-2147483647 - 1) (-2147483647)))", ("[2147483646; 2147483647]\n2\n", "", 0), "int 의 끝에서도 멈춤"
+          "let f = append [1] in println (f [2], map (append [0]) [[1]], (fun r -> r [1; 2]) reverse)", ("([1; 2], [[0; 1]], [2; 1])\n", "", 0), "partial application, 값으로"
+          "let xs = range 1 300000 in println (length (append (reverse xs) xs))", ("600000\n", "", 0), "긴 리스트"
+        ]
       "배열",
         [
           "let a = [| 3; 1; 2 |] in a.[0] <- 10; println a; println (Array.length a); [| [|\"x\"|] |]", ("[|10; 1; 2|]\n3\n[|[|\"x\"|]|]\n", "", 0), "출력"

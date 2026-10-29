@@ -30,6 +30,19 @@ Build succeeded.
 dotnet build src/Calc -c Release
 ```
 
+### 빠른 실행 파일 (ReadyToRun)
+
+`dotnet build`의 결과는 실행할 때마다 JIT이 메서드를 컴파일합니다. 빈 프로그램에서도 1,500개쯤입니다(prelude를 파싱하는 파서의 메서드가 그중 600개). ReadyToRun으로 publish하면 미리 컴파일해 둡니다. 실행할 컴퓨터의 런타임 식별자(RID)를 줍니다.
+
+```sh
+dotnet publish src/Calc -c Release -r osx-arm64 -p:PublishReadyToRun=true -o dist   # Linux x64 는 -r linux-x64
+./dist/calc prog.calc
+```
+
+- **효과:** 빈 프로그램이 0.071초에서 0.035초가 됩니다. 첫 실행의 JIT 데우기도 줄어 `benchmarks/fib.calc`는 0.15초에서 0.11초가 됩니다(Apple M4 Max). 자세한 수치는 [benchmarks.md](benchmarks.md)에 있습니다.
+- **크기:** `Calc.dll`이 0.9MB에서 2.3MB가 됩니다.
+- **같은 동작:** 결과와 `--compile`은 같습니다. 테스트는 `dotnet build` 결과로 돕니다.
+
 ## 실행
 
 ```sh
@@ -62,7 +75,7 @@ dotnet src/Calc/bin/Debug/net10.0/Calc.dll --expr "2 + 3"
 | 옵션 | 짧은 형식 | 설명 |
 |---|---|---|
 | `--expr <expr>` | `-e <expr>` | 주어진 식을 계산합니다. `--expr=<expr>` 형식도 됩니다. 생략하면 표준 입력에서 읽습니다. |
-| `--version` | `-v` | 버전을 출력하고 종료합니다 (예: `calc 0.47.0`). |
+| `--version` | `-v` | 버전을 출력하고 종료합니다 (예: `calc 0.48.0`). |
 | `--no-typecheck` | | 타입 추론을 건너뛰고 바로 평가합니다. 타입은 평가 중에 동적으로 검사됩니다. |
 | `--emit-mlir` | | 평가하지 않고, 컴파일러가 만든 MLIR을 출력합니다. |
 | `--compile <path>` | | 평가하지 않고, 네이티브 실행 파일을 `<path>`에 만듭니다. `--compile=<path>` 형식도 됩니다. |
@@ -133,7 +146,7 @@ rm -f src/Calc/{Lexer,Parser}.fs{,i}
 
 ```
 $ dotnet run --project src/Calc
-calc 0.47.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
+calc 0.48.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
 # let rec fact n =
     if n = 0 then 1 else n * fact (n - 1);;
 val fact : int -> int = <fun>
@@ -165,7 +178,7 @@ Error: Type mismatch: expected int but got bool (line 1, column 5)
 
 ## 네이티브 컴파일 (실험 중)
 
-`--compile`은 MLIR과 LLVM으로 실행 파일을 만듭니다. 설계와 단계별 계획은 [compiler-design.md](compiler-design.md)에 있습니다. 지금은 **모든 기능**(정수, 불리언, `if`, `let`, 함수와 클로저, 문자열, 리스트, 튜플, 패턴 매칭, ADT, `option`, `unit`과 `;`, 최상위 선언, 타입 표기, 예외, 문자열 포맷, 내장 함수 18개와 Calc로 쓴 prelude 함수 20개)을 컴파일합니다. 실행 파일은 `print`가 출력한 것을 내보내고, 마지막 값이 `()`가 아니면 그 값을 출력합니다(`calc prog.calc`와 같음). 실행 결과와 실행 중 오류(`Error: Attempted to divide by zero.`, 종료 코드 1)는 인터프리터와 같습니다. 앞으로 언어에 기능을 더하면, 컴파일러가 따라잡기 전까지는 `Error: Not supported by the compiler yet: <기능>`으로 멈춥니다.
+`--compile`은 MLIR과 LLVM으로 실행 파일을 만듭니다. 설계와 단계별 계획은 [compiler-design.md](compiler-design.md)에 있습니다. 지금은 **모든 기능**(정수, 불리언, `if`, `let`, 함수와 클로저, 문자열, 리스트, 튜플, 패턴 매칭, ADT, `option`, `unit`과 `;`, 최상위 선언, 타입 표기, 예외, 문자열 포맷, 내장 함수 21개와 Calc로 쓴 prelude 함수 17개)을 컴파일합니다. 실행 파일은 `print`가 출력한 것을 내보내고, 마지막 값이 `()`가 아니면 그 값을 출력합니다(`calc prog.calc`와 같음). 실행 결과와 실행 중 오류(`Error: Attempted to divide by zero.`, 종료 코드 1)는 인터프리터와 같습니다. 앞으로 언어에 기능을 더하면, 컴파일러가 따라잡기 전까지는 `Error: Not supported by the compiler yet: <기능>`으로 멈춥니다.
 
 ### 준비
 

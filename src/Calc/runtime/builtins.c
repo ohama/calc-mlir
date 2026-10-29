@@ -205,6 +205,31 @@ value calc_builtin_toInt(value s) {
 
 static int compare_for_sort(const void *a, const void *b) { return calc_compare(*(const value *)a, *(const value *)b); }
 
+value calc_builtin_reverse(value xs) {
+    value r = CALC_NIL;
+    for (; xs != CALC_NIL; xs = TAIL(xs)) r = calc_cons(HEAD(xs), r);
+    return r;
+}
+
+/* xs 의 원소를 차례로 새 칸에 담고 마지막 칸을 ys 에 이음 (ys 는 그대로 공유) */
+value calc_builtin_append(value xs, value ys) {
+    if (xs == CALC_NIL) return ys;
+    value first = calc_cons(HEAD(xs), ys), last = first;
+    for (xs = TAIL(xs); xs != CALC_NIL; xs = TAIL(xs)) {
+        value cell = calc_cons(HEAD(xs), ys);
+        TAIL(last) = cell;
+        last = cell;
+    }
+    return first;
+}
+
+/* a 부터 b 까지. b < a 면 []. 끝값이 int 의 끝이어도 멈추도록 64비트로 셈 */
+value calc_builtin_range(value a, value b) {
+    value r = CALC_NIL;
+    for (int64_t i = INT(b); i >= INT(a); i--) r = calc_cons(calc_int((int32_t)i), r);
+    return r;
+}
+
 /* int 끼리 또는 string 끼리 (calc_compare). 같다고 비교되는 원소는 내용도 같으므로 안정 정렬이 아니어도 결과가 같음 */
 value calc_builtin_sort(value xs) {
     int64_t n = calc_list_length(xs);

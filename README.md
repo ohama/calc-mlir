@@ -27,7 +27,7 @@ Result: 10
 | 재귀 함수 | `let rec fact n = if n <= 1 then 1 else n * fact (n - 1) in fact 10` |
 | 문자열 (`+`로 연결, 비교) | `"Hello, " + name`, `"a" < "b"` |
 | 문자열 내장 함수 | `length`, `substr`, `upper`, `split`, `join`, `toInt`, `toString` 등 14개 |
-| 리스트·튜플·option·출력 함수 | `map`, `filter`, `fold`, `range`, `sum`, `sort`, `head`, `nth`, `fst`, `snd`, `tryHead`, `defaultValue`, `print`, `println`, `ignore` 등 22개. 이 중 19개는 Calc로 쓴 표준 라이브러리(`src/Calc/prelude.calc`) |
+| 리스트·튜플·option·출력 함수 | `map`, `filter`, `fold`, `range`, `sum`, `sort`, `head`, `nth`, `fst`, `snd`, `tryHead`, `defaultValue`, `print`, `println`, `ignore` 등 22개. 이 중 16개는 Calc로 쓴 표준 라이브러리(`src/Calc/prelude.calc`) |
 | 리스트 | `[1; 2; 3]`, `0 :: xs` |
 | 튜플 | `(1, "a")`, `let (a, b) = p in a + b` |
 | algebraic data type, `option` | `type shape = Circle of int \| Rect of int * int in ...`, `Some 1`, `None` |
@@ -87,7 +87,7 @@ dotnet run --project src/Calc
 ```
 
 ```
-calc 0.47.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
+calc 0.48.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
 # let add a b = a + b;;
 val add : int -> int -> int = <fun>
 # add 1 2;;
@@ -151,7 +151,7 @@ Error: parse error: unexpected '+' (line 1, column 5)
 │   ├── Toolchain.fs          # 컴파일러: mlir-opt, mlir-translate, clang 실행
 │   ├── Frontend.fs           # 파싱, 큰 스택 실행, 오류 위치 (명령줄과 REPL 이 함께 씀)
 │   ├── Prelude.fs            # 프로그램 앞에 표준 라이브러리 정의를 붙임
-│   ├── prelude.calc          # Calc 로 쓴 표준 라이브러리 (map, fold, range, ...)
+│   ├── prelude.calc          # Calc 로 쓴 표준 라이브러리 (map, fold, head, ...)
 │   ├── Repl.fs               # REPL
 │   ├── runtime/              # 컴파일한 프로그램의 C 런타임 (Boehm GC, 내장 함수, Unicode 표)
 │   ├── Parser.fsy            # fsyacc 문법 → Parser.fs (빌드 시 생성)

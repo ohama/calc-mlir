@@ -4,6 +4,19 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.48.0] - 2026-10-29
+
+### 변경
+- `reverse`, `append`, `range`가 다시 내장 함수입니다(인터프리터는 F#, 컴파일러는 C 런타임). 함수 인자 없이 리스트를 만들기만 하는 함수라, Calc 코드로 원소마다 실행할 까닭이 없습니다.
+  - merge sort 20만(`benchmarks/msort.calc`)이 인터프리터에서 1.00초에서 0.67초, 컴파일한 실행 파일에서 0.20초에서 0.17초(Python 0.21초)가 되었습니다.
+  - 결과와 타입은 같습니다. `range`는 끝값이 `int`의 끝이어도 멈춥니다.
+  - `--no-typecheck`로 잘못 쓰면 내장 함수의 오류가 납니다(`range 1 true`는 `Type error: expected int but got bool`).
+  - prelude에서 `map`과 `filter`는 이제 다른 prelude 정의를 붙이지 않습니다.
+
+### 추가
+- 문서 `docs/build.md`의 "빠른 실행 파일 (ReadyToRun)": `dotnet publish -r <RID> -p:PublishReadyToRun=true`로 JIT을 미리 해 두면 빈 프로그램이 0.071초에서 0.035초, fib 32가 0.15초에서 0.11초가 됩니다. `benchmarks/run.py`는 `CALC=dist/calc`로 그 결과를 잽니다. `dist/`는 `.gitignore`에 넣었습니다.
+- 테스트 4개 추가 (총 1205개)
+
 ## [0.47.0] - 2026-10-29
 
 ### 변경

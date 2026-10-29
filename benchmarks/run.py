@@ -11,7 +11,8 @@ import os, statistics, subprocess, sys, tempfile, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-CALC = os.environ.get("CALC", os.path.join(ROOT, "src/Calc/bin/Release/net10.0/calc"))
+# CALC 는 실행한 곳 기준의 경로 (프로그램은 benchmarks/ 안에서 실행하므로 절대 경로로 바꿔 둠)
+CALC = os.path.abspath(os.environ.get("CALC", os.path.join(ROOT, "src/Calc/bin/Release/net10.0/calc")))
 PROGRAMS = ["fib", "queens", "sieve", "msort", "bst"]
 N = int(sys.argv[1]) if len(sys.argv) > 1 else 5
 

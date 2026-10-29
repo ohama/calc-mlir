@@ -37,7 +37,7 @@
 | lowering | `Core.fs`, `Lower.fs` | `Ast.Expr` → Core IR. 연산을 `Prim`으로, `&&`/`||`를 `if`로, closure conversion(함수를 최상위로). 지원하지 않는 기능은 `NotSupported` |
 | 코드 생성 | `Codegen.fs` | Core IR → MLIR 텍스트 |
 | 빌드 | `Toolchain.fs` | 도구 찾기, 임시 폴더에서 외부 도구(`mlir-opt`, `mlir-translate`, `clang`)를 차례로 실행, C 런타임 오브젝트 캐시 |
-| 런타임 | `runtime/runtime.c`, `builtins.c`, `runtime.h`, `unicode.h` | 초기화, 결과 출력, 오류 종료, polymorphic 연산(`calc_add`, `calc_eq`, `calc_compare`), 내장 함수 18개, 예외(`calc_try`, `calc_raise`). `calc_apply`는 생성한 모듈이 정의(12장) |
+| 런타임 | `runtime/runtime.c`, `builtins.c`, `runtime.h`, `unicode.h` | 초기화, 결과 출력, 오류 종료, polymorphic 연산(`calc_add`, `calc_eq`, `calc_compare`), 내장 함수 21개, 예외(`calc_try`, `calc_raise`). `calc_apply`는 생성한 모듈이 정의(12장) |
 | 진입 | `Program.fs`의 `compile` | 위 단계를 잇고, 오류를 인터프리터와 같은 형식(`Error: ...`)으로 출력 |
 
 F#으로 하는 일은 MLIR **텍스트**를 만드는 데까지입니다. LLVM을 라이브러리로 링크하지 않고, 텍스트 파일을 외부 도구에 넘깁니다(설계 D1).
@@ -432,23 +432,23 @@ let f = substr "hello" in (f 1 3, map length ["a"; "bb"], toInt "7")
 | 값으로: `map length xs` | `CApply (CApply (CVar "map", <length 클로저>), xs)` | prelude의 `map` 클로저가 `calc_apply`로 `length` 클로저를 부름 |
 | 가린 이름: `let length = ... in length x` | 보통 변수 `CVar` | 클로저 호출 |
 
-- **선언:** 모듈은 18개 내장 함수를 모두 `llvm.func @calc_builtin_<이름>(i64, ...) -> i64`로 선언합니다. 링커가 `builtins.o`와 이름으로 연결합니다. mutable reference의 `ref`, `!`, `:=`는 런타임 함수 없이 Codegen이 바로 만듭니다(16장).
+- **선언:** 모듈은 21개 내장 함수를 모두 `llvm.func @calc_builtin_<이름>(i64, ...) -> i64`로 선언합니다. 링커가 `builtins.o`와 이름으로 연결합니다. mutable reference의 `ref`, `!`, `:=`는 런타임 함수 없이 Codegen이 바로 만듭니다(16장).
 - **`calc_apply(f, x)`:** 런타임(C)이 클로저를 부를 때 씁니다. 클로저 1번 칸의 코드 포인터를 `tailcc`로 부릅니다. C는 `tailcc` 함수를 부를 수 없으므로 생성한 모듈이 `weak_odr`로 정의합니다(12장).
 - **option:** 생성 코드는 `Some`/`None`의 이름 전역을 따로 만들지 않고, 런타임의 `calc_name_some`, `calc_none`을 외부 전역으로 선언해서 씁니다(`llvm.mlir.global external constant`). 0.29.0까지는 런타임의 `tryHead`, `tryFind`도 `Some`을 만들어서 패턴 검사의 포인터 비교가 맞으려면 이름이 한 곳에 있어야 했습니다. 지금은 option을 만드는 내장 함수가 없지만, 선언 없이 모든 프로그램에 있는 타입이라 그대로 런타임에 둡니다.
 
 ## 11. prelude (Calc로 쓴 표준 라이브러리)
 
-`map`, `fold`, `range`, `head`처럼 Calc로 쓸 수 있는 함수 20개는 C 런타임에 없습니다. `src/Calc/prelude.calc`의 Calc 코드를 프로그램 앞에 붙여서, 사용자 함수와 똑같이 컴파일합니다.
+`map`, `fold`, `head`처럼 Calc로 쓸 수 있는 함수 17개는 C 런타임에 없습니다. `src/Calc/prelude.calc`의 Calc 코드를 프로그램 앞에 붙여서, 사용자 함수와 똑같이 컴파일합니다.
 
 ```
-Ast.Expr ──▶ Prelude.wrap ──▶ let reverse xs = …        in
+Ast.Expr ──▶ Prelude.wrap ──▶ let rec fold f acc xs = …  in
                               let map f xs = …          in
                               <프로그램>
 ```
 
-- **쓰는 정의만:** `Prelude.wrap`은 프로그램에 나오는 이름에서 시작해, 붙일 정의가 쓰는 이름을 따라 필요한 정의를 고릅니다. 위 10장의 예제는 `reverse`, `map`만 붙습니다(`map`이 `reverse`를 씀). 생성한 MLIR의 함수는 `@lambda_0`부터 `@lambda_10`까지 11개입니다(알려진 함수의 `_direct` 함수는 빼고 셈).
+- **쓰는 정의만:** `Prelude.wrap`은 프로그램에 나오는 이름에서 시작해, 붙일 정의가 쓰는 이름을 따라 필요한 정의를 고릅니다. 위 10장의 예제는 `map`만 붙습니다(`map`이 쓰는 `reverse`는 내장 함수). 생성한 MLIR의 함수는 `@lambda_0`부터 `@lambda_7`까지 8개입니다(알려진 함수의 `_direct` 함수는 빼고 셈).
 - **같은 정의:** 인터프리터도 같은 `Prelude.wrap`을 거칩니다. 차등 테스트가 같은 정의의 두 실행을 비교합니다.
-- **비용:** 내장 함수였을 때는 C 루프였지만, 지금은 원소마다 Calc 함수를 부릅니다. 100만 개 리스트에 `range`, `map`, `filter`, `sum`, `exists`를 쓰는 프로그램이 0.04초에서 0.23초가 되었습니다. 0.34.0의 알려진 함수 direct call(15장)로 0.12초가 되었습니다. 0.44.0 다음에는 `reverse`, `append`, `map`, `filter`를 `fold`에 함수를 넘기지 않는 직접 재귀로 바꿔서, 원소마다 `calc_apply`로 부르던 간접 호출이 없어졌습니다(`benchmarks/msort.calc` 0.29초 → 0.20초).
+- **비용:** 내장 함수였을 때는 C 루프였지만, 지금은 원소마다 Calc 함수를 부릅니다. 100만 개 리스트에 `range`, `map`, `filter`, `sum`, `exists`를 쓰는 프로그램이 0.04초에서 0.23초가 되었습니다. 0.34.0의 알려진 함수 direct call(15장)로 0.12초가 되었습니다. 0.44.0 다음에는 `reverse`, `append`, `map`, `filter`를 `fold`에 함수를 넘기지 않는 직접 재귀로 바꿔서, 원소마다 `calc_apply`로 부르던 간접 호출이 없어졌습니다(`benchmarks/msort.calc` 0.29초 → 0.20초). 0.48.0에서는 함수 인자 없이 리스트를 만들기만 하는 `reverse`, `append`, `range`를 C 내장 함수로 되돌렸습니다(0.20초 → 0.17초).
 - **`upper`, `lower`, `trim`:** C 표준 라이브러리 대신 .NET에서 만든 표(`unicode.h`)를 씁니다. `ß`와 `İ`처럼 invariant 변환이 그대로 두는 문자까지 인터프리터와 같습니다.
 
 ## 12. tail call

@@ -903,8 +903,8 @@ type Value =
 함수는 두 종류로 구현되어 있지만, 쓰는 쪽에서는 구분되지 않습니다.
 
 - **포맷 함수(3개):** `sprintf`, `printf`, `printfn`. 포맷 문자열 리터럴이 함수의 타입을 정합니다. 아래 "문자열 포맷"을 참고하세요.
-- **prelude(Calc로 쓴 함수, 27개):** `failwith`, `fst`, `snd`, `ignore`, `isEmpty`, `head`, `tail`, `nth`, `fold`, `reverse`, `append`, `range`, `sum`, `map`, `filter`, `exists`, `forall`, `incr`, `decr`, `tryHead`, `tryFind`, `defaultValue`, `Array.init`, `Array.copy`, `Array.iter`, `Array.fold`, `Array.map`. 아래 "prelude"를 참고하세요.
-- **내장 함수(F#과 C로 구현, 18개):** 나머지. 문자열 함수, `toString`, `toInt`, 여러 타입을 받는 `length`, `sort`, 출력 함수, `raise`입니다.
+- **prelude(Calc로 쓴 함수, 24개):** `failwith`, `fst`, `snd`, `ignore`, `isEmpty`, `head`, `tail`, `nth`, `fold`, `sum`, `map`, `filter`, `exists`, `forall`, `incr`, `decr`, `tryHead`, `tryFind`, `defaultValue`, `Array.init`, `Array.copy`, `Array.iter`, `Array.fold`, `Array.map`. 아래 "prelude"를 참고하세요.
+- **내장 함수(F#과 C로 구현, 21개):** 나머지. 문자열 함수, `toString`, `toInt`, 여러 타입을 받는 `length`, `sort`, 리스트를 만들기만 하는 `reverse`, `append`, `range`, 출력 함수, `raise`입니다.
 - **mutable reference(3개):** `ref`, `!`, `:=`. 인터프리터는 F#으로, 컴파일러는 C 런타임 함수 없이 블록 하나를 읽고 쓰는 코드로 만듭니다. `!`와 `:=`는 연산자로만 씁니다.
 - **배열(7개):** `[||]`(리터럴), `.[]`, `.[]<-`, `Array.length`, `Array.create`, `Array.ofList`, `Array.toList`. 앞의 세 개는 문법(`[| … |]`, `a.[i]`, `a.[i] <- v`)으로만 씁니다.
 
@@ -1044,7 +1044,7 @@ type Value =
 
 #### prelude (Calc로 쓴 표준 라이브러리)
 
-위 표의 함수 중 27개는 [`src/Calc/prelude.calc`](../src/Calc/prelude.calc)에 Calc 코드로 있습니다. 인터프리터, 타입 추론, 컴파일러가 모두 이 정의 하나를 씁니다.
+위 표의 함수 중 24개는 [`src/Calc/prelude.calc`](../src/Calc/prelude.calc)에 Calc 코드로 있습니다. 인터프리터, 타입 추론, 컴파일러가 모두 이 정의 하나를 씁니다.
 
 ```
 let rec fold f acc xs =
@@ -1066,15 +1066,16 @@ let map f xs =
 - **가리기:** 프로그램에서 같은 이름을 정의하면 그쪽이 가립니다. prelude 안의 정의는 바뀌지 않습니다. `let reverse xs = xs in map f ys`의 `map`은 prelude의 `reverse`를 씁니다.
 - **긴 리스트:** 모두 tail recursion이라 `sum (range 1 1000000)`도 스택이 자라지 않습니다. `map`과 `filter`는 거꾸로 모은 뒤 `reverse`합니다. 함수는 앞 원소부터 호출합니다.
 - **타입:** prelude의 타입은 추론한 것입니다. `sum`처럼 `+`의 타입을 정해야 하는 곳에는 타입 표기를 씁니다. 타입은 예전의 내장 함수와 같습니다.
-- **`--no-typecheck`의 오류:** 타입이 맞지 않게 쓰면 prelude 안의 `match`나 연산이 실패합니다. `fst 1`은 `Match failure: 1`, `range 1 true`는 `Type error: expected int or string but got bool`입니다.
+- **`--no-typecheck`의 오류:** 타입이 맞지 않게 쓰면 prelude 안의 `match`나 연산이 실패합니다. `fst 1`은 `Match failure: 1`, `sum [1; true]`는 `Type error: expected int but got bool`입니다.
 - **실패하는 함수:** `head`, `tail`, `nth`는 `failwith`로 `Failure`를 raise합니다. 메시지는 내장 함수였을 때와 같고(`head: empty list`), 이제 `try`로 받을 수 있습니다.
 - **내장 함수로 남은 것:** `length`와 `sort`는 여러 타입을 받는데, Calc 함수로 쓰면 allowed list가 있는 type variable이 generalize되지 않아(첫 사용이 타입을 정함) 같은 타입이 될 수 없습니다.
+- **내장 함수로 되돌린 것 (0.48.0):** `reverse`, `append`, `range`는 함수 인자 없이 리스트를 만들기만 해서, 원소마다 Calc 코드를 해석하거나 컴파일한 코드를 실행할 까닭이 없습니다. 내장 함수로 바꾸자 merge sort 20만(`benchmarks/msort.calc`)이 인터프리터에서 1.00초에서 0.67초, 실행 파일에서 0.20초에서 0.17초가 되었습니다.
 - **성능:** 인터프리터는 F#의 `List` 함수 대신 Calc 코드를 해석하므로 긴 리스트에서 느립니다. 100만 개 리스트에 `range`, `map`, `filter`, `sum`, `exists`를 쓰는 프로그램(Release)은 다음과 같습니다.
 
-  | | 0.29.0 (내장 함수) | 0.30.0 (prelude) | 0.34.0 | 0.42.0 |
-  |---|---|---|---|---|
-  | 인터프리터 | 0.77초 | 5.0초 | 5.3초 | 1.5초 (칸 배열 환경, 인자가 다 모인 호출) |
-  | 컴파일한 실행 파일 | 0.04초 | 0.23초 | 0.12초 (direct call) | 0.12초 |
+  | | 0.29.0 (내장 함수) | 0.30.0 (prelude) | 0.34.0 | 0.42.0 | 0.48.0 |
+  |---|---|---|---|---|---|
+  | 인터프리터 | 0.77초 | 5.0초 | 5.3초 | 1.5초 (칸 배열 환경, 인자가 다 모인 호출) | 0.30초 |
+  | 컴파일한 실행 파일 | 0.04초 | 0.23초 | 0.12초 (direct call) | 0.12초 | 0.04초 (`range`가 내장 함수) |
 
 ## 5. 오류
 

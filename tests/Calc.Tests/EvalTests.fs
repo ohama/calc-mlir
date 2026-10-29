@@ -694,8 +694,10 @@ let tests =
             expectError "nth [10] (-1)" "nth: index out of range (length 1, index -1)"
             expectError "nth [] 0" "nth: index out of range (length 0, index 0)"
             expectError "append [1] 2" "Type error: expected list but got int"
+            expectError "append 1 [2]" "Type error: expected list but got int"
+            expectError "reverse 1" "Type error: expected list but got int"
+            expectError "range 1 true" "Type error: expected int but got bool"
             // prelude(Calc 코드)의 함수를 타입 검사 없이 잘못 쓰면, 그 안의 연산이나 match 가 실패
-            expectError "range 1 true" "Type error: expected int or string but got bool"
             expectError "sum [1; true]" "Type error: expected int but got bool"
             expectError "sum [\"a\"]" "Type error: expected int but got string"
             // List.sortWith 가 감싼 예외가 아니라 원래 타입 오류

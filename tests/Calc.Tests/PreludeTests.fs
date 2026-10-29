@@ -15,8 +15,9 @@ let tests =
     testList "Prelude" [
         test "쓰는 정의만 붙임 (다른 정의가 쓰는 정의도)" {
             Expect.equal (Prelude.wrap (Program.parse "1")) (Number 1) "prelude 를 쓰지 않으면 그대로"
-            Expect.equal (attached (Program.load "map f xs")) [ "reverse"; "map" ] "map 은 reverse 를 씀"
-            Expect.equal (attached (Program.load "sum (range 1 3)")) [ "fold"; "range"; "sum" ] "prelude 안의 순서"
+            Expect.equal (attached (Program.load "map f xs")) [ "map" ] "map 이 쓰는 reverse 는 내장 함수"
+            Expect.equal (attached (Program.load "sum (range 1 3)")) [ "fold"; "sum" ] "sum 은 fold 를 씀 (range 는 내장 함수)"
+            Expect.equal (attached (Program.load "exists f xs && sum xs = 0")) [ "fold"; "sum"; "exists" ] "prelude 안의 순서"
         }
 
         test "prelude 전체: 경고 없이 타입 검사를 통과" {
@@ -65,6 +66,16 @@ let tests =
         test "긴 리스트도 스택이 자라지 않음 (인터프리터의 tail call)" {
             Expect.equal (EvalTests.calc "length (range 1 1000000)") (Eval.VInt 1000000) ""
             Expect.equal (EvalTests.calc "let xs = range 1 300000 in length (append (map (fun x -> x + 1) xs) (filter (fun x -> x % 2 = 0) (reverse xs)))") (Eval.VInt 450000) ""
+        }
+
+        test "내장 함수 reverse, append, range" {
+            Expect.equal (EvalTests.calc "(reverse [], append [] [1], append [1] [], range 3 2, range 2 2, range (-1) 1)")
+                (Eval.VTuple [| Eval.VList []; Eval.VList [ Eval.VInt 1 ]; Eval.VList [ Eval.VInt 1 ]; Eval.VList []; Eval.VList [ Eval.VInt 2 ]
+                                Eval.VList [ Eval.VInt -1; Eval.VInt 0; Eval.VInt 1 ] |]) ""
+            Expect.equal (EvalTests.calc "(range 2147483646 2147483647, length (range (-2147483647 - 1) (-2147483647)))")
+                (Eval.VTuple [| Eval.VList [ Eval.VInt 2147483646; Eval.VInt 2147483647 ]; Eval.VInt 2 |]) "int 의 끝에서도 멈춤"
+            Expect.equal (EvalTests.calc "let f = append [1] in (f [2], map (append [0]) [[1]], let r = reverse in r [1; 2])")
+                (Eval.VTuple [| Eval.VList [ Eval.VInt 1; Eval.VInt 2 ]; Eval.VList [ Eval.VList [ Eval.VInt 0; Eval.VInt 1 ] ]; Eval.VList [ Eval.VInt 2; Eval.VInt 1 ] |]) "partial application, 값으로"
         }
 
         test "reverse, append, map, filter" {

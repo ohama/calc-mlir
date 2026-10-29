@@ -83,7 +83,7 @@ clang prog.o runtime.o builtins.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack
 | `src/Calc/Codegen.fs` | Core IR → MLIR 텍스트 |
 | `src/Calc/Toolchain.fs` | 도구 찾기, 외부 프로세스 실행, 오류 전달 |
 | `src/Calc/runtime/runtime.c`, `runtime.h` | C 런타임 (6장): 할당, 출력(`calc_buffer_value`), 오류, polymorphic 연산, `calc_apply`, option 전역. 빌드 출력 폴더의 `runtime/`으로 복사 (`CopyToOutputDirectory`) |
-| `src/Calc/runtime/builtins.c` | 내장 함수 18개 (단계 7에서 36개, 0.30.0과 0.32.0에서 19개를 prelude로 옮기고 `raise`를 더함) |
+| `src/Calc/runtime/builtins.c` | 내장 함수 21개 (단계 7에서 36개, 0.30.0과 0.32.0에서 19개를 prelude로 옮기고 `raise`를 더함, 0.48.0에서 `reverse`, `append`, `range`를 되돌림) |
 | `src/Calc/runtime/unicode.h`, `gen-unicode.fsx` | .NET 대소문자 변환과 공백 표 (`upper`, `lower`, `trim`). `dotnet fsi src/Calc/runtime/gen-unicode.fsx`로 다시 만듦 |
 | `tests/Calc.Tests/CompileTests.fs` | differential testing (9장) |
 
@@ -191,7 +191,7 @@ clang prog.o runtime.o builtins.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack
 
 ### D8. 내장 함수: C 런타임 + 클로저
 
-- 내장 함수 18개는 `runtime/builtins.c`의 C 함수 `calc_builtin_<이름>`로 구현합니다(단계 7). `map`, `fold`, `head` 같은 20개는 Calc로 쓴 `prelude.calc`를 프로그램 앞에 붙여 보통 함수로 컴파일합니다. 인자 순서, 결과, 오류 메시지는 `Eval.callBuiltin`과 같습니다.
+- 내장 함수 21개는 `runtime/builtins.c`의 C 함수 `calc_builtin_<이름>`로 구현합니다(단계 7). `map`, `fold`, `head` 같은 17개는 Calc로 쓴 `prelude.calc`를 프로그램 앞에 붙여 보통 함수로 컴파일합니다. 인자 순서, 결과, 오류 메시지는 `Eval.callBuiltin`과 같습니다.
 - **호출:** `Lower`가 변수 범위를 따라가서, 범위에 없는 이름만 내장 함수로 봅니다. `let length = ...`처럼 가린 이름은 보통 변수입니다.
   - 인자가 다 모인 호출(`substr s 1 3`)은 런타임 함수를 바로 부릅니다(`CBuiltin`). 남는 인자는 결과에 차례로 적용합니다.
   - 값으로 쓰거나 partial application을 하면(`map length xs`, `substr "abc"`), 인자를 하나씩 받는 클로저 `fun $b0 -> fun $b1 -> ...`가 됩니다. 인터프리터의 `VBuiltin`과 같게 `<fun>`으로 출력되고, `=` 비교 오류도 같습니다. 처음 설계한 "정적 클로저 객체"는 필요 없었습니다. closure conversion이 바깥 인자를 캡처하기 때문입니다.
@@ -270,7 +270,7 @@ value  calc_add(value a, value b);            // int 또는 string
 value  calc_eq(value a, value b);             // 구조적 비교
 int32_t calc_compare(value a, value b);       // int 또는 string (ordinal)
 value  calc_apply(value closure, value arg);  // 내장 고차 함수가 사용자 클로저를 부름
-// 내장 함수 (builtins.c): calc_builtin_length, calc_builtin_substr, ... (18개)
+// 내장 함수 (builtins.c): calc_builtin_length, calc_builtin_substr, ... (21개)
 extern const char calc_name_some[], calc_name_none[];   // option 의 생성자 이름
 extern const calc_unit calc_none;                       // None 값
 ```

@@ -21,3 +21,6 @@ src/**/Parser.fsi
 
 # Claude Code 로컬 설정
 .claude/
+
+# ReadyToRun publish 결과 (docs/build.md)
+dist/

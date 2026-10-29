@@ -1,7 +1,8 @@
 // Calc 표준 라이브러리 (prelude). 프로그램 앞에 붙어서 인터프리터, 타입 추론, 컴파일러가 같은 정의를 씀.
 // 프로그램이 쓰는 정의만 붙음 (Prelude.wrap). 프로그램에서 같은 이름을 정의하면 그쪽이 가림.
 // 긴 리스트에서도 스택이 자라지 않도록 모두 tail recursion: map, filter 는 거꾸로 모은 뒤 reverse.
-// 여러 타입을 받는 함수(length, sort), 문자열과 출력 함수, raise 는 내장 함수.
+// 여러 타입을 받는 함수(length, sort), 리스트를 만들기만 하는 함수(reverse, append, range),
+// 문자열과 출력 함수, raise 는 내장 함수.
 
 // 예외: Failure msg 를 raise. 받는 try 가 없으면 "Error: <msg>" (내장 함수의 오류와 같은 모양)
 let failwith msg = raise (Failure msg)
@@ -47,25 +48,7 @@ let rec fold f acc xs =
     | [] -> acc
     | x :: rest -> fold f (f acc x) rest
 
-// reverse, append, map, filter 는 fold 에 함수를 넘기지 않고 직접 재귀: 원소마다 함수 값을 부르지 않음
-let reverse xs =
-    let rec go xs acc =
-        match xs with
-        | [] -> acc
-        | x :: rest -> go rest (x :: acc)
-    go xs []
-
-// xs 를 거꾸로 한 뒤 하나씩 ys 앞에 붙임
-let append xs ys =
-    let rec go xs acc =
-        match xs with
-        | [] -> acc
-        | x :: rest -> go rest (x :: acc)
-    go (reverse xs) ys
-
-let range (a: int) (b: int) : int list =
-    let rec go i acc = if i < a then acc else go (i - 1) (i :: acc)
-    go b []
+// map, filter 는 fold 에 함수를 넘기지 않고 직접 재귀: 원소마다 함수 값을 부르지 않음
 
 // + 는 int 와 string 을 받으므로 표기로 int 를 정함
 let sum (xs: int list) : int = fold (fun acc x -> acc + x) 0 xs

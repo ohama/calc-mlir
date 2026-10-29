@@ -346,6 +346,9 @@ let private initialContext (st: State) =
             "toInt", tString ^-> tInt
             // 리스트
             "sort", listOf intOrString ^-> listOf intOrString
+            "reverse", listOf a ^-> listOf a
+            "append", listOf a ^-> listOf a ^-> listOf a
+            "range", tInt ^-> tInt ^-> listOf tInt
             // option
             "None", optionOf a
             "Some", a ^-> optionOf a

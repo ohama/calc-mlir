@@ -5,6 +5,10 @@
 ```bash
 dotnet build src/Calc -c Release
 python3 benchmarks/run.py
+
+# ReadyToRun 으로 publish 한 calc 로 재기 (docs/build.md 의 "빠른 실행 파일")
+dotnet publish src/Calc -c Release -r osx-arm64 -p:PublishReadyToRun=true -o dist
+CALC=dist/calc python3 benchmarks/run.py
 ```
 
 예제 설명, 결과, 분석은 [docs/benchmarks.md](../docs/benchmarks.md)에 있습니다.

@@ -244,8 +244,11 @@ let builtinArity =
         "join", 2
         "toString", 1
         "toInt", 1
-        // 리스트
+        // 리스트. reverse, append, range 는 원소마다 해석하면 느려서 내장 함수 (같은 일을 prelude 로 쓰면 msort 가 1.7배)
         "sort", 1
+        "reverse", 1
+        "append", 2
+        "range", 2
         // 출력: 문자열은 따옴표 없이, 나머지는 formatValue (toString 과 같음)
         "print", 1
         "println", 1
@@ -339,6 +342,19 @@ let callBuiltin name args =
         | first :: _ -> xs |> List.iter (fun x -> compareValues first x |> ignore)
         | [] -> ()
         VList (List.sortWith compareValues xs)
+    | "reverse", [ xs ] -> VList (List.rev (list' xs))
+    | "append", [ xs; ys ] ->
+        let xs = list' xs
+        VList (List.append xs (list' ys))
+    // a 부터 b 까지. b < a 면 []. 끝값이 int 의 끝이어도 멈추도록 64비트로 셈
+    | "range", [ a; b ] ->
+        let a, b = int64 (int' a), int64 (int' b)
+        let mutable items = []
+        let mutable i = b
+        while i >= a do
+            items <- VInt (int i) :: items
+            i <- i - 1L
+        VList items
     | "raise", [ v ] -> raise (CalcException v)
     | "ref", [ v ] -> VRef (ref v)
     | "!", [ VRef cell ] -> cell.Value
