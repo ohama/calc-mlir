@@ -392,6 +392,22 @@ let private runCases =
           "let rec build n acc = if n = 0 then acc else build (n - 1) ((n, [n], Some n) :: acc) in let xs = build 300000 [] in println (length xs, head xs, nth xs 299999)", ("(300000, (1, [1], Some 1), (300000, [300000], Some 300000))\n", "", 0), "작은 블록 여러 크기, 수거가 일어나도 값이 그대로"
           "let t = (1, 2, 3, 4, 5, 6, 7, 8, 9) in let a = Array.create 20 7 in println (t, Array.length a, a.[19], [||] = [||])", ("((1, 2, 3, 4, 5, 6, 7, 8, 9), 20, 7, true)\n", "", 0), "8 단어보다 큰 블록과 빈 배열"
         ]
+      "생성자 값 (튜플 인자를 편 블록)",
+        [
+          "type t = A | B of int * string | C of int in println [A; B (1, \"x\"); C 2]", ("[A; B (1, \"x\"); C 2]\n", "", 0), "출력"
+          "type t = B of int * int in let f = B in println (map f [(1, 2); (3, 4)])", ("[B (1, 2); B (3, 4)]\n", "", 0), "생성자를 함수 값으로 (실행 중에 폄)"
+          "type t = B of int * int in match B (1, 2) with B p -> println p", ("(1, 2)\n", "", 0), "인자 전체를 묶으면 튜플을 다시 만듦"
+          "type t = B of int * int in let mk p = B p in println (mk (5, 6), mk (5, 6) = B (5, 6), B (1, 2) = B (1, 3))", ("(B (5, 6), true, false)\n", "", 0), "튜플 변수를 인자로, ="
+          "println (Some (1, 2), Some (Some (1, [2])), (match Some (1, 2) with Some (a, b) -> a + b | None -> 0))", ("(Some (1, 2), Some (Some (1, [2])), 3)\n", "", 0), "option 의 튜플 인자"
+          "println (match Some (3, 4) with Some ((1, x) | (3, x)) -> x | _ -> 0)", ("4\n", "", 0), "or 패턴"
+          "exception E of int * string in try raise (E (1, \"a\")) with E (n, s) -> println (n, s)", ("(1, \"a\")\n", "", 0), "예외의 튜플 인자"
+          "exception E of int * string in raise (E (2, \"b\"))", ("", "Error: exception E (2, \"b\")\n", 1), "잡히지 않은 예외의 출력"
+          "type 'a tree = Leaf | Node of 'a tree * 'a * 'a tree in let rec ins x t = match t with Leaf -> Node (Leaf, x, Leaf) | Node (l, v, r) -> if x < v then Node (ins x l, v, r) else Node (l, v, ins x r) in println (fold (fun t x -> ins x t) Leaf [3; 1; 2])", ("Node (Node (Leaf, 1, Node (Leaf, 2, Leaf)), 3, Leaf)\n", "", 0), "다형 트리"
+          "type t = P of (int * int) in match P (1, 2) with P (a, b) -> println (a * 10 + b)", ("12\n", "", 0), "of (int * int)"
+          "type t = W of int list * (int * int) in match W ([1], (2, 3)) with W (xs, (a, b)) -> println (xs, a, b)", ("([1], 2, 3)\n", "", 0), "안쪽 튜플은 그대로 블록"
+          "println (Some 1, Some (-1), [Some (1, 2); None])", ("(Some 1, Some (-1), [Some (1, 2); None])\n", "", 0), "인자 하나와 펴진 블록이 섞임"
+          "type t = B of int * int in let g = fun p -> match p with B (x, _) -> x in println (g (B (7, 8)))", ("7\n", "", 0), "_ 원소"
+        ]
       "리스트 내장 함수",
         [
           "println (reverse [1; 2; 3], append [1] [2; 3], append [] [4], range 3 5, range 5 3)", ("([3; 2; 1], [1; 2; 3], [4], [3; 4; 5], [])\n", "", 0), "reverse, append, range"

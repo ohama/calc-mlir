@@ -38,6 +38,8 @@ let tupleHeader (count: int) = kindTuple ||| (int64 count <<< 8)
 
 /// 생성자 값 블록 = [헤더, 생성자 이름(C 문자열 포인터), 인자(있으면)]
 let dataHeader (hasPayload: bool) = kindData ||| ((if hasPayload then 2L else 1L) <<< 8)
+/// 인자가 튜플이면 원소를 블록에 바로 넣음: [헤더, 이름, 원소...] (블록 하나). 단어 수가 2 면 튜플이 아닌 인자 하나
+let flatDataHeader (fields: int) = kindData ||| (int64 (1 + fields) <<< 8)
 
 /// ref 블록 = [헤더, 내용]. := 가 내용 칸을 바꿈
 let refHeader = kindRef ||| (1L <<< 8)
@@ -293,6 +295,42 @@ let private emitBlock (fb: FunctionBuilder) (header: int64) (values: string list
     fb.Emit(sprintf "%s = llvm.ptrtoint %s : !llvm.ptr to i64" r block)
     r
 
+/// 배열 a 의 i 번째 원소의 주소. 범위 밖이면 calc_error_index (인터프리터와 같은 문장)
+let private emitElementAddress (fb: FunctionBuilder) (a: string) (i: string) =
+    let index = fb.Fresh()
+    fb.Emit(sprintf "%s = arith.extsi %s : i32 to i64" index (untagInt fb i))
+    let size = emitOp fb "arith.shrui" (emitField fb a 0) (emitConst fb "i64" 8L) "i64"
+    // 음수는 부호 없는 수로 보면 size 보다 큼
+    let outside = fb.Fresh()
+    fb.Emit(sprintf "%s = arith.cmpi uge, %s, %s : i64" outside index size)
+    emitErrorIf fb outside "calc_error_index"
+    let block = fb.Fresh()
+    fb.Emit(sprintf "%s = llvm.inttoptr %s : i64 to !llvm.ptr" block a)
+    let slot = emitOp fb "arith.addi" index (emitConst fb "i64" 1L) "i64"
+    let r = fb.Fresh()
+    fb.Emit(sprintf "%s = llvm.getelementptr %s[%s] : (!llvm.ptr, i64) -> !llvm.ptr, i64" r block slot)
+    r
+
+/// 값 v 가 튜플 블록인가 (하위 3비트가 0 이고 헤더의 종류가 튜플)
+let private emitIsTuple (fb: FunctionBuilder) (v: string) =
+    let tag = emitOp fb "arith.andi" v (emitConst fb "i64" 7L) "i64"
+    let isBlock = fb.Fresh()
+    fb.Emit(sprintf "%s = arith.cmpi eq, %s, %s : i64" isBlock tag (emitConst fb "i64" 0L))
+    emitIfOf fb "i1" isBlock
+        (fun () ->
+            let kind = emitOp fb "arith.andi" (emitField fb v 0) (emitConst fb "i64" 0xffL) "i64"
+            let c = fb.Fresh()
+            fb.Emit(sprintf "%s = arith.cmpi eq, %s, %s : i64" c kind (emitConst fb "i64" kindTuple))
+            c)
+        (fun () -> emitConst fb "i1" 0L)
+
+/// 생성자 값 v 의 인자 하나: 단어 수가 2 면 칸 2, 아니면 원소들로 튜플을 다시 만듦
+let private emitPayload (fb: FunctionBuilder) (v: string) =
+    let words = emitOp fb "arith.shrui" (emitField fb v 0) (emitConst fb "i64" 8L) "i64"
+    let single = fb.Fresh()
+    fb.Emit(sprintf "%s = arith.cmpi eq, %s, %s : i64" single words (emitConst fb "i64" 2L))
+    emitIfOf fb "i64" single (fun () -> emitField fb v 2) (fun () -> emitCall fb "calc_data_payload" [ v ] "i64")
+
 /// 어떤 값과도 일치하는 패턴 (검사 코드가 필요 없음)
 let rec private irrefutable (pattern: Ast.Pattern) =
     match pattern with
@@ -427,6 +465,19 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
     // 가변 참조: 블록 하나를 만들고, 1번 칸을 읽고 씀
     | CBuiltin ("ref", [ v ]) -> emitBlock fb refHeader [ emitExpr fb env v ]
     | CBuiltin ("!", [ r ]) -> emitField fb (emitExpr fb env r) 1
+    // 배열: 범위를 확인하고 바로 읽고 씀 ([헤더, 원소...], 원소 수는 헤더의 단어 수). 인자는 왼쪽부터
+    | CBuiltin (".[]", [ a; i ]) ->
+        let av = emitExpr fb env a
+        let iv = emitExpr fb env i
+        let r = fb.Fresh()
+        fb.Emit(sprintf "%s = llvm.load %s : !llvm.ptr -> i64" r (emitElementAddress fb av iv))
+        r
+    | CBuiltin (".[]<-", [ a; i; v ]) ->
+        let av = emitExpr fb env a
+        let iv = emitExpr fb env i
+        let vv = emitExpr fb env v
+        fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" vv (emitElementAddress fb av iv))
+        emitConst fb "i64" unitValue
     | CBuiltin (":=", [ r; v ]) ->
         let rv = emitExpr fb env r
         let vv = emitExpr fb env v
@@ -443,9 +494,16 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
         emitBlock fb (recordHeader values.Length) (namesAddress :: List.map (emitExpr fb env) values)
     | CField (e, index) -> emitField fb (emitExpr fb env e) (2 + index)
     | CData (ctor, None) -> emitGlobalAddress fb (fb.Strings.CtorUnit ctor)
+    | CData (ctor, Some (CTuple items)) ->
+        let values = items |> List.map (emitExpr fb env)
+        emitBlock fb (flatDataHeader values.Length) (emitGlobalAddress fb (fb.Strings.CtorName ctor) :: values)
+    // 인자가 실행 중에 튜플이면 (생성자를 함수 값으로 쓸 때 등) 런타임이 원소를 펴서 넣음
     | CData (ctor, Some payload) ->
         let pv = emitExpr fb env payload
-        emitBlock fb (dataHeader true) [ emitGlobalAddress fb (fb.Strings.CtorName ctor); pv ]
+        let name = emitGlobalAddress fb (fb.Strings.CtorName ctor)
+        emitIf fb (emitIsTuple fb pv)
+            (fun () -> emitCall fb "calc_make_data" [ name; pv ] "i64")
+            (fun () -> emitBlock fb (dataHeader true) [ name; pv ])
     | CMatch (scrutinee, cases) ->
         let v = emitExpr fb env scrutinee
         // 분기마다 "조건(패턴 검사, 가드) → 본문, 아니면 나머지 분기". 조건을 i1 로 먼저 만들어서 나머지 분기는 한 번만 생성
@@ -564,8 +622,11 @@ and private emitTest (fb: FunctionBuilder) (pattern: Ast.Pattern) (v: string) : 
         let isCtor = fb.Fresh()
         fb.Emit(sprintf "%s = arith.cmpi eq, %s, %s : i64" isCtor (emitField fb v 1) (emitGlobalAddress fb (fb.Strings.CtorName ctor)))
         match argPattern with
+        // 튜플 인자는 블록에 펴져 있음: i 번째 원소가 칸 2 + i
+        | Some (Ast.PTuple items) when not (irrefutable (Ast.PTuple items)) ->
+            emitIfOf fb "i1" isCtor (fun () -> fields (items |> List.mapi (fun i p -> p, 2 + i))) (fun () -> emitConst fb "i1" 0L)
         | Some p when not (irrefutable p) ->
-            emitIfOf fb "i1" isCtor (fun () -> emitTest fb p (emitField fb v 2)) (fun () -> emitConst fb "i1" 0L)
+            emitIfOf fb "i1" isCtor (fun () -> emitTest fb p (emitPayload fb v)) (fun () -> emitConst fb "i1" 0L)
         | _ -> isCtor
 
 /// 일치한 패턴이 묶는 이름을 환경에 넣음. 이름을 묶는 하위 패턴의 필드만 읽음 (인터프리터처럼 앞에서부터, 같은 이름은 뒤가 이김)
@@ -577,7 +638,8 @@ and private emitBind (fb: FunctionBuilder) (pattern: Ast.Pattern) (v: string) (e
     | Ast.PCons (h, t) -> List.fold field env [ h, 1; t, 2 ]
     | Ast.PTuple items -> List.fold field env (items |> List.mapi (fun i p -> p, 1 + i))
     | Ast.PRecord items -> List.fold field env (items |> List.mapi (fun i (_, p) -> p, 2 + i))
-    | Ast.PCtor (_, Some p) -> field env (p, 2)
+    | Ast.PCtor (_, Some (Ast.PTuple items)) -> List.fold field env (items |> List.mapi (fun i p -> p, 2 + i))
+    | Ast.PCtor (_, Some p) -> if Set.isEmpty (patternVars p) then env else emitBind fb p (emitPayload fb v) env
     // 맞은 쪽(왼쪽부터)에서 이름마다 값을 꺼냄: 이름 수만큼 값을 내는 scf.if
     | Ast.POr (a, b) ->
         let names = patternVars a |> Set.toList
@@ -664,6 +726,9 @@ let private declarations =
       "llvm.func @calc_alloc(i64) -> !llvm.ptr"
       "llvm.func @calc_print_result(i64)"
       "llvm.func @calc_error_divide_by_zero()"
+      "llvm.func @calc_error_index()"
+      "llvm.func @calc_make_data(i64, i64) -> i64"
+      "llvm.func @calc_data_payload(i64) -> i64"
       "llvm.func @calc_error_overflow()"
       "llvm.func @calc_add(i64, i64) -> i64"
       "llvm.func @calc_eq(i64, i64) -> i64"

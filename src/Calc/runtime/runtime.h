@@ -24,7 +24,8 @@ typedef int64_t value;
 #define CALC_KIND_STRING 2  /* [헤더, 길이, UTF-16 코드 단위...] (.NET string 과 같은 단위) */
 #define CALC_KIND_CONS 3    /* [헤더, head, tail]. tail 은 cons 또는 CALC_NIL */
 #define CALC_KIND_TUPLE 4   /* [헤더, 원소...]. 원소 수 = 헤더의 단어 수 */
-#define CALC_KIND_DATA 5    /* [헤더, 생성자 이름(const char *), 인자(단어 수가 2일 때)]. 인자 없는 생성자는 전역 상수 블록 */
+#define CALC_KIND_DATA 5    /* [헤더, 생성자 이름(const char *), 인자...]. 단어 수 2: 튜플이 아닌 인자 하나, 3 이상: 튜플 인자의 원소를
+                               편 것 (Node (l, v, r) 은 블록 하나). 인자 없는 생성자는 전역 상수 블록 */
 #define CALC_KIND_REF 6     /* [헤더, 내용]. r := v 가 내용을 바꿈 */
 #define CALC_KIND_RECORD 7  /* [헤더, 필드 이름들("x;y", const char *), 값...]. 값은 선언한 순서 */
 #define CALC_KIND_ARRAY 8   /* [헤더, 원소...]. 원소 수 = 헤더의 단어 수. a.[i] <- v 가 원소를 바꿈 */
@@ -56,6 +57,7 @@ void calc_print_result(value v);
 
 /* 인터프리터(.NET 예외 메시지)와 같은 문장으로 끝냄 */
 void calc_error_divide_by_zero(void);
+void calc_error_index(void);
 void calc_error_overflow(void);
 
 /* 타입이 여럿인 연산: 태그를 보고 동작을 고름 (docs/compiler-design.md D6) */
@@ -92,6 +94,8 @@ value calc_bool(int b);
 calc_string *calc_new_string(int64_t length); /* 내용은 부르는 쪽이 채움 */
 value calc_string_of(const uint16_t *units, int64_t length);
 value calc_cons(value head, value tail);
+value calc_make_data(value name, value tuple);
+value calc_data_payload(value v);
 int64_t calc_list_length(value list);
 
 /* UTF-16 버퍼 (malloc). formatValue 결과를 모으고, 출력할 때 UTF-8 로 바꿈 */

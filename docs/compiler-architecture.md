@@ -422,6 +422,11 @@ llvm.mlir.global internal constant @ctor_1("None\00") {addr_space = 0 : i32}
 - **`type` 선언:** 코드를 만들지 않습니다. `Lower`가 생성자 범위(이름 → 인자 유무)를 넓히는 데만 씁니다. `Some`과 `None`은 처음부터 범위에 있습니다.
 - **인자 있는 생성자를 값으로 쓸 때(`let f = Some in f 3`):** `Lower`가 클로저 `fun x -> Some x`로 바꿉니다. 그래서 `<fun>`으로 출력되고, `=`로 비교하면 인터프리터와 같은 타입 오류가 납니다.
 - **출력:** 인터프리터와 같은 괄호 규칙을 씁니다. `Some (Some 1)`, `Some (-1)`, `Some None`, `Rect (2, 3)`입니다.
+- **튜플 인자는 블록에 폄 (0.50.0부터):** `Rect (2, 3)`, `Node (l, v, r)`은 튜플 블록을 따로 만들지 않고 `[헤더 5 | (1 + n << 8), 이름, 원소...]` 블록 하나가 됩니다. 단어 수가 2면 튜플이 아닌 인자 하나, 3 이상이면 편 원소들이라서 컴파일러가 생성자의 인자 수를 알 필요가 없습니다.
+  - **패턴:** `Node (l, v, r)`은 칸 2, 3, 4를 바로 읽습니다. 위의 `Some x`처럼 인자 전체를 묶는 패턴은 단어 수가 2인지 먼저 보고, 아니면 `calc_data_payload`로 튜플을 다시 만듭니다.
+  - **만들 때:** 인자가 튜플 리터럴이 아니면(위의 `Some 2`, 또는 `map Node xs`), 만들 때 인자가 튜플 블록인지 확인합니다. 튜플이면 `calc_make_data`가 폅니다.
+  - **확인 코드:** 위의 MLIR에는 이 두 확인 코드가 더 붙습니다. 상수이면 clang이 접습니다.
+  - **효과:** BST 20만(`benchmarks/bst.calc`)이 0.131초에서 0.064초가 되었습니다. 트리 노드 하나가 블록 둘에서 하나가 되어 GC가 표시할 객체가 반이 되었습니다.
 
 ## 10. 내장 함수 (단계 7)
 
@@ -599,7 +604,7 @@ type p = { x: int; y: int } in let a = { y = 2; x = 1 } in { a with x = a.y }
 - **내장 함수:** 리터럴 `[| … |]`, `a.[i]`, `a.[i] <- v`는 파서가 사용자가 쓸 수 없는 이름의 내장 함수(`[||]`, `.[]`, `.[]<-`) 호출로 만듭니다. 그래서 Lower와 Codegen은 보통 내장 함수처럼 다룹니다.
   - 이 이름은 C 이름이 될 수 없으므로 Codegen의 `builtinSymbol`이 런타임 함수 이름으로 바꿉니다. `Array.length`처럼 점이 있는 이름은 `calc_builtin_Array_length`가 됩니다.
   - 리터럴과 `Array.ofList`는 같은 C 함수(`calc_builtin_Array_ofList`)라서 선언은 한 번만 냅니다.
-- **범위 검사:** `calc_builtin_array_get`/`set`이 검사하고, 범위 밖이면 인터프리터와 같은 문장(`Index was outside the bounds of the array.`)으로 끝냅니다.
+- **범위 검사:** 생성 코드가 원소 수(헤더의 단어 수)와 비교하고, 범위 밖이면 `calc_error_index`가 인터프리터와 같은 문장(`Index was outside the bounds of the array.`)으로 끝냅니다. 음수 인덱스는 부호 없는 수로 비교해 한 번에 잡습니다. 값으로 쓴 `.[]`는 런타임 함수 `calc_builtin_array_get`/`set`을 부릅니다.
 - **prelude:** `Array.init`, `map`, `iter`, `fold`, `copy`는 prelude의 `module Array`에 Calc 코드로 있습니다. prelude도 파싱한 뒤 `Modules.resolve`로 펼치므로 `Array.init` 같은 이름의 선언이 됩니다. 프로그램의 `Array.init`은 선언하지 않은 모듈의 이름이라 바뀌지 않고, `Prelude.wrap`이 이름으로 찾아 붙입니다.
 - **GC:** Boehm GC는 세대별이 아니므로 원소를 바꿀 때 write barrier가 필요 없습니다(mutable reference와 같음).
 
