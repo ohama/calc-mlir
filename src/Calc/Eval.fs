@@ -401,6 +401,11 @@ let recordTypeOf (env: Env) (field: string) =
 // 프로그램이 느림 (100만 개 리스트 예제 5.3초). 실행 중 오류와 그 시점은 Map 으로 평가하던 때와 같음
 
 /// 함수 하나(또는 최상위 식)의 칸 수. 본문을 다 훑은 뒤 정해지고, 호출할 때 그만큼 만듦
+/// 비교와 논리 연산의 결과는 이 둘을 같이 씀 (결과마다 새로 만들지 않음)
+let private vTrue = VBool true
+let private vFalse = VBool false
+let inline private ofBool b = if b then vTrue else vFalse
+
 type private SlotCount() =
     member val Count = 0 with get, set
     member this.Next() =
@@ -496,11 +501,12 @@ let rec private compilePattern (scope: Scope) (pattern: Pattern) : Value -> Fram
         fun v fr ->
             match v with
             | VTuple vs when List.length vs = items.Length ->
-                let vs = Array.ofList vs
+                let mutable rest = vs
                 let mutable ok = true
                 let mutable i = 0
                 while ok && i < items.Length do
-                    ok <- items[i] vs[i] fr
+                    ok <- items[i] rest.Head fr
+                    rest <- rest.Tail
                     i <- i + 1
                 ok
             | _ -> false
@@ -626,6 +632,9 @@ and private compile (scope: Scope) (expr: Expr) : Code =
         let head, args = spine expr []
         let f = c head
         let args = args |> List.map c |> Array.ofList
+        match saturatedBuiltin scope head args with
+        | Some code -> code
+        | None ->
         match args with
         | [| arg |] ->
             fun fr ->
@@ -668,12 +677,12 @@ and private compile (scope: Scope) (expr: Expr) : Code =
         let a, b = c a, c b
         fun fr ->
             let x = a fr
-            VBool (valueEquals x (b fr))
+            ofBool (valueEquals x (b fr))
     | NotEqual (a, b) ->
         let a, b = c a, c b
         fun fr ->
             let x = a fr
-            VBool (not (valueEquals x (b fr)))
+            ofBool (not (valueEquals x (b fr)))
     | Less (a, b) -> comparison scope a b (fun n -> n < 0)
     | Greater (a, b) -> comparison scope a b (fun n -> n > 0)
     | LessEqual (a, b) -> comparison scope a b (fun n -> n <= 0)
@@ -681,13 +690,13 @@ and private compile (scope: Scope) (expr: Expr) : Code =
     // && 와 || 는 단락 평가: 왼쪽으로 결과가 정해지면 오른쪽은 평가하지 않음
     | And (a, b) ->
         let a, b = c a, c b
-        fun fr -> VBool (asBool a fr && asBool b fr)
+        fun fr -> ofBool (asBool a fr && asBool b fr)
     | Or (a, b) ->
         let a, b = c a, c b
-        fun fr -> VBool (asBool a fr || asBool b fr)
+        fun fr -> ofBool (asBool a fr || asBool b fr)
     | Not e ->
         let e = c e
-        fun fr -> VBool (not (asBool e fr))
+        fun fr -> ofBool (not (asBool e fr))
     | Nil -> fun _ -> VList []
     | Cons (head, tail) ->
         let head, tail = c head, c tail
@@ -773,6 +782,58 @@ and private compile (scope: Scope) (expr: Expr) : Code =
                     let _, _, handler = arms[i]
                     handler fr
 
+/// 인자가 다 모인 내장 함수 호출 (f 가 범위의 변수가 아니라 내장 함수일 때): VBuiltin 에 인자를 하나씩 모으지 않고
+/// 인자를 모두 평가한 뒤 바로 부름. partial application 은 부수 효과가 없으므로 계산 순서와 오류는 같음.
+/// !, :=, a.[i], a.[i] <- v 는 이름으로 고르는 callBuiltin 도 거치지 않음
+and private saturatedBuiltin (scope: Scope) (head: Expr) (args: Code[]) : Code option =
+    let builtin =
+        match head with
+        | Var name when not (scope.Vars.ContainsKey name) ->
+            match Map.tryFind name scope.Consts with
+            | Some (VBuiltin (n, [])) when not (Format.kinds.Contains n) && builtinArity[n] = args.Length -> Some n
+            | _ -> None
+        | _ -> None
+    let outOfBounds () = failwith "Index was outside the bounds of the array."
+    match builtin, args with
+    | None, _ -> None
+    | Some "!", [| r |] ->
+        Some (fun fr ->
+            match r fr with
+            | VRef cell -> cell.Value
+            | v -> typeError "ref" v)
+    | Some ":=", [| r; x |] ->
+        Some (fun fr ->
+            let r = r fr
+            let x = x fr
+            match r with
+            | VRef cell ->
+                cell.Value <- x
+                VUnit
+            | v -> typeError "ref" v)
+    | Some ".[]", [| a; i |] ->
+        Some (fun fr ->
+            let a = a fr
+            let i = i fr
+            match a with
+            | VArray items ->
+                let i = int' i
+                if i < 0 || i >= items.Length then outOfBounds ()
+                items[i]
+            | v -> typeError "array" v)
+    | Some ".[]<-", [| a; i; x |] ->
+        Some (fun fr ->
+            let a = a fr
+            let i = i fr
+            let x = x fr
+            match a with
+            | VArray items ->
+                let i = int' i
+                if i < 0 || i >= items.Length then outOfBounds ()
+                items[i] <- x
+                VUnit
+            | v -> typeError "array" v)
+    | Some name, _ -> Some (fun fr -> callBuiltin name [ for a in args -> a fr ])
+
 /// - * / % : int 끼리
 and private intOp (scope: Scope) a b (op: int -> int -> int) : Code =
     let a, b = compile scope a, compile scope b
@@ -785,7 +846,7 @@ and private comparison (scope: Scope) a b (test: int -> bool) : Code =
     let a, b = compile scope a, compile scope b
     fun fr ->
         match a fr with
-        | VInt _ | VString _ as x -> VBool (test (compareValues x (b fr)))
+        | VInt _ | VString _ as x -> ofBool (test (compareValues x (b fr)))
         | v -> typeError "int or string" v
 
 and apply fv av =

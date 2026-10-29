@@ -493,6 +493,27 @@ let tests =
             }
         ]
 
+        // 인자가 다 모인 내장 함수 호출은 VBuiltin 에 인자를 모으지 않고 바로 부름 (Eval.saturatedBuiltin)
+        testList "인자가 다 모인 내장 함수 호출" [
+            test "인자는 왼쪽부터 모두 계산한 뒤 부름" {
+                Expect.equal (calc "let r = ref 0 in let a = [| 0; 0 |] in a.[(r := 1; 0)] <- !r; a") (VArray [| VInt 1; VInt 0 |]) ""
+                use writer = new System.IO.StringWriter()
+                Expect.throwsC
+                    (fun () -> evalWithOutput writer (Program.load "1 := (print \"x\"; 2)") |> ignore)
+                    (fun ex -> Expect.equal (writer.ToString(), ex.Message) ("x", "Type error: expected ref but got int") "오른쪽을 계산한 뒤 오류")
+            }
+            test "같은 이름의 변수가 내장 함수를 가리면 그 변수를 부름" {
+                Expect.equal (calc "let length x = 0 in length \"abc\"") (VInt 0) ""
+                Expect.equal (calc "let l = length in l \"ab\"") (VInt 2) "변수에 넣은 내장 함수"
+                Expect.equal (calc "let f = substr \"hello\" 1 in f 3") (VString "ell") "partial application"
+            }
+            expectError "let a = [| 1; 2 |] in a.[2]" "Index was outside the bounds of the array."
+            expectError "let a = [| 1 |] in a.[-1] <- 0" "Index was outside the bounds of the array."
+            expectError "1.[0]" "Type error: expected array but got int"
+            expectError "[| 1 |].[true]" "Type error: expected int but got bool"
+            expectError "5.[0] <- 1" "Type error: expected array but got int"
+        ]
+
         testList "unit, ;, print" [
             let run (input: string) =
                 use writer = new System.IO.StringWriter()
