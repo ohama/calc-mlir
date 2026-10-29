@@ -42,11 +42,13 @@ Result: 10
 | 타입 표기 | `(xs : int list)`, `let f (x: int) : string = ...`, `fun (x: 'a) -> x` |
 | 예외 | `exception Neg of int`, `raise (Neg 1)`, `failwith "bad"`, `try e with Failure m -> m \| Not_found -> ""` |
 | 문자열 포맷 | `sprintf "%d is %s" 42 "x"`, `printfn "%A" xs`, `$"Hello {name}, {age + 1}"` |
+| mutable reference, 반복문 | `let r = ref 0 in r := !r + 1`, `incr r`, `for i = 1 to 10 do … done`, `while !n > 0 do … done` |
 
-- 우선순위 (낮은 것부터): `;` < `let`/`if`/`fun`/`match` < `||` < `&&` < 비교, `|>`, `>>` < `::` < `+ -` < `* / %` < 단항 `-`, `not` < 함수 호출
+- 우선순위 (낮은 것부터): `;` < `let`/`if`/`fun`/`match` < `:=` < `||` < `&&` < 비교, `|>`, `>>` < `::` < `+ -` < `* / %` < 단항 `-`, `not` < 함수 호출 < `!`
 - **타입 추론** (Hindley–Milner, let-polymorphism): 실행 전에 타입을 추론하고, 맞지 않으면 평가하지 않습니다. 타입 오류는 문제가 된 식의 위치(줄, 열, `^`)를 가리킵니다.
   - `fun f x -> f (f x)`는 `('a -> 'a) -> 'a -> 'a`, `[1; true]`는 `Type mismatch: expected int list but got bool list`
   - `--no-typecheck`를 주면 추론을 건너뛰고 평가 중에 동적으로 검사합니다.
+  - value restriction: 함수 호출의 결과는 generalize하지 않습니다(`let r = ref []`의 타입은 처음 쓴 곳이 정함, OCaml·SML과 같음).
 - **빠진 `match` 분기 경고**: 모든 값을 덮지 못하는 `match`와 `let` 패턴에 대해, 덮지 못하는 값의 예와 위치를 경고합니다(OCaml Warning 8, F# FS0025와 같음).
 - **쓰이지 않는 분기 경고**: 앞의 분기들이 이미 덮어서 절대 선택되지 않는 분기를 경고합니다(OCaml Warning 11, F# FS0026과 같음).
 - **버리는 값 경고**: `e1; e2`의 `e1`이 `unit`이 아니면 경고합니다(F# FS0020과 같음).
@@ -81,7 +83,7 @@ dotnet run --project src/Calc
 ```
 
 ```
-calc 0.34.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
+calc 0.35.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
 # let add a b = a + b;;
 val add : int -> int -> int = <fun>
 # add 1 2;;

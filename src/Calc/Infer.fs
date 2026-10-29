@@ -69,6 +69,7 @@ let private tString = TyCon ("string", [])
 let private tUnit = TyCon ("unit", [])
 let private listOf t = TyCon ("list", [ t ])
 let private optionOf t = TyCon ("option", [ t ])
+let private refOf t = TyCon ("ref", [ t ])
 /// 예외 값의 타입. exception 선언마다 생성자가 늘어나는 열린 타입이라 빠진 분기 검사는 int 처럼 _ 가 필요함
 let private tExn = TyCon ("exn", [])
 
@@ -120,8 +121,8 @@ let private baseName (name: string) =
     | -1 -> name
     | i -> name.Substring(0, i)
 
-/// 여러 타입을 같은 변수 이름 규칙('a, 'b, ...)으로 출력 (오류 메시지에서 두 타입을 함께 보여 줄 때)
-let typesToString (types: Type list) =
+/// 여러 타입을 같은 변수 이름 규칙('a, 'b, ...)으로 출력. weak 의 변수는 '_a 처럼 (weakTypeToString)
+let private typesToStringWith (weak: HashSet<int>) (types: Type list) =
     // 같이 출력하는 타입 안에 이름이 같은 서로 다른 타입이 있으면 OCaml 처럼 t/2 로 구분
     let uniques = List<string>()
     let rec collect t =
@@ -146,7 +147,7 @@ let typesToString (types: Type list) =
         | true, n -> n
         | _ ->
             let i = names.Count
-            let n = "'" + string (char (int 'a' + i % 26)) + (if i >= 26 then string (i / 26) else "")
+            let n = (if weak.Contains v.Id then "'_" else "'") + string (char (int 'a' + i % 26)) + (if i >= 26 then string (i / 26) else "")
             names.[v.Id] <- n
             n
     // prec: 0 = 화살표 자리, 1 = 화살표 왼쪽, 2 = 튜플 원소·타입 인자 자리
@@ -161,7 +162,25 @@ let typesToString (types: Type list) =
         | TyFun (a, b) -> paren (prec >= 1) (go 1 a + " -> " + go 0 b)
     types |> List.map (go 0)
 
+/// 여러 타입을 같은 변수 이름 규칙('a, 'b, ...)으로 출력 (오류 메시지에서 두 타입을 함께 보여 줄 때)
+let typesToString (types: Type list) = typesToStringWith (HashSet()) types
+
 let typeToString t = typesToString [ t ] |> List.head
+
+/// t 를 출력하되 other 에도 나오는 변수는 '_a 처럼 (OCaml 의 '_weak1). REPL 이 같은 이름을 두 번 쓴 식의 두 타입을 줌:
+/// generalize 한 변수는 쓸 때마다 새 변수가 되고, value restriction 으로 generalize 하지 않은 변수만 같은 변수로 남음
+let weakTypeToString (t: Type) (other: Type) =
+    let ids = HashSet<int>()
+    let rec collect t =
+        match prune t with
+        | TyVar v -> ids.Add v.Id |> ignore
+        | TyCon (_, args) -> List.iter collect args
+        | TyFun (a, b) ->
+            collect a
+            collect b
+        | TyTuple items -> List.iter collect items
+    collect other
+    typesToStringWith ids [ t ] |> List.head
 
 // ---- 단일화 ----
 
@@ -247,6 +266,32 @@ let rec private generalize (st: State) t =
         generalize st b
     | TyTuple items -> List.iter (generalize st) items
 
+/// value restriction: 계산하지 않고 값이 정해지는 식(non-expansive)만 generalize 함 (SML 과 같은 규칙).
+/// 함수 호출은 ref 를 만들 수 있으므로 generalize 하지 않음: let r = ref [] 의 'a 를 ∀ 로 만들면
+/// r := [1]; r := ["a"] 가 통과함 (soundness 가 깨짐)
+let rec private isNonExpansive expr =
+    match expr with
+    | Number _ | Bool _ | Str _ | Unit | Var _ | Lambda _ | Ctor _ | Nil | Printf _ -> true
+    | Annot (e, _) -> isNonExpansive e
+    | Tuple items -> List.forall isNonExpansive items
+    | Cons (h, t) -> isNonExpansive h && isNonExpansive t
+    // 생성자에 값을 준 것 (Some [], Node (l, x, r)). 생성자는 칸을 만들 뿐 내용을 바꿀 수 없음
+    | App (Ctor _, arg) -> isNonExpansive arg
+    | Let (_, value, body) -> isNonExpansive value && isNonExpansive body
+    | LetRec (_, _, _, inExpr) | LetRecs (_, inExpr) -> isNonExpansive inExpr
+    | _ -> false
+
+/// generalize 하지 않는 값의 변수를 지금 단계로 내림. 바깥 let 이 generalize 할 수 있는지는 바깥 let 이 정함
+/// (fun () -> let r = ref [] in r 는 부를 때마다 새 ref 라서 'a 를 ∀ 로 만들어도 됨)
+let rec private restrict (st: State) t =
+    match prune t with
+    | TyVar v -> v.Level <- min v.Level st.Level
+    | TyCon (_, args) -> List.iter (restrict st) args
+    | TyFun (a, b) ->
+        restrict st a
+        restrict st b
+    | TyTuple items -> List.iter (restrict st) items
+
 /// ∀ 변수마다 새 변수를 만들어 복사 (허용 목록도 복사)
 let private instantiate (st: State) t =
     let fresh = Dictionary<int, Type>()
@@ -302,13 +347,17 @@ let private initialContext (st: State) =
             "raise", tExn ^-> a
             "Failure", tString ^-> tExn
             "Not_found", tExn
+            // 가변 참조 (파서가 !r 과 r := v 를 이 이름의 호출로 만듦)
+            "ref", a ^-> refOf a
+            "!", refOf a ^-> a
+            ":=", refOf a ^-> a ^-> tUnit
             // map, fold, head, failwith 같은 함수는 prelude.calc 에서 추론한 타입
         ]
         // 포맷: 타입이 포맷 문자열 리터럴에 따라 정해지므로 보통 타입이 없음 (표시만, App 에서 Format 으로 다룸).
         // 위 리스트 안에 for 를 쓰면 앞 항목이 버려지므로(FS0020) 따로 더함
         |> fun vars -> Format.kinds |> Seq.fold (fun acc kind -> Map.add kind (formatMarker kind) acc) vars
     let types =
-        Map.ofList [ "int", ("int", 0); "bool", ("bool", 0); "string", ("string", 0); "unit", ("unit", 0); "list", ("list", 1); "option", ("option", 1); "exn", ("exn", 0) ]
+        Map.ofList [ "int", ("int", 0); "bool", ("bool", 0); "string", ("string", 0); "unit", ("unit", 0); "list", ("list", 1); "option", ("option", 1); "exn", ("exn", 0); "ref", ("ref", 1) ]
     { Vars = vars; Types = types }
 
 // ---- 추론 ----
@@ -456,7 +505,7 @@ and private inferNode (st: State) (ctx: Context) expr : Type =
             | _ -> false
         let tv = withTypeVarScope st (not isParam) (fun () -> infer' value)
         st.Level <- st.Level - 1
-        generalize st tv
+        if isNonExpansive value then generalize st tv else restrict st tv
         infer st (withVars [ name, tv ] ctx) body
     | LetRec (name, param, body, inExpr) ->
         st.Level <- st.Level + 1
@@ -554,7 +603,7 @@ and private inferNode (st: State) (ctx: Context) expr : Type =
         expect value tp tv
         st.Level <- st.Level - 1
         st.Matches.Add((tv, [ pattern, false, None ], Errors.positionOf expr, "let"))
-        binds |> List.iter (snd >> generalize st)
+        binds |> List.iter (snd >> if isNonExpansive value then generalize st else restrict st)
         infer st (withVars binds ctx) body
     | TypeDecl (name, typeParams, ctors, body) ->
         match typeParams |> List.countBy id |> List.tryFind (fun (_, n) -> n > 1) with

@@ -691,6 +691,48 @@ let tests =
             Expect.equal (parse "sprintf \"%d\" 1") (App (App (Var "sprintf", Str "%d"), Number 1)) "sprintf 는 파서에서 보통 함수 호출"
         }
 
+        testList "가변 참조와 반복문" [
+            test "!r 은 함수 호출보다 강하고, := 는 이항 연산자 가운데 가장 약하고 오른쪽 결합" {
+                let deref e = App (Var "!", e)
+                let assign r v = App (App (Var ":=", r), v)
+                Expect.equal (parse "f !r") (App (Var "f", deref (Var "r"))) ""
+                Expect.equal (parse "!f x") (App (deref (Var "f"), Var "x")) "OCaml 과 같음"
+                Expect.equal (parse "!!r") (deref (deref (Var "r"))) ""
+                Expect.equal (parse "r := !r + 1") (assign (Var "r") (Add (deref (Var "r"), Number 1))) ""
+                Expect.equal (parse "r := a || b") (assign (Var "r") (Or (Var "a", Var "b"))) ""
+                Expect.equal (parse "a := b := c") (assign (Var "a") (assign (Var "b") (Var "c"))) ""
+                Expect.equal (parse "r := 1; r := 2") (Seq (assign (Var "r") (Number 1), assign (Var "r") (Number 2))) ""
+                Expect.equal (parse "if c then r := 1 else r := 2") (If (Var "c", assign (Var "r") (Number 1), assign (Var "r") (Number 2))) ""
+                Expect.equal (parse "fun x -> r := x") (Lambda ("x", assign (Var "r") (Var "x"))) ""
+                Expect.equal (parse "ref 1") (App (Var "ref", Number 1)) "ref 는 보통 함수"
+            }
+            test "while 은 tail recursion 으로" {
+                Expect.equal
+                    (parse "while c do a; b done")
+                    (LetRec ("$while", "$u", If (Var "c", Seq (Seq (Var "a", Var "b"), App (Var "$while", Unit)), Unit), App (Var "$while", Unit)))
+                    ""
+            }
+            test "for 는 시작과 끝을 한 번씩 계산하고, 끝에 닿으면 멈추는 tail recursion 으로" {
+                let loop before step startsBefore =
+                    Let ("$start", Annot (Var "a", TName ("int", [])),
+                         Let ("$stop", Annot (Var "b", TName ("int", [])),
+                              LetRec ("$for", "i",
+                                      Seq (Var "body", If (before (Var "i", Var "$stop"), App (Var "$for", step (Var "i", Number 1)), Unit)),
+                                      If (startsBefore (Var "$start", Var "$stop"), App (Var "$for", Var "$start"), Unit))))
+                Expect.equal (parse "for i = a to b do body done") (loop Less Add LessEqual) ""
+                Expect.equal (parse "for i = a downto b do body done") (loop Greater Subtract GreaterEqual) ""
+            }
+            test "반복문 뒤에 ; 와 연산자" {
+                Expect.equal (parse "while c do a done; b") (Seq (parse "while c do a done", Var "b")) ""
+                Expect.equal (parse "for i = 1 to 2 do while c do a done done") (parse "for i = 1 to 2 do (while c do a done) done") "중첩"
+            }
+            test "오류" {
+                expectParseError "while c do a" "parse error: unexpected end of input" 1 13
+                expectParseError "for i = 1 do a done" "parse error: unexpected 'do'" 1 11
+                expectParseError "let do = 1 in do" "parse error: unexpected 'do'" 1 5
+            }
+        ]
+
         testList "예외" [
             test "try ... with 는 match 처럼 분기 목록, 본문은 ; 까지" {
                 Expect.equal

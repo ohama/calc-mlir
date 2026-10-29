@@ -19,6 +19,7 @@ let kindString = 2L
 let kindCons = 3L
 let kindTuple = 4L
 let kindData = 5L
+let kindRef = 6L
 
 /// [] 는 즉시값 5
 let nilValue = 5L
@@ -36,6 +37,12 @@ let tupleHeader (count: int) = kindTuple ||| (int64 count <<< 8)
 
 /// 생성자 값 블록 = [헤더, 생성자 이름(C 문자열 포인터), 인자(있으면)]
 let dataHeader (hasPayload: bool) = kindData ||| ((if hasPayload then 2L else 1L) <<< 8)
+
+/// ref 블록 = [헤더, 내용]. := 가 내용 칸을 바꿈
+let refHeader = kindRef ||| (1L <<< 8)
+
+/// 런타임 함수 없이 Codegen 이 바로 만드는 내장 함수 (가변 참조)
+let private inlineBuiltins = set [ "ref"; "!"; ":=" ]
 
 /// 문자열 블록 = [헤더, 길이, UTF-16 코드 단위...]. 뒤따르는 단어 수는 길이 칸 + 코드 단위를 담는 단어
 let stringHeader (length: int) = kindString ||| (int64 (1 + (2 * length + 7) / 8) <<< 8)
@@ -381,6 +388,16 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
     | CTuple items ->
         let values = items |> List.map (emitExpr fb env)
         emitBlock fb (tupleHeader values.Length) values
+    // 가변 참조: 블록 하나를 만들고, 1번 칸을 읽고 씀
+    | CBuiltin ("ref", [ v ]) -> emitBlock fb refHeader [ emitExpr fb env v ]
+    | CBuiltin ("!", [ r ]) -> emitField fb (emitExpr fb env r) 1
+    | CBuiltin (":=", [ r; v ]) ->
+        let rv = emitExpr fb env r
+        let vv = emitExpr fb env v
+        let block = fb.Fresh()
+        fb.Emit(sprintf "%s = llvm.inttoptr %s : i64 to !llvm.ptr" block rv)
+        fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" vv (emitSlot fb block 1))
+        emitConst fb "i64" unitValue
     | CBuiltin (name, args) ->
         let values = args |> List.map (emitExpr fb env)
         emitCall fb ("calc_builtin_" + name) values "i64"
@@ -619,9 +636,9 @@ let private declarations =
       "  llvm.return %r : i64"
       "}"
       // 내장 함수: runtime/builtins.c
-      // sprintf, printf, printfn 은 Lower 가 Calc 코드로 펼치므로 런타임 함수가 없음
+      // sprintf, printf, printfn 은 Lower 가 Calc 코드로 펼치고, ref, !, := 는 Codegen 이 바로 만드므로 런타임 함수가 없음
       for KeyValue (name, arity) in Eval.builtinArity do
-          if not (Format.kinds.Contains name) then
+          if not (Format.kinds.Contains name || inlineBuiltins.Contains name) then
               sprintf "llvm.func @calc_builtin_%s(%s) -> i64" name (List.replicate arity "i64" |> String.concat ", ")
       // option 의 이름과 None 값은 런타임에 하나 (runtime.h)
       "llvm.mlir.global external constant @calc_name_some() {addr_space = 0 : i32} : !llvm.array<5 x i8>"

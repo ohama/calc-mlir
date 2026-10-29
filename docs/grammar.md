@@ -23,7 +23,7 @@ Calc 언어의 어휘 구조, 구문, 의미를 정리한 문서입니다. 구�
 | `CTOR` | `[A-Z][A-Za-z0-9_]*`. 생성자 (타입 이름으로도 쓸 수 있음) | `Some`, `None`, `Node`, `X2` |
 | `TYVAR` | `'` 다음에 `IDENT` 모양. type variable | `'a`, `'key` |
 | `UNDERSCORE` | `_` (와일드카드 패턴, 쓰지 않는 인자) | |
-| 키워드 | `let` `rec` `and` `in` `fun` `function` `if` `then` `else` `true` `false` `not` `match` `with` `when` `type` `of` `try` `exception` | |
+| 키워드 | `let` `rec` `and` `in` `fun` `function` `if` `then` `else` `true` `false` `not` `match` `with` `when` `type` `of` `try` `exception` `while` `for` `to` `downto` `do` `done` | |
 | `EQUALS` | `=` | |
 | `ARROW` | `->` | |
 | `NOTEQUAL` `LESS` `GREATER` `LESSEQUAL` `GREATEREQUAL` | `<>` `<` `>` `<=` `>=` | |
@@ -36,6 +36,7 @@ Calc 언어의 어휘 구조, 구문, 의미를 정리한 문서입니다. 구�
 | `COMMA` | `,` | |
 | `CONS` | `::` | |
 | `COLON` | `:` (타입 표기) | |
+| `COLONEQUALS` `BANG` | `:=` `!` (mutable reference) | |
 | `BAR` | `\|` | |
 | `EOF` | 입력의 끝 | |
 
@@ -119,6 +120,8 @@ expr    = app
         | "try" seq "with" [ "|" ] arm { "|" arm }       (* 예외 받기 *)
         | "exception" ctorDecl "in" seq                  (* 예외 선언 *)
         | "type" [ typeParams ] typeName "=" [ "|" ] ctorDecl { "|" ctorDecl } "in" seq
+        | "while" seq "do" seq "done"                    (* 반복문 *)
+        | "for" IDENT "=" seq ( "to" | "downto" ) seq "do" seq "done"
         | expr binop expr
         | "-" expr
         | "not" expr ;
@@ -131,6 +134,7 @@ atom    = NUMBER
         | INTERP                                         (* $"a{e}b" *)
         | "true" | "false"
         | IDENT
+        | "!" atom                                       (* mutable reference 읽기 *)
         | CTOR                                           (* 생성자 *)
         | "(" ")"                                        (* unit *)
         | "(" expr ")"
@@ -173,7 +177,8 @@ binop   = "+" | "-" | "*" | "/" | "%"
         | "|>" | ">>"
         | "=" | "<>" | "<" | ">" | "<=" | ">="
         | "::"
-        | "&&" | "||" ;
+        | "&&" | "||"
+        | ":=" ;                                         (* mutable reference 쓰기 *)
 ```
 
 `expr binop expr` 부분은 그대로 두면 모호합니다. 아래의 우선순위와 associativity로 모호함을 해소합니다. 함수 호출은 우선순위 선언 대신 `app`/`atom` 계층으로 표현했습니다. `Parser.fsy`도 같은 방식으로 작성되어 있으며 shift/reduce 충돌이 없습니다.
@@ -186,16 +191,18 @@ binop   = "+" | "-" | "*" | "/" | "%"
 |---|---|---|---|
 | 0 (가장 낮음) | `;` (순서 실행) | 오른쪽 | `%nonassoc BELOWSEMI`, `%nonassoc SEMI` (`seq = expr [";" seq]` 규칙) |
 | 1 | `let ... in`, `if ... then ... else`, `fun ... ->`, `match` 분기 `->` | — | `%nonassoc IN ELSE ARROW` |
-| 2 | `\|\|` | 왼쪽 | `%left OR` |
-| 3 | `&&` | 왼쪽 | `%left AND` |
-| 4 | `=` `<>` `<` `>` `<=` `>=`, `\|>`, `>>` | 왼쪽 | `%left EQUALS NOTEQUAL ... PIPE COMPOSE` |
-| 5 | `::` | **오른쪽** | `%right CONS` |
-| 6 | `+` `-` (이항) | 왼쪽 | `%left PLUS MINUS` |
-| 7 | `*` `/` `%` | 왼쪽 | `%left STAR SLASH PERCENT` |
-| 8 | `-` (단항), `not` | — | `%nonassoc UMINUS NOT` |
-| 9 (가장 높음) | 함수 호출 `f x` | 왼쪽 | 문법 계층 (`app = app atom`) |
+| 2 | `:=` | **오른쪽** | `%right COLONEQUALS` |
+| 3 | `\|\|` | 왼쪽 | `%left OR` |
+| 4 | `&&` | 왼쪽 | `%left AND` |
+| 5 | `=` `<>` `<` `>` `<=` `>=`, `\|>`, `>>` | 왼쪽 | `%left EQUALS NOTEQUAL ... PIPE COMPOSE` |
+| 6 | `::` | **오른쪽** | `%right CONS` |
+| 7 | `+` `-` (이항) | 왼쪽 | `%left PLUS MINUS` |
+| 8 | `*` `/` `%` | 왼쪽 | `%left STAR SLASH PERCENT` |
+| 9 | `-` (단항), `not` | — | `%nonassoc UMINUS NOT` |
+| 10 | 함수 호출 `f x` | 왼쪽 | 문법 계층 (`app = app atom`) |
+| 11 (가장 높음) | `!` (mutable reference 읽기) | — | 문법 계층 (`atom = "!" atom`) |
 
-F#과 같은 순서입니다. 함수 호출은 어떤 연산자보다 먼저 묶입니다.
+F#과 같은 순서입니다. 함수 호출은 `!`를 뺀 어떤 연산자보다 먼저 묶입니다. `:=`와 `!`의 자리는 OCaml과 같습니다.
 
 예:
 
@@ -219,6 +226,10 @@ F#과 같은 순서입니다. 함수 호출은 어떤 연산자보다 먼저 묶
 | `-f x` | `-(f x)` |
 | `f (g x)` | `f`에 `g x`의 결과를 전달 |
 | `f -1` | `f - 1` (뺄셈). 음수를 넘기려면 `f (-1)` |
+| `r := !r + 1` | `r := ((!r) + 1)` |
+| `f !r` | `f (!r)` |
+| `!f x` | `(!f) x` |
+| `a := b := c` | `a := (b := c)` |
 
 > **F#과 다른 점:** F#은 `f -1`처럼 `-` 뒤에 공백이 없으면 함수 호출로 해석하는 특별 규칙이 있습니다. 이 언어는 공백을 구분하지 않으므로 `f -1`은 항상 뺄셈입니다.
 
@@ -433,6 +444,47 @@ let safeDiv a b = try Some (a / (if b = 0 then failwith "div" else b)) with Fail
   - 같은 이름의 예외는 프로그램에 하나만 선언할 수 있습니다(`Exception E is already defined`). 실행 중에는 예외를 이름으로 구분하기 때문입니다. OCaml은 선언마다 다른 예외입니다.
   - `try`의 분기 본문은 tail position이 아닙니다.
 
+### mutable reference와 반복문
+
+OCaml, F#과 같은 mutable reference와 반복문입니다.
+
+```
+let total = ref 0 in
+for i = 1 to 10 do total := !total + i done;
+!total                                                   (* 55 *)
+
+let counter () = let n = ref 0 in fun () -> incr n; !n in
+let next = counter () in (next (), next ())              (* (1, 2) *)
+
+let n = ref 10 in while !n > 0 do n := !n - 3 done; !n   (* -2 *)
+```
+
+- **`ref v : 'a ref`:** 내용이 `v`인 새 칸입니다. 내장 함수이므로 보통 이름처럼 가릴 수 있습니다(`let ref x = x in …`).
+- **`!r : 'a`:** 지금 내용입니다. 함수 호출보다 강하게 묶입니다(`f !r == f (!r)`).
+- **`r := v : unit`:** 내용을 `v`로 바꿉니다. 이항 연산자 가운데 가장 약하고 오른쪽 결합입니다(`r := !r + 1`). `r`을 먼저 계산합니다.
+- **`incr r`, `decr r`:** `r := !r + 1`, `r := !r - 1`. prelude에 있습니다(`int ref -> unit`).
+- **같은 칸:** `let b = a in b := 2`는 `a`의 내용도 바꿉니다. 칸은 복사하지 않습니다.
+- **`=`:** 내용을 비교합니다(OCaml, F#과 같음). `ref 1 = ref 1`은 `true`입니다. 같은 칸인지 비교하는 연산자는 없습니다. `<`와 `sort`에는 쓸 수 없습니다.
+- **출력:** `ref 1`, `ref [1; 2]`, `ref (Some 1)`처럼 다시 입력할 수 있는 모양입니다.
+- **패턴:** ref를 분해하는 패턴은 없습니다. `!r`로 꺼냅니다.
+- **`while c do e done : unit`:** `c`가 `true`인 동안 `e`를 되풀이합니다.
+- **`for i = a to b do e done : unit`:** `i`를 `a`부터 `b`까지 1씩 늘리며 `e`를 계산합니다. `downto`는 1씩 줄입니다. `a > b`(`downto`면 `a < b`)면 한 번도 계산하지 않습니다.
+  - `a`와 `b`는 `int`이고, 반복 전에 `a`, `b` 순서로 한 번씩 계산합니다(OCaml과 같음). 본문에서 `b`에 쓴 ref를 바꿔도 반복 횟수는 그대로입니다.
+  - `i`는 본문 안에서만 보이는 보통 이름입니다(바꿀 수 없음).
+  - `b`가 `int`의 최댓값이어도 끝납니다. 마지막 반복 뒤에는 `i + 1`을 계산하지 않습니다.
+- **본문의 타입:** `unit`이 아니면 `e1; e2`와 같은 버리는 값 경고를 합니다(F#과 같음).
+- **구현:** 파서가 반복문을 tail recursion으로 바꿉니다. 그래서 인터프리터와 컴파일러 모두 반복 횟수와 상관없이 스택이 자라지 않습니다.
+
+  ```
+  while c do e done  ==  let rec $while $u = if c then (e; $while ()) else () in $while ()
+  for i = a to b do e done
+    ==  let $start = (a : int) in let $stop = (b : int) in
+        let rec $for i = e; if i < $stop then $for (i + 1) else () in
+        if $start <= $stop then $for $start else ()
+  ```
+
+- **OCaml, F#과 다른 점:** `break`, `continue`는 없습니다. F#의 `let mutable`과 `<-`, OCaml의 `{ contents = … }` 패턴과 `r.contents`도 없습니다.
+
 ### `option`
 
 `'a option = None | Some of 'a`는 선언 없이 쓸 수 있습니다(처음 환경에 들어 있음). 값이 없을 수 있는 결과에 씁니다.
@@ -493,6 +545,9 @@ defaultValue 0 (tryFind (fun x -> x > 10) xs)
 | `try e with p -> e1` | `Try (e, [ (p, None, e1) ])` |
 | `exception E of t in e` | `ExceptionDecl ("E", Some t, e)` |
 | `$"a{x}"` | `App (Printf ("sprintf", "a%A"), Var "x")` (`sprintf "…"`는 파서에서 보통 `App`) |
+| `!r` / `r := v` | `App (Var "!", r)` / `App (App (Var ":=", r), v)` (사용자가 쓸 수 없는 이름의 내장 함수) |
+| `while c do e done` | `LetRec ("$while", "$u", If (c, Seq (e, App (Var "$while", Unit)), Unit), App (Var "$while", Unit))` |
+| `for i = a to b do e done` | `Let ("$start", Annot (a, int), Let ("$stop", Annot (b, int), LetRec ("$for", "i", …)))` (위 "mutable reference와 반복문") |
 | `let (a, b) = e1 in e2` | `LetPattern (PTuple [PVar "a"; PVar "b"], e1, e2)` |
 | 패턴 `x` / `_` / `1` / `true` / `"s"` | `PVar "x"` / `PWildcard` / `PInt 1` / `PBool true` / `PString "s"` |
 | 패턴 `[]` / `p1 :: p2` / `[p1; p2]` | `PNil` / `PCons (p1, p2)` / `PCons (p1, PCons (p2, PNil))` |
@@ -525,6 +580,7 @@ type Value =
     | VData of typeName * ctor * payload option           // None, Some 1, Rect (2, 3)
     | VConstructor of typeName * ctor * fields            // 인자 있는 생성자 자체 (Some, Rect)
     | VUnit                                               // ()
+    | VRef of Value ref                                   // ref v (:= 가 내용을 바꿈)
 ```
 
 평가는 환경 `env : Map<string, Value>`에서 이루어집니다. 처음 환경에는 내장 함수만 들어 있습니다(아래 "내장 함수" 참고). 결과는 `formatValue`로 출력합니다.
@@ -536,6 +592,7 @@ type Value =
 - 리스트는 `[1; 2; 3]`, `[]`, `[[true]; []]`처럼 출력됩니다.
 - 튜플은 `(1, "a", [true])`처럼 출력됩니다.
 - 생성자 값은 `None`, `Some 1`, `Node (Leaf, 1, Leaf)`처럼 출력됩니다. 다시 입력해도 같은 값이 되도록 인자가 있는 생성자 값과 음수는 괄호로 감쌉니다(`Some (Some 1)`, `Some (-1)`).
+- mutable reference는 `ref 1`, `ref (Some 1)`, `ref (ref 1)`처럼 생성자와 같은 규칙으로 출력됩니다.
 
 타입 오류 메시지에서 문자열의 타입 이름은 `string`, 함수는 `function`, 리스트는 `list`, 튜플은 `tuple`입니다. 생성자 값의 타입 이름은 선언한 타입 이름입니다(`option`, `shape`).
 
@@ -635,8 +692,9 @@ type Value =
 함수는 두 종류로 구현되어 있지만, 쓰는 쪽에서는 구분되지 않습니다.
 
 - **포맷 함수(3개):** `sprintf`, `printf`, `printfn`. 포맷 문자열 리터럴이 함수의 타입을 정합니다. 아래 "문자열 포맷"을 참고하세요.
-- **prelude(Calc로 쓴 함수, 20개):** `failwith`, `fst`, `snd`, `ignore`, `isEmpty`, `head`, `tail`, `nth`, `fold`, `reverse`, `append`, `range`, `sum`, `map`, `filter`, `exists`, `forall`, `tryHead`, `tryFind`, `defaultValue`. 아래 "prelude"를 참고하세요.
+- **prelude(Calc로 쓴 함수, 22개):** `failwith`, `fst`, `snd`, `ignore`, `isEmpty`, `head`, `tail`, `nth`, `fold`, `reverse`, `append`, `range`, `sum`, `map`, `filter`, `exists`, `forall`, `incr`, `decr`, `tryHead`, `tryFind`, `defaultValue`. 아래 "prelude"를 참고하세요.
 - **내장 함수(F#과 C로 구현, 18개):** 나머지. 문자열 함수, `toString`, `toInt`, 여러 타입을 받는 `length`, `sort`, 출력 함수, `raise`입니다.
+- **mutable reference(3개):** `ref`, `!`, `:=`. 인터프리터는 F#으로, 컴파일러는 C 런타임 함수 없이 블록 하나를 읽고 쓰는 코드로 만듭니다. `!`와 `:=`는 연산자로만 씁니다.
 
 #### 문자열
 
@@ -740,6 +798,15 @@ type Value =
 - **가리기:** `let sprintf x = …`처럼 같은 이름을 정의하면 보통 함수입니다.
 - **F#과 다른 점:** `%A`는 문자열에 따옴표를 붙이지 않습니다(F#은 `"a"`). 폭, 정렬, `%f` 같은 지정자는 아직 없습니다.
 
+#### mutable reference
+
+| 함수 | 타입 | 예 | 결과 |
+|---|---|---|---|
+| `ref v` | 값 → ref | `ref 0` | 내용이 `0`인 새 칸 |
+| `!r` | ref → 값 | `!(ref 3)` | `3` |
+| `r := v` | ref → 값 → unit | `r := 5` | `()` (내용을 바꿈) |
+| `incr r`, `decr r` | int ref → unit | `incr c` | `c := !c + 1` |
+
 #### 예외
 
 | 함수 | 타입 | 예 | 결과 |
@@ -752,7 +819,7 @@ type Value =
 
 #### prelude (Calc로 쓴 표준 라이브러리)
 
-위 표의 함수 중 20개는 [`src/Calc/prelude.calc`](../src/Calc/prelude.calc)에 Calc 코드로 있습니다. 인터프리터, 타입 추론, 컴파일러가 모두 이 정의 하나를 씁니다.
+위 표의 함수 중 22개는 [`src/Calc/prelude.calc`](../src/Calc/prelude.calc)에 Calc 코드로 있습니다. 인터프리터, 타입 추론, 컴파일러가 모두 이 정의 하나를 씁니다.
 
 ```
 let rec fold f acc xs = match xs with [] -> acc | x :: rest -> fold f (f acc x) rest
@@ -834,6 +901,7 @@ Error: parse error: unexpected '+' (line 1, column 5)
 | `t1 * t2 * ...` | `(1, "a")`: `int * string` |
 | `t1 -> t2` | `fun x -> x + 1`: `int -> int` |
 | `t option` | `Some 1`: `int option` |
+| `t ref` | `ref 1`: `int ref` |
 | `exn` | `Not_found`, `Failure "x"`: `exn` |
 | 사용자 타입 | `Node (Leaf, 1, Leaf)`: `int tree` |
 | type variable | `'a`, `'b`, ... |
@@ -844,6 +912,11 @@ Error: parse error: unexpected '+' (line 1, column 5)
 
 - **let-polymorphism**: `let`으로 묶은 값의 타입은 generalization됩니다. `let id x = x in (id 1, id true)`는 `int * bool`입니다.
   - generalization은 `let`, `let rec`, `let (a, b) = ...`에서만 합니다. 함수 인자는 monomorphic입니다. `fun f -> (f 1, f true)`는 오류입니다.
+- **value restriction:** `let`의 값이 계산 없이 정해지는 식(non-expansive)일 때만 generalize합니다. 함수(`fun`, `let f x = …`), 리터럴, 변수, 생성자와 그 인자(`Some []`), 튜플과 리스트, 그런 값만 쓴 `let … in`이 여기에 들어갑니다. 함수 호출이 들어간 식은 generalize하지 않습니다(SML과 같은 규칙).
+  - 이유: `let r = ref [] in r := [1]; r := ["a"]`에서 `r : 'a list ref`를 generalize하면 서로 다른 타입의 리스트를 넣고 꺼낼 수 있습니다(soundness가 깨짐). 이 프로그램은 `expected int list but got string list`입니다.
+  - generalize하지 않은 type variable은 처음 쓴 곳이 타입을 정합니다(OCaml의 `'_weak1`). REPL은 이것을 `'_a`로 보여 줍니다(`val r : '_a list ref = ref []`).
+  - partial application의 결과도 generalize하지 않습니다. `let f = id id in (f 1, f "a")`는 오류입니다(OCaml, F#과 같음). `let f x = id id x`처럼 인자를 적으면 됩니다.
+  - 함수 본문 안의 `ref`는 부를 때마다 새 칸이므로 `let mk () = ref [] in …`의 `mk : unit -> 'a list ref`는 generalize합니다.
 - **`if`**: 조건은 `bool`, 두 분기는 같은 타입입니다.
 - **리스트**: 원소는 모두 같은 타입입니다. `[1; true]`는 오류입니다.
 - **`=`, `<>`**: 같은 타입이면 어떤 타입이든 됩니다(`'a -> 'a -> bool`). OCaml과 같습니다. 함수끼리 비교하면 타입 검사는 통과하지만 실행 중에 오류가 납니다.
@@ -885,6 +958,8 @@ Error: parse error: unexpected '+' (line 1, column 5)
 | `tryHead`, `tryFind` | `'a list -> 'a option`, `('a -> bool) -> 'a list -> 'a option` |
 | `defaultValue` | `'a -> 'a option -> 'a` |
 | `Some`, `None` | `'a -> 'a option`, `'a option` |
+| `ref`, `!`, `:=` | `'a -> 'a ref`, `'a ref -> 'a`, `'a ref -> 'a -> unit` |
+| `incr`, `decr` | `int ref -> unit` |
 | `raise`, `failwith` | `exn -> 'a`, `string -> 'a` |
 | `sprintf`, `printf`, `printfn` | 포맷 문자열이 정함 (`sprintf "%d %s"`: `int -> string -> string`) |
 | `Failure`, `Not_found` | `string -> exn`, `exn` |

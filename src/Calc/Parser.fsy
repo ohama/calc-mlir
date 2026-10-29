@@ -50,6 +50,26 @@ let makePipe (x: Expr) (f: Expr) = Let("$pipe", x, App(f, Var "$pipe"))
 let makeCompose (f: Expr) (g: Expr) =
     Let("$f", f, Let("$g", g, Lambda("$x", App(Var "$g", App(Var "$f", Var "$x")))))
 
+/// while c do body done  ==  let rec $while $u = if c then (body; $while ()) else () in $while ()
+/// (tail recursion 이라 인터프리터와 컴파일러 모두 스택이 자라지 않음. body 가 unit 이 아니면 e1; e2 와 같은 경고)
+let makeWhile (cond: Expr) (body: Expr) =
+    LetRec("$while", "$u", If(cond, Seq(body, App(Var "$while", Unit)), Unit), App(Var "$while", Unit))
+
+/// for i = a to b do body done  ==
+///   let $start = (a : int) in let $stop = (b : int) in
+///   let rec $for i = body; if i < $stop then $for (i + 1) else () in
+///   if $start <= $stop then $for $start else ()
+/// a, b 는 한 번씩 a 부터 계산 (OCaml 과 같음). 끝에 닿으면 i + 1 을 계산하지 않으므로 b 가 int 의 최댓값이어도 끝남.
+/// downto 는 비교와 증감이 반대
+let makeFor (var: string) (start: Expr) (up: bool) (stop: Expr) (body: Expr) =
+    let tInt = TName("int", [])
+    let before, step = if up then Less, Add else Greater, Subtract
+    let startsBefore = if up then LessEqual(Var "$start", Var "$stop") else GreaterEqual(Var "$start", Var "$stop")
+    let next = If(before(Var var, Var "$stop"), App(Var "$for", step(Var var, Number 1)), Unit)
+    Let("$start", Annot(start, tInt),
+        Let("$stop", Annot(stop, tInt),
+            LetRec("$for", var, Seq(body, next), If(startsBefore, App(Var "$for", Var "$start"), Unit))))
+
 /// 최상위 항목들을 식 하나로: 선언은 뒤 항목 전체를 본문으로 하는 let, 식은 e; (나머지). 끝이 선언이면 ()
 let rec makeProgram (items: TopItem list) : Expr =
     let located (pos: FSharp.Text.Lexing.Position) (e: Expr) =
@@ -137,6 +157,7 @@ let makeTuple (items: TypeExpr list) =
 %token MATCH TRY WITH WHEN BAR CONS LBRACKET RBRACKET SEMI SEMISEMI
 %token COMMA UNDERSCORE
 %token TYPE OF COLON EXCEPTION
+%token WHILE FOR TO DOWNTO DO DONE BANG COLONEQUALS
 %token NOBAR BELOWSEMI
 %token PLUS MINUS STAR SLASH PERCENT PIPE COMPOSE LPAREN RPAREN
 %token EOF
@@ -160,6 +181,8 @@ let makeTuple (items: TypeExpr list) =
 %nonassoc NOBAR
 %nonassoc BAR
 %nonassoc IN ELSE ARROW
+// r := e 는 이항 연산자 가운데 가장 약하고 오른쪽 결합 (OCaml 과 같음): r := !r + 1  ==  r := (!r + 1)
+%right COLONEQUALS
 %left OR
 %left AND
 // |> 와 >> 는 비교와 같은 자리 (F#, OCaml 과 같음): x + 1 |> f == f (x + 1), xs |> map f |> sum 은 왼쪽부터
@@ -242,6 +265,13 @@ Expr:
     | MATCH Expr WITH OptBar Arms   { at parseState (Match($2, $5)) }
     | TRY SeqExpr WITH OptBar Arms  { at parseState (Try($2, $5)) }
     | EXCEPTION CtorDecl IN SeqExpr { at parseState (ExceptionDecl(fst $2, snd $2, $4)) }
+    | WHILE SeqExpr DO SeqExpr DONE { at parseState (makeWhile $2 $4) }
+    | FOR IDENT EQUALS SeqExpr TO SeqExpr DO SeqExpr DONE
+                                    { at parseState (makeFor $2 $4 true $6 $8) }
+    | FOR IDENT EQUALS SeqExpr DOWNTO SeqExpr DO SeqExpr DONE
+                                    { at parseState (makeFor $2 $4 false $6 $8) }
+    // 가변 참조: ref, !, := 는 내장 함수. ! 와 := 는 사용자가 쓸 수 없는 이름이라 가려지지 않음
+    | Expr COLONEQUALS Expr         { at parseState (App(App(Var ":=", $1), $3)) }
     | Expr CONS Expr                { at parseState (Cons($1, $3)) }
     | Expr PLUS Expr                { at parseState (Add($1, $3)) }
     | Expr MINUS Expr               { at parseState (Subtract($1, $3)) }
@@ -275,6 +305,8 @@ Atom:
     | INTERP                        { let format, holes = $1 in
                                       at parseState (List.fold (fun f e -> App (f, e)) (at parseState (Printf ("sprintf", format))) holes) }
     | IDENT                         { at parseState (Var $1) }
+    // !r 는 함수 호출보다 강함: f !r  ==  f (!r) (OCaml 과 같음)
+    | BANG Atom                     { at parseState (App(Var "!", $2)) }
     | CTOR                          { at parseState (Ctor $1) }
     | LPAREN RPAREN                 { Unit }
     | LPAREN Expr RPAREN            { $2 }

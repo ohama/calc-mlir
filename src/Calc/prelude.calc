@@ -35,6 +35,10 @@ let filter f xs = reverse (fold (fun acc x -> if f x then x :: acc else acc) [] 
 let rec exists f xs = match xs with [] -> false | x :: rest -> if f x then true else exists f rest
 let rec forall f xs = match xs with [] -> true | x :: rest -> if f x then forall f rest else false
 
+// 가변 참조 (OCaml, F# 와 같음)
+let incr (r: int ref) = r := !r + 1
+let decr (r: int ref) = r := !r - 1
+
 // option
 let tryHead xs = match xs with [] -> None | x :: _ -> Some x
 let rec tryFind f xs = match xs with [] -> None | x :: rest -> if f x then Some x else tryFind f rest

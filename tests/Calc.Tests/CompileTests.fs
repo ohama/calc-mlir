@@ -365,6 +365,17 @@ let private runCases =
           "let rec f f = f + 1 in f 1", ("2\n", "", 0), "인자가 자기 이름을 가림"
           "let rec even n k = if n = 0 then k true else odd (n - 1) k and odd n k = if n = 0 then k false else even (n - 1) k in even 7 (fun b -> b)", ("false\n", "", 0), "and 그룹"
         ]
+      "가변 참조와 반복문",
+        [
+          "let r = ref 1 in r := !r + 41; !r", ("42\n", "", 0), ""
+          "ref (Some (ref (-1)))", ("ref (Some (ref (-1)))\n", "", 0), "결과 출력은 다시 입력할 수 있는 모양"
+          "println (ref \"a\"); toString (ref [1])", ("ref \"a\"\n\"ref [1]\"\n", "", 0), "toString, println"
+          "(ref [1] = ref [1], ref (1, 2) = ref (1, 3))", ("(true, false)\n", "", 0), "= 는 내용을 비교"
+          "for i = 1 to 3 do print i done; for i = 2 downto 1 do print i done", ("12321", "", 0), ""
+          "let n = ref 0 in while !n < 3 do print !n; n := !n + 1 done", ("012", "", 0), ""
+          "let r = ref (fun x -> x) in r := (fun x -> x * 2); map !r [1; 2]", ("[2; 4]\n", "", 0), "내용이 함수"
+          "map ref [1; 2]", ("[ref 1; ref 2]\n", "", 0), "ref 를 값으로 (클로저)"
+        ]
       "Match failure",
         [
           "match [1] with | [] -> 0", ("", "Error: Match failure: [1]\n", 1), ""
@@ -701,12 +712,14 @@ let tests =
                           // 인자 수가 다른 direct 함수와 클로저 사이 (tailcc 라서 signature 가 달라도 tail call)
                           "let rec one n = if n = 0 then 0 else two n 1 and two n d = if n = 0 then 0 else three (n - d) d 0 and three n d z = one (n + z)"
                           "let rec viaClosure n k = if n = 0 then k 0 else (fun m -> viaClosure m k) (n - 1)"
+                          // while 과 for 는 tail recursion 으로 바뀜
+                          "let loops n = let s = ref 0 in for i = 1 to n do s := !s + 1 done; while !s > 0 do decr s done; !s"
                           ";;"
-                          "(a 10000000, b 10000000, even 10000000, c 10000000 0, loop (fun x -> x + 1) 10000000, one 10000000, viaClosure 10000000 (fun x -> x))" ]
+                          "(a 10000000, b 10000000, even 10000000, c 10000000 0, loop (fun x -> x + 1) 10000000, one 10000000, viaClosure 10000000 (fun x -> x), loops 10000000)" ]
                 // -O2 는 tail 표시가 없어도 대부분 tail call 로 바꾸므로, 최적화하지 않는 -O0 으로 보장을 확인
                 Expect.equal
                     (compileAndRunWith (fun t -> { t with OptimizationLevel = "-O0" }) input)
-                    ("(0, 0, true, 10000000, 1, 0, 0)\n", "", 0)
+                    ("(0, 0, true, 10000000, 1, 0, 0, 0)\n", "", 0)
                     ""
             }
         ]

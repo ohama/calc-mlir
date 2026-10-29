@@ -110,6 +110,18 @@ let tests =
                 [ "match 1 with _ -> 0 | 1 -> 1;;",
                   "Warning: this match case is unused (line 1, column 23)\n  1 | match 1 with _ -> 0 | 1 -> 1;;\n    |                       ^\n- : int = 0\n" ]
         }
+        test "가변 참조: generalize 하지 않은 변수는 '_a, 식 입력이 정한 타입이 다음 입력에 남음 (value restriction)" {
+            expectSession
+                [ "let r = ref [];;", "val r : '_a list ref = ref []\n"
+                  "let id x = x;;", "val id : 'a -> 'a = <fun>\n"
+                  "let g = id id;;", "val g : '_a -> '_a = <fun>\n"
+                  "r := [1];;", "- : unit = ()\n"
+                  "r;;", "- : int list ref = ref [1]\n"
+                  "r := [\"a\"];;", "Error: Type mismatch: expected int list but got string list (line 1, column 6)\n  1 | r := [\"a\"];;\n    |      ^\n"
+                  "let c = ref 0;;", "val c : int ref = ref 0\n"
+                  "for i = 1 to 5 do incr c done; !c;;", "- : int = 5\n"
+                  "1;;", "- : int = 1\n" ]
+        }
         test "입력 하나에 항목 여럿: 차례로 처리" {
             expectSession [ "let a = 1\nlet b = a + 1\n;; a + b;;", "val a : int = 1\nval b : int = 2\n- : int = 3\n" ]
         }

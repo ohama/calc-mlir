@@ -25,6 +25,7 @@ typedef int64_t value;
 #define CALC_KIND_CONS 3    /* [헤더, head, tail]. tail 은 cons 또는 CALC_NIL */
 #define CALC_KIND_TUPLE 4   /* [헤더, 원소...]. 원소 수 = 헤더의 단어 수 */
 #define CALC_KIND_DATA 5    /* [헤더, 생성자 이름(const char *), 인자(단어 수가 2일 때)]. 인자 없는 생성자는 전역 상수 블록 */
+#define CALC_KIND_REF 6     /* [헤더, 내용]. r := v 가 내용을 바꿈 */
 #define CALC_HEADER(v) (((int64_t *)(v))[0])
 #define CALC_KIND(v) (CALC_HEADER(v) & 0xff)
 #define CALC_IS_KIND(v, kind) (CALC_IS_PTR(v) && CALC_KIND(v) == (kind))

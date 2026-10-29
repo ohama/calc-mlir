@@ -4,6 +4,21 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.35.0] - 2026-10-29
+
+### 추가
+- mutable reference와 반복문(OCaml, F#과 같은 문법). 인터프리터, 타입 추론, 컴파일러, REPL 모두 지원합니다.
+  - `ref v : 'a ref`, `!r : 'a`, `r := v : unit`. `!`는 함수 호출보다 강하고, `:=`는 이항 연산자 가운데 가장 약하고 오른쪽 결합입니다(`r := !r + 1`). `=`는 내용을 비교하고, 결과는 `ref 1`, `ref (Some 1)`처럼 출력합니다.
+  - prelude에 `incr`, `decr`를 더했습니다.
+  - `while c do e done`, `for i = a to b do e done`, `downto`. 파서가 tail recursion으로 바꾸므로 반복 횟수와 상관없이 스택이 자라지 않습니다. `for`의 끝값은 한 번만 계산하고, 끝값이 `int`의 최댓값이어도 끝납니다.
+  - 새 키워드: `while`, `for`, `to`, `downto`, `do`, `done`. 이 이름은 더 이상 변수로 쓸 수 없습니다.
+  - 컴파일러는 `ref` 블록(종류 6)을 C 런타임 함수 없이 할당, 읽기, 쓰기로 만듭니다.
+
+### 변경
+- 타입 추론에 value restriction을 넣었습니다. `let`의 값이 함수 호출을 포함하면 generalize하지 않습니다(SML과 같은 규칙). `let r = ref [] in r := [1]; r := ["a"]`가 통과하지 않게 하기 위해서입니다. partial application의 결과(`let f = id id`)도 이제 monomorphic입니다.
+- REPL이 식 입력이 정한 타입을 다음 입력에도 남기고, generalize하지 않은 type variable을 `'_a`로 보여 줍니다(`val r : '_a list ref = ref []`).
+- 테스트 59개 추가 (총 1001개)
+
 ## [0.34.0] - 2026-10-29
 
 ### 변경

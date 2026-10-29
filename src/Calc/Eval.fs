@@ -23,6 +23,8 @@ type Value =
     | VConstructor of typeName: string * ctor: string * fields: int
     /// () : unit
     | VUnit
+    /// ref v: 내용을 바꿀 수 있는 칸 하나 (!r 로 읽고 r := v 로 씀)
+    | VRef of Value ref
 
 type Env = Map<string, Value>
 
@@ -43,12 +45,16 @@ let rec formatValue value =
     | VList items -> "[" + (items |> List.map formatValue |> String.concat "; ") + "]"
     | VTuple items -> "(" + (items |> List.map formatValue |> String.concat ", ") + ")"
     | VData (_, ctor, None) -> ctor
-    | VData (_, ctor, Some payload) ->
-        // 다시 입력했을 때 같은 값이 되도록 괄호: Some (Some 1), Some (-1). 튜플은 이미 괄호가 있음
-        match payload with
-        | VData (_, _, Some _) -> sprintf "%s (%s)" ctor (formatValue payload)
-        | VInt n when n < 0 -> sprintf "%s (%s)" ctor (formatValue payload)
-        | _ -> sprintf "%s %s" ctor (formatValue payload)
+    | VData (_, ctor, Some payload) -> applied ctor payload
+    | VRef cell -> applied "ref" cell.Value
+
+/// 생성자나 ref 를 인자에 적용한 모양. 다시 입력했을 때 같은 값이 되도록 괄호: Some (Some 1), Some (-1), ref (ref 1).
+/// 튜플은 이미 괄호가 있음
+and private applied (name: string) (payload: Value) =
+    match payload with
+    | VData (_, _, Some _) | VRef _ -> sprintf "%s (%s)" name (formatValue payload)
+    | VInt n when n < 0 -> sprintf "%s (%s)" name (formatValue payload)
+    | _ -> sprintf "%s %s" name (formatValue payload)
 
 /// raise 로 던진 Calc 예외 (try ... with 가 받음). 잡히지 않으면 calc 가 Message 를 "Error: ..." 로 출력:
 /// Failure s 는 s (failwith 의 메시지, 내장 함수의 오류와 같은 모양), 나머지는 "exception <값>"
@@ -68,6 +74,7 @@ let typeName value =
     | VList _ -> "list"
     | VTuple _ -> "tuple"
     | VData (typeName, _, _) -> typeName
+    | VRef _ -> "ref"
 
 /// 오류 메시지용: 튜플은 원소 수까지
 let describe value =
@@ -94,12 +101,15 @@ let rec valueEquals a b =
         && (match p1, p2 with
             | Some x, Some y -> valueEquals x y
             | _ -> true)
+    // 내용을 비교 (OCaml, F# 와 같음). 같은 칸인지는 보지 않음
+    | VRef x, VRef y -> valueEquals x.Value y.Value
     | VInt _, v -> typeError "int" v
     | VBool _, v -> typeError "bool" v
     | VString _, v -> typeError "string" v
     | VList _, v -> typeError "list" v
     | VTuple _, v -> typeError "tuple" v
     | VData (t, _, _), v -> typeError t v
+    | VRef _, v -> typeError "ref" v
     | v, _ -> typeError "int, bool, string, list, tuple or data" v
 
 /// 패턴이 값과 일치하면 묶을 이름들을 env 에 추가해서 반환. 타입이 달라도 오류가 아니라 불일치
@@ -191,6 +201,10 @@ let builtinArity =
         "println", 1
         // 예외: exn -> 'a
         "raise", 1
+        // 가변 참조: ref v, !r, r := v (파서가 ! 와 := 를 이 이름의 호출로 만듦)
+        "ref", 1
+        "!", 1
+        ":=", 2
         // 포맷: 첫 인자(포맷 문자열)가 나머지 인자를 정함 (Format.expand 로 만든 함수를 돌려줌)
         "sprintf", 1
         "printf", 1
@@ -268,6 +282,13 @@ let callBuiltin name args =
         | [] -> ()
         VList (List.sortWith compareValues xs)
     | "raise", [ v ] -> raise (CalcException v)
+    | "ref", [ v ] -> VRef (ref v)
+    | "!", [ VRef cell ] -> cell.Value
+    | "!", [ v ] -> typeError "ref" v
+    | ":=", [ VRef cell; v ] ->
+        cell.Value <- v
+        VUnit
+    | ":=", [ v; _ ] -> typeError "ref" v
     | "print", [ v ] ->
         output().Write(display v)
         VUnit

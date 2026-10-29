@@ -37,7 +37,7 @@
 | lowering | `Core.fs`, `Lower.fs` | `Ast.Expr` → Core IR. 연산을 `Prim`으로, `&&`/`||`를 `if`로, closure conversion(함수를 최상위로). 지원하지 않는 기능은 `NotSupported` |
 | 코드 생성 | `Codegen.fs` | Core IR → MLIR 텍스트 |
 | 빌드 | `Toolchain.fs` | 도구 찾기, 임시 폴더에서 외부 도구(`mlir-opt`, `mlir-translate`, `clang`)를 차례로 실행, C 런타임 오브젝트 캐시 |
-| 런타임 | `runtime/runtime.c`, `builtins.c`, `runtime.h`, `unicode.h` | 초기화, 결과 출력, 오류 종료, polymorphic 연산(`calc_add`, `calc_eq`, `calc_compare`), 내장 함수 18개, `calc_apply`, 예외(`calc_try`, `calc_raise`) |
+| 런타임 | `runtime/runtime.c`, `builtins.c`, `runtime.h`, `unicode.h` | 초기화, 결과 출력, 오류 종료, polymorphic 연산(`calc_add`, `calc_eq`, `calc_compare`), 내장 함수 18개, 예외(`calc_try`, `calc_raise`). `calc_apply`는 생성한 모듈이 정의(12장) |
 | 진입 | `Program.fs`의 `compile` | 위 단계를 잇고, 오류를 인터프리터와 같은 형식(`Error: ...`)으로 출력 |
 
 F#으로 하는 일은 MLIR **텍스트**를 만드는 데까지입니다. LLVM을 라이브러리로 링크하지 않고, 텍스트 파일을 외부 도구에 넘깁니다(설계 D1).
@@ -432,8 +432,8 @@ let f = substr "hello" in (f 1 3, map length ["a"; "bb"], toInt "7")
 | 값으로: `map length xs` | `CApply (CApply (CVar "map", <length 클로저>), xs)` | prelude의 `map` 클로저가 `calc_apply`로 `length` 클로저를 부름 |
 | 가린 이름: `let length = ... in length x` | 보통 변수 `CVar` | 클로저 호출 |
 
-- **선언:** 모듈은 18개 내장 함수를 모두 `llvm.func @calc_builtin_<이름>(i64, ...) -> i64`로 선언합니다. 링커가 `builtins.o`와 이름으로 연결합니다.
-- **`calc_apply(f, x)`:** 클로저 1번 칸의 코드 포인터를 `(value *, value) -> value` 함수로 부릅니다. 생성한 코드의 calling convention과 같으므로 C와 MLIR이 서로의 함수를 그대로 부를 수 있습니다.
+- **선언:** 모듈은 18개 내장 함수를 모두 `llvm.func @calc_builtin_<이름>(i64, ...) -> i64`로 선언합니다. 링커가 `builtins.o`와 이름으로 연결합니다. mutable reference의 `ref`, `!`, `:=`는 런타임 함수 없이 Codegen이 바로 만듭니다(16장).
+- **`calc_apply(f, x)`:** 런타임(C)이 클로저를 부를 때 씁니다. 클로저 1번 칸의 코드 포인터를 `tailcc`로 부릅니다. C는 `tailcc` 함수를 부를 수 없으므로 생성한 모듈이 `weak_odr`로 정의합니다(12장).
 - **option:** 생성 코드는 `Some`/`None`의 이름 전역을 따로 만들지 않고, 런타임의 `calc_name_some`, `calc_none`을 외부 전역으로 선언해서 씁니다(`llvm.mlir.global external constant`). 0.29.0까지는 런타임의 `tryHead`, `tryFind`도 `Some`을 만들어서 패턴 검사의 포인터 비교가 맞으려면 이름이 한 곳에 있어야 했습니다. 지금은 option을 만드는 내장 함수가 없지만, 선언 없이 모든 프로그램에 있는 타입이라 그대로 런타임에 둡니다.
 
 ## 11. prelude (Calc로 쓴 표준 라이브러리)
@@ -553,6 +553,26 @@ let rec go n acc = …
 - **다시 묶으면 빠짐:** `let`, 함수 인자, 패턴이 같은 이름을 묶으면 `Known`에서 뺍니다(`Lower.bind`). `let f a b = … in fun f -> f 1 2`의 안쪽 `f`는 인자이므로 클로저 적용입니다.
 - **이름을 먼저 정함:** 재귀 호출이 direct 함수 이름을 알아야 하므로, 바깥 클로저 이름(`lambda_N`)과 direct 함수 이름(`lambda_N_direct`)을 본문을 낮추기 전에 정합니다(`State.Reserve`). `and` 그룹은 모든 함수의 이름을 먼저 정합니다.
 - **효과:** 100만 개 리스트에 `range`, `map`, `filter`, `sum`, `exists`를 쓰는 프로그램이 0.24초에서 0.12초가 되었습니다(`-O2`, 3번 잰 값). 인터프리터는 바뀌지 않았습니다.
+
+## 16. mutable reference와 반복문
+
+```
+let s = ref 0 in for i = 1 to 10 do s := !s + i done; !s
+```
+
+- **표현:** `ref v`는 블록 `[헤더, 내용]`이고, 헤더는 `6 | (1 << 8)`입니다(`CALC_KIND_REF`). `r := v`는 1번 칸에 쓰고 `()`(immediate value `7`)를 돌려줍니다.
+- **런타임 함수가 없음:** `ref`, `!`, `:=`는 내장 함수(`Eval.builtinArity`)라서 `Lower`가 보통 `CBuiltin`으로 만듭니다. Codegen은 이 세 이름을 C 호출 대신 할당, `llvm.load`, `llvm.store`로 바로 만들고 선언도 하지 않습니다(`inlineBuiltins`). `!`와 `:=`는 C 이름이 될 수 없어서 `calc_builtin_<이름>` 규칙을 쓸 수도 없습니다.
+
+  ```
+  %v6 = llvm.inttoptr %v3 : i64 to !llvm.ptr
+  %v8 = llvm.getelementptr %v6[1] : (!llvm.ptr) -> !llvm.ptr, i64
+  %v7 = llvm.load %v8 : !llvm.ptr -> i64                 // !s
+  ```
+
+- **런타임:** 결과 출력(`calc_buffer_value`)은 `ref 1`, `ref (Some 1)`처럼 생성자와 같은 괄호 규칙으로 출력하고, `calc_eq`는 내용을 비교합니다. 인터프리터의 `Eval.formatValue`, `Eval.valueEquals`와 같습니다.
+- **GC:** Boehm GC는 세대별이 아니므로 기존 블록의 칸에 새 블록의 포인터를 써도 write barrier가 필요 없습니다.
+- **반복문:** 파서가 `while`, `for`를 `$while`, `$for`라는 `let rec` 함수로 바꿉니다([grammar.md](grammar.md) "mutable reference와 반복문"). 컴파일러가 따로 할 일은 없습니다. 다음 반복은 tail position의 호출이라 `tail` 호출이 되고(12장), 이름에 묶은 함수라 direct call입니다(15장). 그래서 반복 횟수와 상관없이 스택이 자라지 않고, 클로저는 반복문마다 한 번만 만듭니다.
+- **속도:** `for i = 1 to 100000000 do s := !s + i % 7 done`은 0.22초이고, 같은 일을 하는 tail recursion(`let rec go i s = …`)과 같습니다(`-O2`).
 
 ## 관련 문서
 

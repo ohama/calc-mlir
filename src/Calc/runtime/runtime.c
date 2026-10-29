@@ -108,6 +108,16 @@ void calc_buffer_quoted(calc_buffer *b, const uint16_t *units, int64_t length) {
 }
 
 /* Eval.formatValue 와 같은 형식 */
+/* 생성자나 ref 뒤의 인자 (Eval.applied). 다시 입력했을 때 같은 값이 되도록 괄호: Some (Some 1), Some (-1), ref (ref 1).
+   튜플은 이미 괄호가 있음 */
+static void buffer_applied(calc_buffer *b, value p) {
+    int paren = (CALC_IS_KIND(p, CALC_KIND_DATA) && CALC_SIZE(p) == 2) || CALC_IS_KIND(p, CALC_KIND_REF) ||
+                (CALC_IS_INT(p) && CALC_INT_VAL(p) < 0);
+    buffer_ascii(b, paren ? " (" : " ");
+    calc_buffer_value(b, p);
+    if (paren) buffer_ascii(b, ")");
+}
+
 void calc_buffer_value(calc_buffer *b, value v) {
     if (v == CALC_UNIT) {
         buffer_ascii(b, "()");
@@ -132,14 +142,10 @@ void calc_buffer_value(calc_buffer *b, value v) {
         buffer_ascii(b, "]");
     } else if (CALC_IS_KIND(v, CALC_KIND_DATA)) {
         buffer_ascii(b, (const char *)CALC_FIELD(v, 1));
-        if (CALC_SIZE(v) == 2) {
-            /* 다시 입력했을 때 같은 값이 되도록 괄호: Some (Some 1), Some (-1). 튜플은 이미 괄호가 있음 */
-            value p = CALC_FIELD(v, 2);
-            int paren = (CALC_IS_KIND(p, CALC_KIND_DATA) && CALC_SIZE(p) == 2) || (CALC_IS_INT(p) && CALC_INT_VAL(p) < 0);
-            buffer_ascii(b, paren ? " (" : " ");
-            calc_buffer_value(b, p);
-            if (paren) buffer_ascii(b, ")");
-        }
+        if (CALC_SIZE(v) == 2) buffer_applied(b, CALC_FIELD(v, 2));
+    } else if (CALC_IS_KIND(v, CALC_KIND_REF)) {
+        buffer_ascii(b, "ref");
+        buffer_applied(b, CALC_FIELD(v, 1));
     } else if (CALC_IS_KIND(v, CALC_KIND_TUPLE)) {
         buffer_ascii(b, "(");
         for (int64_t i = 0; i < CALC_SIZE(v); i++) {
@@ -298,6 +304,10 @@ static int equals(value a, value b) {
     if (CALC_IS_KIND(a, CALC_KIND_DATA)) {
         if (strcmp((const char *)CALC_FIELD(a, 1), (const char *)CALC_FIELD(b, 1)) != 0) return 0;
         return CALC_SIZE(a) == 2 && CALC_SIZE(b) == 2 ? equals(CALC_FIELD(a, 2), CALC_FIELD(b, 2)) : 1;
+    }
+    /* 내용을 비교 (Eval.valueEquals). 같은 칸인지는 보지 않음 */
+    if (CALC_IS_KIND(a, CALC_KIND_REF)) {
+        return equals(CALC_FIELD(a, 1), CALC_FIELD(b, 1));
     }
     if (CALC_IS_KIND(a, CALC_KIND_TUPLE)) {
         for (int64_t i = 0; i < CALC_SIZE(a); i++) {

@@ -7,7 +7,7 @@ open System.Text
 open Ast
 
 type State =
-    { /// 지금까지 받아들인 선언. 타입 추론할 때 새 입력 앞에 let ... in 사슬로 붙임
+    { /// 지금까지 받아들인 선언과 식. 타입 추론할 때 새 입력 앞에 let ... in 사슬로 붙임 (chain)
       Declarations: TopItem list
       /// 평가 환경. 선언을 다시 평가하지 않으므로 앞 입력의 print 가 되풀이되지 않음
       Env: Eval.Env }
@@ -27,7 +27,13 @@ let private withPrelude =
 /// 처음 상태: prelude 의 정의가 모두 보임
 let initial () = withPrelude.Value
 
-let private chain = Prelude.chain
+/// 앞 입력들을 body 앞에 let ... in 사슬로. 식 입력도 let $it = e in 으로 넣음: 식이 정한 타입이 다음 입력에도 남도록
+/// (let r = ref [] 의 '_a 는 r := [1] 이 int 로 정함. 빼면 다음 입력의 r := ["a"] 가 통과해서 soundness 가 깨짐)
+let rec private chain (items: TopItem list) (body: Expr) =
+    match items with
+    | [] -> body
+    | TopExpr e :: rest -> Let ("$it", e, chain rest body)
+    | item :: rest -> Prelude.chain [ item ] (chain rest body)
 
 /// 패턴이 묶는 이름 (쓴 순서)
 let rec private patternNames pattern =
@@ -41,6 +47,13 @@ let rec private patternNames pattern =
 
 let private typeOf (expr: Expr) =
     Infer.typeToString (Frontend.runWithLargeStack (fun () -> Infer.typecheck expr))
+
+/// 선언들 다음에 보이는 name 의 타입. generalize 하지 않은 변수(value restriction)는 '_a: name 을 두 번 쓴 식에서
+/// 두 번 다 같은 변수로 나오는 것
+let private bindingType (declarations: TopItem list) (name: string) =
+    match Frontend.runWithLargeStack (fun () -> Infer.typecheck (chain declarations (Tuple [ Var name; Var name ]))) |> Infer.prune with
+    | Infer.TyTuple [ first; second ] -> Infer.weakTypeToString first second
+    | t -> Infer.typeToString t
 
 /// expr 의 경고 중 base 에 없던 것 (앞 선언의 경고를 되풀이하지 않음. 같은 경고가 여럿이면 개수로 뺌)
 let private newWarnings (baseExpr: Expr) (expr: Expr) =
@@ -74,10 +87,10 @@ let private processItem (out: TextWriter) (input: string) (state: State) (item: 
         let t = typeOf body
         let value = evaluate expr
         out.WriteLine(sprintf "- : %s = %s" t (Eval.formatValue value))
-        state
+        { state with Declarations = declarations }
     | TopLet (name, value, _) ->
         warn (chain declarations Unit)
-        let t = typeOf (chain declarations (Var name))
+        let t = bindingType declarations name
         let v = evaluate value
         out.WriteLine(sprintf "val %s : %s = %s" name t (Eval.formatValue v))
         { Declarations = declarations; Env = Map.add name v state.Env }
@@ -95,7 +108,7 @@ let private processItem (out: TextWriter) (input: string) (state: State) (item: 
         { Declarations = declarations; Env = env }
     | TopLetPattern (pattern, value, _) ->
         warn (chain declarations Unit)
-        let types = patternNames pattern |> List.map (fun name -> name, typeOf (chain declarations (Var name)))
+        let types = patternNames pattern |> List.map (fun name -> name, bindingType declarations name)
         let wildcardType = if pattern = PWildcard then Some (typeOf (chain state.Declarations value)) else None
         let v = evaluate value
         match Eval.matchPattern pattern v state.Env with

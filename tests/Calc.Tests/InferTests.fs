@@ -32,6 +32,7 @@ let rec valueMatches value t =
     | VData ("exn", _, _), TyCon ("exn", []) -> true
     | VData (typeName, _, _), TyCon (name, _) -> name.StartsWith(typeName + "@")
     | VTuple vs, TyTuple ts -> List.length vs = List.length ts && List.forall2 valueMatches vs ts
+    | VRef cell, TyCon ("ref", [ e ]) -> valueMatches cell.Value e
     | (VClosure _ | VRecClosure _ | VRecGroup _ | VBuiltin _ | VConstructor _), TyFun _ -> true
     | _ -> false
 
@@ -138,6 +139,24 @@ let inferred =
       "fun x -> $\"a{x}b\"", "'a -> string"
       "fun x -> $\"%d{x}\"", "int -> string"
       "(fun (x: 'a) -> x + 1)", "int -> int"
+      // 가변 참조와 반복문
+      "ref", "'a -> 'a ref"
+      "fun r -> !r", "'a ref -> 'a"
+      "fun r v -> r := v", "'a ref -> 'a -> unit"
+      "incr", "int ref -> unit"
+      "ref [1]", "int list ref"
+      "(ref 1 : int ref)", "int ref"
+      "fun r -> r := !r + 1", "int ref -> unit"
+      "let r = ref [] in r := [1]; !r", "int list"
+      "while true do () done", "unit"
+      "for i = 1 to 3 do () done", "unit"
+      "fun n -> for i = 1 to n do println i done", "int -> unit"
+      // value restriction: 함수 호출의 결과는 generalize 하지 않음 (첫 사용이 타입을 정함). 값(fun, 생성자, 리터럴)은 generalize
+      "let id x = x in let f = id id in f 1", "int"
+      "let f () = ref [] in let a = f () in let b = f () in a := [1]; b := [\"x\"]; (!a, !b)", "int list * string list"
+      "let xs = [] in (1 :: xs, \"a\" :: xs)", "int list * string list"
+      "let p = (None, []) in let (a, b) = p in (Some 1 = a, Some \"x\" = a, 1 :: b, \"a\" :: b)", "bool * bool * int list * string list"
+      "let mk = fun () -> let r = ref [] in r in let a = mk () in a := [1]; let b = mk () in b := [true]; (!a, !b)", "int list * bool list"
       // = 는 모든 타입 (함수 비교는 실행 중 오류로 남음, OCaml 과 같음)
       "(fun x -> x) = (fun x -> x)", "bool" ]
 
@@ -209,11 +228,28 @@ let tests =
             expectTypeError "sprintf \"%q\" 1" "Unknown format specifier: %q"
             expectTypeError "sprintf \"50%\"" "Missing format specifier after %"
             expectTypeError "$\"%s{1}\"" "Type mismatch: expected string but got int"
+            // 가변 참조와 반복문
+            expectTypeError "!5" "Type mismatch: expected 'a ref but got int"
+            expectTypeError "let r = ref 0 in r := \"a\"" "Type mismatch: expected int but got string"
+            expectTypeError "ref 1 < ref 2" "Type mismatch: expected int or string but got int ref"
+            expectTypeError "while 1 do () done" "Type mismatch: expected bool but got int"
+            expectTypeError "for i = \"a\" to 3 do () done" "Type mismatch: expected int but got string"
+            expectTypeError "for i = 1 to 3 do () done + 1" "Type mismatch: expected int or string but got unit"
+            // value restriction: ref [] 를 generalize 하면 서로 다른 타입의 리스트를 넣고 꺼낼 수 있음
+            expectTypeError "let r = ref [] in r := [1]; r := [\"a\"]; !r" "Type mismatch: expected int list but got string list"
+            expectTypeError "let r = ref [] in let f x = r := [x]; x in (f 1, f \"a\")" "Type mismatch: expected int but got string"
+            expectTypeError "let id x = x in let f = id id in (f 1, f \"a\")" "Type mismatch: expected int but got string"
+            expectTypeError "let (r, n) = (ref [], 0) in r := [1]; r := [true]" "Type mismatch: expected int list but got bool list"
         ]
 
-        test "모든 내장 함수와 생성자에 타입이 있음 (sprintf, printf, printfn 은 포맷 문자열을 주면)" {
+        test "모든 내장 함수와 생성자에 타입이 있음 (sprintf, printf, printfn 은 포맷 문자열을 주면, ! 와 := 는 연산자로)" {
             for name in builtins |> Map.keys do
-                let input = if Format.kinds.Contains name then name + " \"\"" else name
+                let input =
+                    match name with
+                    | "!" -> "fun r -> !r"
+                    | ":=" -> "fun r v -> r := v"
+                    | _ when Format.kinds.Contains name -> name + " \"\""
+                    | _ -> name
                 Expect.isNotEmpty (typeOf input) name
         }
 

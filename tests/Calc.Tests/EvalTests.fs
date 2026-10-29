@@ -342,7 +342,32 @@ let cases =
       "let name = \"Kim\" in let age = 30 in $\"Hello {name}, {age + 1} next year\"", VString "Hello Kim, 31 next year"
       "$\"{{x}} %d{1 + 2} {[1; 2]} {(1, \"a\")} 5%\"", VString "{x} 3 [1; 2] (1, \"a\") 5%"
       "let toString x = \"shadowed\" in $\"{1}\" + sprintf \"%A\" 2", VString "12" // 포맷은 가린 toString 을 쓰지 않음
-      "let safeDiv a b = try Some (if b = 0 then failwith \"div\" else a / b) with Failure _ -> None in (safeDiv 6 2, safeDiv 1 0)", VTuple [ some (VInt 3); none ] ]
+      "let safeDiv a b = try Some (if b = 0 then failwith \"div\" else a / b) with Failure _ -> None in (safeDiv 6 2, safeDiv 1 0)", VTuple [ some (VInt 3); none ]
+      // 가변 참조와 반복문
+      "let r = ref 0 in r := !r + 1; !r", VInt 1
+      "let r = ref 5 in let f x = r := !r * x in f 2; f 3; !r", VInt 30
+      "let c = ref 0 in incr c; incr c; decr c; !c", VInt 1
+      "let r = ref [] in r := [1]; r := 2 :: !r; !r", VList [ VInt 2; VInt 1 ]
+      "ref (Some (ref (-1)))", VRef (ref (some (VRef (ref (VInt -1)))))
+      "(ref 1 = ref 1, ref 1 = ref 2, [ref \"a\"])", VTuple [ VBool true; VBool false; VList [ VRef (ref (VString "a")) ] ]
+      "let a = ref 1 in let b = a in b := 2; !a", VInt 2 // 같은 칸
+      "let r = ref (fun x -> x) in r := (fun x -> x + 1); !r 1", VInt 2
+      "let counter () = let n = ref 0 in fun () -> n := !n + 1; !n in let c = counter () in c (); c (); c ()", VInt 3
+      "let f () = ref [] in let a = f () in let b = f () in a := [1]; b := [\"x\"]; (!a, !b)", VTuple [ VList [ VInt 1 ]; VList [ VString "x" ] ]
+      "let s = ref 0 in for i = 1 to 10 do s := !s + i done; !s", VInt 55
+      "let s = ref [] in for i = 1 to 3 do s := i :: !s done; !s", VList [ VInt 3; VInt 2; VInt 1 ]
+      "let s = ref [] in for i = 3 downto 1 do s := i :: !s done; !s", VList [ VInt 1; VInt 2; VInt 3 ]
+      "let s = ref 0 in for i = 1 to 0 do s := 99 done; !s", VInt 0
+      "let s = ref 0 in for i = 2147483646 to 2147483647 do s := !s + 1 done; !s", VInt 2 // 끝에서 i + 1 을 계산하지 않음
+      "let s = ref 0 in for i = -2147483647 - 1 downto -2147483647 - 1 do s := !s + 1 done; !s", VInt 1
+      "let s = ref [] in let b = ref 2 in for i = 1 to !b do b := 10; s := i :: !s done; !s", VList [ VInt 2; VInt 1 ] // 끝은 한 번만 계산
+      "let s = ref \"\" in for i = 1 to 2 do for j = 1 to 2 do s := !s + toString i + toString j + \" \" done done; !s", VString "11 12 21 22 "
+      "let n = ref 0 in while !n < 5 do n := !n + 1 done; !n", VInt 5
+      "let n = ref 10 in while false do n := 0 done; !n", VInt 10
+      "let n = ref 0 in let s = ref 0 in while !n < 1000000 do n := !n + 1; s := !s + 2 done; !s", VInt 2000000
+      "let rec fib n = let a = ref 0 in let b = ref 1 in for i = 1 to n do let t = !a + !b in a := !b; b := t done; !a in map fib [0; 1; 10; 30]", VList [ VInt 0; VInt 1; VInt 55; VInt 832040 ]
+      "let ref x = x + 1 in ref 1", VInt 2 // ref 는 보통 이름 (가릴 수 있음)
+      "let do_ = 1 in let done_ = 2 in do_ + done_", VInt 3 ]
 
 /// 오류 메시지가 정확히 일치하는지 확인
 let expectError input message =
@@ -397,6 +422,18 @@ let tests =
                     ""
                 Expect.equal (calc "let k = 100 in let rec f x = if x = 0 then k else g (x - 1) and g y = f y + 1 in f 5") (VInt 105) ""
                 Expect.equal (formatValue (calc "let rec f x = g x and g x = x in f")) "<fun>" ""
+            }
+        ]
+
+        testList "가변 참조와 반복문" [
+            test "for 는 앞에서부터, 끝값까지 출력" {
+                use writer = new System.IO.StringWriter()
+                let value = evalWithOutput writer (Program.load "for i = 1 to 3 do print i done; for i = 2 downto 1 do print i done")
+                Expect.equal (writer.ToString(), value) ("12321", VUnit) ""
+            }
+            test "타입 검사를 건너뛰면 ! 와 := 에 ref 가 아닌 값은 실행 중 오류" {
+                Expect.throwsC (fun () -> calc "!5" |> ignore) (fun ex -> Expect.equal ex.Message "Type error: expected ref but got int" "")
+                Expect.throwsC (fun () -> calc "1 := 2" |> ignore) (fun ex -> Expect.equal ex.Message "Type error: expected ref but got int" "")
             }
         ]
 

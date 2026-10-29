@@ -65,6 +65,12 @@ rule tokenize = parse
     | "when"        { WHEN }
     | "type"        { TYPE }
     | "of"          { OF }
+    | "while"       { WHILE }
+    | "for"         { FOR }
+    | "to"          { TO }
+    | "downto"      { DOWNTO }
+    | "do"          { DO }
+    | "done"        { DONE }
     // _ 하나만 와일드카드. _a 처럼 더 길게 일치하면 IDENT (가장 긴 일치)
     | '_'           { UNDERSCORE }
     | ident_start ident_char*
@@ -86,12 +92,14 @@ rule tokenize = parse
     | "&&"          { AND }
     | "||"          { OR }
     | "::"          { CONS }
+    | ":="          { COLONEQUALS }
     | ':'           { COLON }
     | '|'           { BAR }
     | '['           { LBRACKET }
     | ']'           { RBRACKET }
     | ";;"          { SEMISEMI }
     | ';'           { SEMI }
+    | '!'           { BANG }
     | ','           { COMMA }
     | '+'           { PLUS }
     | '-'           { MINUS }
