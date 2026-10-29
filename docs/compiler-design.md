@@ -162,13 +162,19 @@ clang prog.o runtime.o builtins.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack
 
 ### D5. 메모리: Boehm GC
 
-- 런타임의 `calc_alloc(bytes)`가 `GC_MALLOC`을 부릅니다. 생성 코드는 해제 코드를 만들지 않습니다.
+- 런타임의 `calc_alloc(bytes)`가 블록을 줍니다. 생성 코드는 해제 코드를 만들지 않습니다.
+  - **작은 블록(8단어까지):** `GC_malloc_many`로 같은 크기를 한꺼번에 받아 두고 하나씩 나눠 줍니다. `GC_malloc`은 부를 때마다 스레드별 free list를 `pthread_getspecific`으로 찾기 때문입니다.
+  - **더 큰 블록:** `GC_MALLOC`을 씁니다.
+  - **수거 빈도:** `calc_init`이 `GC_set_free_space_divisor(1)`로 수거를 드물게 합니다. 기본값 3보다 힙을 크게 잡아서, 할당이 많은 프로그램이 25% 남짓 빨라지고 최대 메모리는 2배 안쪽으로 늘어납니다.
 - 확인한 결과: 64바이트 블록 1천만 개(약 640MB)를 할당하는 C 프로그램의 최대 상주 메모리가 3MB였습니다. garbage collection이 동작합니다.
 - 참조 카운트(Roc, Lean)나 정확한 GC는 범위 밖입니다. 표현(D3)은 나중에 정확한 GC로 바꿀 수 있게 헤더를 둡니다.
 
 ### D6. 코드 생성은 타입 없이, 런타임 태그로 분기
 
 - 처음에는 인터프리터처럼 **타입을 보지 않고** 코드를 만듭니다. `+`, `=`, `<`, `toString`, `length`는 런타임 함수(`calc_add`, `calc_eq`, `calc_compare`, ...)가 태그를 보고 동작을 고릅니다.
+  - **int 경로 (0.49.0부터):** `+`, `<`, `>`, `<=`, `>=`는 생성 코드가 왼쪽 값의 태그를 먼저 봅니다. int면 그 자리에서 계산합니다. 타입 검사를 통과했으므로 오른쪽도 int입니다.
+  - **`=`:** 왼쪽이 즉시값(int, bool, `[]`, `()`)이면 비트를 비교합니다.
+  - **효과:** fib 41이 0.86초에서 0.42초가 되었습니다.
 - 타입 추론을 통과했으므로 이 함수들은 타입 오류를 만나지 않습니다.
 - 정수 사칙연산(`-`, `*`, `/`, 단항 `-`)처럼 타입이 하나뿐인 연산은 처음부터 인라인 `arith`로 만듭니다.
 - 타입을 이용한 specialization(int `+`를 인라인으로)은 최적화 단계에서 합니다. 그러려면 `Infer`가 식마다 타입을 기록하도록 바꿔야 합니다.
@@ -260,7 +266,7 @@ type CProgram = { Functions: CFunction list; Main: CExpr }
 typedef int64_t value;
 
 void   calc_init(void);                       // GC_INIT 등
-void  *calc_alloc(int64_t bytes);             // GC_MALLOC
+void  *calc_alloc(int64_t bytes);             // 작은 블록은 GC_malloc_many 로 받아 둔 것
 void   calc_print_result(value v);            // Eval.formatValue 와 같은 형식
 void   calc_error(const char *message);       // "Error: ..." 출력, exit(1)
 void   calc_error_divide_by_zero(void);       // 인터프리터(.NET)와 같은 문장 (단계 1)

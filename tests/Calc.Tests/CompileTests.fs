@@ -381,6 +381,17 @@ let private runCases =
           "let area x =\n    let pi = 3\n    pi * x\n\nlet rec loop i acc =\n    if i = 0 then acc\n    else\n        let next = acc + i\n        loop (i - 1) next\n\nprintln (map area [ 1\n                    2 ])\nloop 1000000 0", ("[3; 6]\n1784293664\n", "", 0), "블록, 같은 열의 let, 줄바꿈 원소, tail call"
           "module M =\n    let x = 1\n    let f y = y + x\nlet n = ref 0\nwhile !n < 3 do\n    incr n\nM.f !n", ("4\n", "", 0), "모듈, done 없는 while"
         ]
+      "int 빠른 경로와 런타임 경로",
+        [
+          "println (1 + 2, \"a\" + \"b\", 2147483647 + 1, 3 < 4, \"b\" < \"a\", -1 <= -1, 2 >= 3, 5 > -5)", ("(3, \"ab\", -2147483648, true, false, true, false, true)\n", "", 0), "+ 와 비교: int 는 생성 코드, string 은 런타임"
+          "println (1 = 1, true = false, [] = [], () = (), [1] = [1], \"x\" = \"x\", Some 1 = None, (1, [2]) = (1, [2]))", ("(true, false, true, true, true, true, false, true)\n", "", 0), "= : 즉시값은 비트, 블록은 런타임"
+          "let rec fib n = if n < 2 then n else fib (n - 1) + fib (n - 2) in fib 25", ("75025\n", "", 0), ""
+        ]
+      "할당",
+        [
+          "let rec build n acc = if n = 0 then acc else build (n - 1) ((n, [n], Some n) :: acc) in let xs = build 300000 [] in println (length xs, head xs, nth xs 299999)", ("(300000, (1, [1], Some 1), (300000, [300000], Some 300000))\n", "", 0), "작은 블록 여러 크기, 수거가 일어나도 값이 그대로"
+          "let t = (1, 2, 3, 4, 5, 6, 7, 8, 9) in let a = Array.create 20 7 in println (t, Array.length a, a.[19], [||] = [||])", ("((1, 2, 3, 4, 5, 6, 7, 8, 9), 20, 7, true)\n", "", 0), "8 단어보다 큰 블록과 빈 배열"
+        ]
       "리스트 내장 함수",
         [
           "println (reverse [1; 2; 3], append [1] [2; 3], append [] [4], range 3 5, range 5 3)", ("([3; 2; 1], [1; 2; 3], [4], [3; 4; 5], [])\n", "", 0), "reverse, append, range"
@@ -543,7 +554,8 @@ let tests =
                 Expect.equal Codegen.nilValue 5L "[] 는 즉시값"
             }
             test "어떤 값과도 일치하는 분기 뒤는 생성하지 않음" {
-                let mlir = Codegen.emitProgram (Program.parse "let (a, b) = (1, 2) in a + b")
+                // + 는 int 인지 보는 scf.if 를 만들므로 - 로 확인
+                let mlir = Codegen.emitProgram (Program.parse "let (a, b) = (1, 2) in a - b")
                 Expect.isFalse (mlir.Contains "calc_match_failure(%") "튜플 분해는 실패할 수 없음"
                 Expect.isFalse (mlir.Contains "scf.if") "검사 코드 없음"
             }

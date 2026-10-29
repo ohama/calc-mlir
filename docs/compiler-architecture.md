@@ -37,7 +37,7 @@
 | lowering | `Core.fs`, `Lower.fs` | `Ast.Expr` → Core IR. 연산을 `Prim`으로, `&&`/`||`를 `if`로, closure conversion(함수를 최상위로). 지원하지 않는 기능은 `NotSupported` |
 | 코드 생성 | `Codegen.fs` | Core IR → MLIR 텍스트 |
 | 빌드 | `Toolchain.fs` | 도구 찾기, 임시 폴더에서 외부 도구(`mlir-opt`, `mlir-translate`, `clang`)를 차례로 실행, C 런타임 오브젝트 캐시 |
-| 런타임 | `runtime/runtime.c`, `builtins.c`, `runtime.h`, `unicode.h` | 초기화, 결과 출력, 오류 종료, polymorphic 연산(`calc_add`, `calc_eq`, `calc_compare`), 내장 함수 21개, 예외(`calc_try`, `calc_raise`). `calc_apply`는 생성한 모듈이 정의(12장) |
+| 런타임 | `runtime/runtime.c`, `builtins.c`, `runtime.h`, `unicode.h` | 초기화, 결과 출력, 오류 종료, polymorphic 연산(`calc_add`, `calc_eq`, `calc_compare`. int는 생성 코드가 먼저 처리), 내장 함수 21개, 예외(`calc_try`, `calc_raise`). `calc_apply`는 생성한 모듈이 정의(12장) |
 | 진입 | `Program.fs`의 `compile` | 위 단계를 잇고, 오류를 인터프리터와 같은 형식(`Error: ...`)으로 출력 |
 
 F#으로 하는 일은 MLIR **텍스트**를 만드는 데까지입니다. LLVM을 라이브러리로 링크하지 않고, 텍스트 파일을 외부 도구에 넘깁니다(설계 D1).
@@ -96,7 +96,14 @@ llvm.func @calc_main() -> i64 {
   ...                                    // let 은 코드 없음: price = %v1, qty = %v2
   %v9 = arith.muli %v5, %v8 : i32        // 태그를 떼고 i32 곱셈
   %v14 = arith.ori %v12, %v13 : i64      // 다시 태그 → total = %v14
-  %v16 = llvm.call @calc_compare(%v14, %v15) : (i64, i64) -> i32
+  %v17 = arith.andi %v14, %v16 : i64     // total 의 하위 3비트: int(1) 인가?
+  %v20 = scf.if %v18 -> (i64) {
+    %v21 = arith.cmpi sgt, %v14, %v15 : i64   // int 끼리는 태그를 붙인 채로 비교 (순서가 같음)
+    ...
+  } else {
+    %v25 = llvm.call @calc_compare(%v14, %v15) : (i64, i64) -> i32   // string 은 런타임
+    ...
+  }
   ...
   %v24 = scf.if %v22 -> (i64) {
     ...                                  // total / 10 (0 검사, MinValue / -1 검사 포함)
@@ -139,13 +146,15 @@ declare i32 @calc_compare(i64, i64)
 ...
 
 define i64 @calc_main() {
-  %1 = call i32 @calc_compare(i64 28801, i64 24001)   ; total(3600) > 3000 ?
-  %2 = icmp sgt i32 %1, 0
+  br i1 true, label %1, label %2                       ; total 이 int 인가: 이미 true 로 접힘
   ...
-  br i1 false, label %6, label %7                      ; 0 검사는 이미 false 로 접힘
+2:
+  %3 = call i32 @calc_compare(i64 28801, i64 24001)   ; string 일 때의 길 (clang 이 지움)
   ...
-  %12 = phi i64 [ 28801, %10 ], [ 25921, %9 ]          ; 3600 또는 3240
-  ret i64 %12
+  br i1 false, label %11, label %12                    ; 0 검사도 false 로 접힘
+  ...
+  %17 = phi i64 [ 28801, %15 ], [ 25921, %14 ]         ; 3600 또는 3240
+  ret i64 %17
 }
 
 define i32 @main() {                      ; (다)가 C 의 main 심볼이 됨
@@ -171,14 +180,11 @@ clang prog.o $TMPDIR/calc-runtime-<해시>.o $TMPDIR/calc-builtins-<해시>.o -L
 최종 `calc_main`(arm64 어셈블리, `otool -tV discount`):
 
 ```
-mov  w0, #0x7081          ; 28801 = 3600
-mov  w1, #0x5dc1          ; 24001 = 3000
-bl   _calc_compare        ; 런타임 함수라 접을 수 없음
-cmp  w0, #0x0
-mov  w8, #0x6541          ; 25921 = 3240
-csel x0, x8, x19, gt
+mov  w0, #0x6541          ; 25921 = 3240
 ret
 ```
+
+0.48.0까지는 `>`가 언제나 `calc_compare`를 불러서, 런타임 함수라 접을 수 없는 호출(`bl _calc_compare`)과 `csel`이 남았습니다. 지금은 int 비교를 생성 코드에서 하므로 clang이 프로그램 전체를 상수 3240으로 접습니다.
 
 ## 3. entry point `main`
 

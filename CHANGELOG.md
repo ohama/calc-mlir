@@ -4,6 +4,15 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.49.0] - 2026-10-29
+
+### 변경
+- 컴파일한 실행 파일이 빨라졌습니다(`benchmarks/run.py`). merge sort 20만은 0.17초에서 0.097초(Python 0.21초), BST 20만은 0.22초에서 0.13초(Python 0.35초), fib 41은 0.86초에서 0.42초가 되었습니다.
+  - `+`, `<`, `>`, `<=`, `>=`는 생성 코드가 왼쪽 값의 태그를 보고 int면 그 자리에서 계산합니다. `=`는 즉시값(int, bool, `[]`, `()`)이면 비트를 비교합니다. string과 블록은 전처럼 런타임(`calc_add`, `calc_compare`, `calc_eq`)이 합니다.
+  - 런타임의 `calc_alloc`은 8단어까지의 블록을 `GC_malloc_many`로 한꺼번에 받아 두고 나눠 줍니다. 런타임의 `calc_cons`도 이 경로를 씁니다.
+  - `calc_init`이 `GC_set_free_space_divisor(1)`로 수거를 드물게 합니다. 할당이 많은 프로그램의 최대 메모리가 2배 안쪽으로 늘어납니다(merge sort 38MB → 72MB).
+- 테스트 2개 추가 (총 1207개)
+
 ## [0.48.0] - 2026-10-29
 
 ### 변경

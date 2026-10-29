@@ -309,14 +309,26 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
         let x = untagInt fb (emitExpr fb env a)
         let y = untagInt fb (emitExpr fb env b)
         retagInt fb (emitOp fb op x y "i32")
-    // 비교: 런타임이 int 와 (나중에) string 을 고름. 결과는 -1, 0, 1
+    // x 가 int 인가 (타입 검사를 통과했으므로 그러면 다른 쪽도 int)
+    let isInt x =
+        let tag = emitOp fb "arith.andi" x (emitConst fb "i64" 7L) "i64"
+        let c = fb.Fresh()
+        fb.Emit(sprintf "%s = arith.cmpi eq, %s, %s : i64" c tag (emitConst fb "i64" 1L))
+        c
+    // 비교: int 끼리는 바로 (태그를 붙인 채로 비교해도 순서가 같음), 나머지(string)는 런타임. 결과는 -1, 0, 1
     let compare predicate a b =
         let x = emitExpr fb env a
         let y = emitExpr fb env b
-        let c = emitCall fb "calc_compare" [ x; y ] "i32"
-        let cmp = fb.Fresh()
-        fb.Emit(sprintf "%s = arith.cmpi %s, %s, %s : i32" cmp predicate c (emitConst fb "i32" 0L))
-        retagBool fb cmp
+        emitIf fb (isInt x)
+            (fun () ->
+                let cmp = fb.Fresh()
+                fb.Emit(sprintf "%s = arith.cmpi %s, %s, %s : i64" cmp predicate x y)
+                retagBool fb cmp)
+            (fun () ->
+                let c = emitCall fb "calc_compare" [ x; y ] "i32"
+                let cmp = fb.Fresh()
+                fb.Emit(sprintf "%s = arith.cmpi %s, %s, %s : i32" cmp predicate c (emitConst fb "i32" 0L))
+                retagBool fb cmp)
     match expr with
     | CInt n -> emitConst fb "i64" (tagInt n)
     | CBool b -> emitConst fb "i64" (tagBool b)
@@ -335,7 +347,9 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
     | CPrim (PAdd, [ a; b ]) ->
         let x = emitExpr fb env a
         let y = emitExpr fb env b
-        emitCall fb "calc_add" [ x; y ] "i64"
+        emitIf fb (isInt x)
+            (fun () -> retagInt fb (emitOp fb "arith.addi" (untagInt fb x) (untagInt fb y) "i32"))
+            (fun () -> emitCall fb "calc_add" [ x; y ] "i64")
     | CPrim (PSubtract, [ a; b ]) -> intOp "arith.subi" a b
     | CPrim (PMultiply, [ a; b ]) -> intOp "arith.muli" a b
     | CPrim ((PDivide | PModulo) as op, [ a; b ]) ->
@@ -359,7 +373,16 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
     | CPrim (PEqual, [ a; b ]) ->
         let x = emitExpr fb env a
         let y = emitExpr fb env b
-        emitCall fb "calc_eq" [ x; y ] "i64"
+        // int, bool, [], () 는 값 자체를 비교. 블록(리스트, 문자열 등)은 런타임이 내용을 비교
+        let tag = emitOp fb "arith.andi" x (emitConst fb "i64" 7L) "i64"
+        let immediate = fb.Fresh()
+        fb.Emit(sprintf "%s = arith.cmpi ne, %s, %s : i64" immediate tag (emitConst fb "i64" 0L))
+        emitIf fb immediate
+            (fun () ->
+                let eq = fb.Fresh()
+                fb.Emit(sprintf "%s = arith.cmpi eq, %s, %s : i64" eq x y)
+                retagBool fb eq)
+            (fun () -> emitCall fb "calc_eq" [ x; y ] "i64")
     | CPrim (PLess, [ a; b ]) -> compare "slt" a b
     | CPrim (PGreater, [ a; b ]) -> compare "sgt" a b
     | CPrim (PLessEqual, [ a; b ]) -> compare "sle" a b
