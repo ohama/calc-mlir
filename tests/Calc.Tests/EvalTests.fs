@@ -546,6 +546,21 @@ let tests =
             expectError "let f x y = x < y in f 1 \"a\"" "Type error: expected int but got string"
             expectError "let f x = x < 1 in f true" "Type error: expected int or string but got bool"
             expectError "let f x = x = 0 in f true" "Type error: expected bool but got int"
+            test "튜플의 원소는 왼쪽부터 (원소 둘, 셋은 바로 만듦)" {
+                use writer = new System.IO.StringWriter()
+                let value = evalWithOutput writer (Program.load "((print 1; 1), (print 2; 2), (print 3; 3), ((print 4; 4), (print 5; 5)), ((print 6; 6), 7, 8, (print 9; 9)))")
+                Expect.equal (writer.ToString()) "1234569" ""
+                Expect.equal (formatValue value) "(1, 2, 3, (4, 5), (6, 7, 8, 9))" ""
+            }
+            // match xs with [] -> … | x :: rest -> … 는 패턴 함수 없이 바로 나눔 (분기 순서, _, 가드가 있으면 일반 경로)
+            test "리스트 match 의 빠른 경로" {
+                Expect.equal (calc "let rec len xs = match xs with [] -> 0 | _ :: rest -> 1 + len rest in len [1; 2; 3]") (VInt 3) ""
+                Expect.equal (calc "match [1; 2] with x :: rest -> (x, rest) | [] -> (0, [])") (VTuple [ VInt 1; VList [ VInt 2 ] ]) "순서가 반대"
+                Expect.equal (calc "match [] with [] -> 0 | x :: _ -> x") (VInt 0) ""
+                Expect.equal (calc "let rest = 5 in (match [1; 2] with [] -> 0 | x :: rest -> x + length rest) + rest") (VInt 7) "바깥 rest 를 가렸다가 돌아옴"
+                Expect.equal (calc "match [7] with [] -> 0 | x :: _ when x > 5 -> 1 | _ -> 2") (VInt 1) "가드는 일반 경로"
+            }
+            expectError "match 1 with [] -> 0 | x :: _ -> x" "Match failure: 1"
             test "세 단계 넘게 바깥 함수의 칸" {
                 Expect.equal (calc "let a = 1 in let f b = let g c = let h d = let k e = a + b + c + d + e in k in h in g in f 2 3 4 5") (VInt 15) ""
             }

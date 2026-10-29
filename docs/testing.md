@@ -202,7 +202,7 @@ dotnet run --project tests/Calc.Tests -- --filter "Compile"
 | 명령 | 기대 출력 | 종료 코드 |
 |---|---|---|
 | `--help`, `-h` | `USAGE: calc [--help] [--expr=<expr>] [--version] [--no-typecheck]`로 시작하는 사용법 | 0 |
-| `--version`, `-v` | `calc 0.45.0` (`Calc.fsproj`의 `<Version>`) | 0 |
+| `--version`, `-v` | `calc 0.46.0` (`Calc.fsproj`의 `<Version>`) | 0 |
 | `-e "(2+3)*4"` | `Result: 20` | 0 |
 | `--expr=7/2` | `Result: 3` | 0 |
 | `--expr "-5 + 2"` | `Result: -3` (`-`로 시작하는 식도 값으로 처리됨) | 0 |

@@ -4,6 +4,18 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.46.0] - 2026-10-29
+
+### 변경
+- 인터프리터가 빨라졌습니다(Release, `benchmarks/run.py`). merge sort 20만은 1.61초에서 1.04초, BST 20만은 1.32초에서 0.96초, N-Queens 10은 0.17초에서 0.13초, fib 32는 0.16초에서 0.145초(Python 0.136초)가 되었습니다.
+  - sampling profiler로 재니 시간의 상당 부분이 .NET의 형 검사 helper(`IsInstanceOfClass`, `StelemRef`)였습니다.
+  - `args[i] fr`를 `(args[i]) fr`로 씁니다. F#은 앞의 것을 배열 인덱스 함수 값과 `InvokeFast`로 컴파일해서 호출마다 형 검사를 합니다.
+  - 패턴 클로저는 인자 둘을 한 번에 받는 형(`OptimizedClosures.FSharpFunc`)으로 바꿔 두고 `Invoke`로 부릅니다.
+  - Frame을 struct 칸의 배열로 만들어, 칸에 쓸 때 `obj[]`의 형 검사가 없습니다.
+  - 원소 둘, 셋인 튜플은 바로 만들고, `match xs with [] -> … | x :: rest -> …`(변수나 `_`만, 가드 없음)는 패턴 함수 없이 나눕니다.
+  - 결과, 오류 메시지, 계산 순서, 재귀 깊이 한계는 같습니다.
+- 테스트 3개 추가 (총 1198개)
+
 ## [0.45.0] - 2026-10-29
 
 ### 변경

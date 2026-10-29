@@ -2,6 +2,11 @@ module Eval
 
 open Ast
 
+/// Frame 의 칸 하나. struct 의 배열에 쓰면 obj[] 에 쓸 때의 형 검사(StelemRef)가 없음
+[<Struct; NoEquality; NoComparison>]
+type Slot =
+    val mutable Item: obj
+
 type Value =
     | VInt of int
     | VBool of bool
@@ -30,7 +35,7 @@ type Value =
 
 /// 함수 값: fun p1 -> … -> fun pn -> body 를 인자 Arity 개의 함수 하나로. 부를 때 Size 칸의 Frame 을 만들고 칸 0.. 에 인자를 넣어
 /// Code 를 실행. Bound 는 partial application 으로 이미 받은 인자. 같은 함수인지만 비교할 수 있음 (참조)
-and Closure(arity: int, size: int, parent: obj[], code: obj[] -> Value, bound: Value list) =
+and Closure(arity: int, size: int, parent: Slot[], code: Slot[] -> Value, bound: Value list) =
     member _.Arity = arity
     member _.Size = size
     member _.Parent = parent
@@ -39,15 +44,15 @@ and Closure(arity: int, size: int, parent: obj[], code: obj[] -> Value, bound: V
 
 /// 함수 호출(과 최상위 식) 하나의 칸들: [바깥 Frame; 칸 0; 칸 1; …]. 안쪽 함수의 Frame 은 그 함수를 만든 곳의 Frame 을
 /// 0번에 가리킴 (정적 범위). 객체 하나라서 호출마다 할당이 한 번 (Frame 객체와 칸 배열을 따로 두면 두 번)
-type Frame = obj[]
+type Frame = Slot[]
 
 // 0번에는 Frame(또는 최상위의 null), 나머지에는 Value(또는 아직 쓰지 않은 null)만 넣으므로 형 검사 없이 꺼냄
-let inline private slotOf (fr: Frame) (slot: int) : Value = System.Runtime.CompilerServices.Unsafe.As<Value>(fr[slot + 1])
-let inline private setSlot (fr: Frame) (slot: int) (v: Value) = fr[slot + 1] <- v
-let inline private parentOf (fr: Frame) : Frame = System.Runtime.CompilerServices.Unsafe.As<obj[]>(fr[0])
+let inline private slotOf (fr: Frame) (slot: int) : Value = System.Runtime.CompilerServices.Unsafe.As<Value>(fr[slot + 1].Item)
+let inline private setSlot (fr: Frame) (slot: int) (v: Value) = fr[slot + 1].Item <- v
+let inline private parentOf (fr: Frame) : Frame = System.Runtime.CompilerServices.Unsafe.As<Slot[]>(fr[0].Item)
 let inline private newFrame (size: int) (parent: Frame) : Frame =
-    let fr: obj[] = Array.zeroCreate (size + 1)
-    fr[0] <- parent
+    let fr: Slot[] = Array.zeroCreate (size + 1)
+    fr[0].Item <- parent
     fr
 
 /// 이름 → 값. 내장 함수, 생성자, REPL 의 앞 입력에서 정의한 값 (평가할 때는 상수로 씀)
@@ -452,22 +457,22 @@ let private access (hops: int) (slot: int) : Code =
                 f <- parentOf f
             slotOf f slot
 
-let private asInt (code: Code) fr =
+let inline private asInt (code: Code) fr =
     match code fr with
     | VInt n -> n
     | v -> typeError "int" v
 
-let private asBool (code: Code) fr =
+let inline private asBool (code: Code) fr =
     match code fr with
     | VBool b -> b
     | v -> typeError "bool" v
 
-let private asString (code: Code) fr =
+let inline private asString (code: Code) fr =
     match code fr with
     | VString s -> s
     | v -> typeError "string" v
 
-let private asList (code: Code) fr =
+let inline private asList (code: Code) fr =
     match code fr with
     | VList items -> items
     | v -> typeError "list" v
@@ -574,9 +579,16 @@ let rec private patternNames pattern =
     | POr (a, _) -> patternNames a
     | PWildcard | PInt _ | PBool _ | PString _ | PNil | PUnit | PCtor (_, None) -> []
 
+/// 패턴을 부를 때 쓰는 형: 인자 둘을 한 번에 받는 F# 함수. f v fr 로 부르면 FSharpFunc.InvokeFast 가 호출마다 형 검사를
+/// 하므로, Adapt 로 한 번 바꿔 두고 Invoke(v, fr) 로 부름
+type private Matcher = OptimizedClosures.FSharpFunc<Value, Frame, bool>
+
 /// 패턴 → 값이 맞는지 보고 묶는 이름의 칸에 쓰는 함수. 이름의 칸은 scope 에 이미 있음 (compileArm).
 /// 생성자가 없거나 인자 유무가 틀리면 그 패턴을 시도할 때 오류 (Map 으로 평가하던 matchPattern 과 같음)
-let rec private compilePattern (scope: Scope) (pattern: Pattern) : Value -> Frame -> bool =
+let rec private compilePattern (scope: Scope) (pattern: Pattern) : Matcher =
+    OptimizedClosures.FSharpFunc<_, _, _>.Adapt (patternFunction scope pattern)
+
+and private patternFunction (scope: Scope) (pattern: Pattern) : Value -> Frame -> bool =
     let sub = compilePattern scope
     match pattern with
     | PVar name ->
@@ -589,7 +601,7 @@ let rec private compilePattern (scope: Scope) (pattern: Pattern) : Value -> Fram
     // 왼쪽부터 처음 일치하는 쪽. 두 쪽이 같은 칸에 씀
     | POr (a, b) ->
         let a, b = sub a, sub b
-        fun v fr -> a v fr || b v fr
+        fun v fr -> a.Invoke(v, fr) || b.Invoke(v, fr)
     | PInt n -> fun v _ -> (match v with VInt m -> m = n | _ -> false)
     | PBool b -> fun v _ -> (match v with VBool c -> c = b | _ -> false)
     | PString s -> fun v _ -> (match v with VString t -> t = s | _ -> false)
@@ -598,7 +610,7 @@ let rec private compilePattern (scope: Scope) (pattern: Pattern) : Value -> Fram
         let h, t = sub h, sub t
         fun v fr ->
             match v with
-            | VList (x :: rest) -> h x fr && t (VList rest) fr
+            | VList (x :: rest) -> h.Invoke(x, fr) && t.Invoke(VList rest, fr)
             | _ -> false
     | PTuple items ->
         let items = items |> List.map sub |> Array.ofList
@@ -609,7 +621,7 @@ let rec private compilePattern (scope: Scope) (pattern: Pattern) : Value -> Fram
                 let mutable ok = true
                 let mutable i = 0
                 while ok && i < items.Length do
-                    ok <- items[i] rest.Head fr
+                    ok <- items[i].Invoke(rest.Head, fr)
                     rest <- rest.Tail
                     i <- i + 1
                 ok
@@ -622,7 +634,7 @@ let rec private compilePattern (scope: Scope) (pattern: Pattern) : Value -> Fram
                 fields
                 |> List.forall (fun (f, m) ->
                     match List.tryFind (fun (n, _) -> n = f) values with
-                    | Some (_, x) -> m x fr
+                    | Some (_, x) -> m.Invoke(x, fr)
                     | None -> false)
             | _ -> false
     | PCtor (name, argPattern) ->
@@ -641,7 +653,7 @@ let rec private compilePattern (scope: Scope) (pattern: Pattern) : Value -> Fram
             fun v fr ->
                 match v, arg with
                 | VData (t, c, None), None -> t = typeName && c = name
-                | VData (t, c, Some payload), Some p -> t = typeName && c = name && p payload fr
+                | VData (t, c, Some payload), Some p -> t = typeName && c = name && p.Invoke(payload, fr)
                 | _ -> false
 
 /// match, try 의 분기: (패턴, 가드, 본문). 패턴이 묶는 이름마다 칸 하나
@@ -650,12 +662,12 @@ let rec private compileArm (scope: Scope) (pattern: Pattern, guard: Expr option,
     compilePattern inner pattern, guard |> Option.map (compile inner), compile inner body
 
 /// 위에서부터 패턴과 가드가 모두 맞는 첫 분기의 번호. 없으면 -1
-and private findArm (arms: ((Value -> Frame -> bool) * Code option * Code)[]) (v: Value) (fr: Frame) =
+and private findArm (arms: (Matcher * Code option * Code)[]) (v: Value) (fr: Frame) =
     let mutable found = -1
     let mutable i = 0
     while found < 0 && i < arms.Length do
         let m, guard, _ = arms[i]
-        if m v fr && (match guard with None -> true | Some g -> asBool g fr) then found <- i
+        if m.Invoke(v, fr) && (match guard with None -> true | Some g -> asBool g fr) then found <- i
         i <- i + 1
     found
 
@@ -723,7 +735,7 @@ and private compile (scope: Scope) (expr: Expr) : Code =
         let rest = compile inner inExpr
         fun fr ->
             for i in 0 .. fs.Length - 1 do
-                setSlot fr (slots[i]) (fs[i] fr)
+                setSlot fr slots[i] ((fs[i]) fr)
             rest fr
     | Lambda (param, body) -> lambda scope param body
     // 값에 의한 호출: 함수와 인자를 먼저 평가한 뒤 본문을 평가. f a b 는 (f a) b 와 같은 순서:
@@ -756,14 +768,16 @@ and private compile (scope: Scope) (expr: Expr) : Code =
                 match f fr with
                 | VClosure cl when cl.Arity = n && cl.Bound.IsEmpty ->
                     let frame = newFrame cl.Size cl.Parent
+                    // (args[i]) fr 의 괄호는 지우지 않음: args[i] fr 는 F# 가 배열 인덱스를 함수 값으로 만들어
+                    // InvokeFast 로 부르므로 호출마다 형 검사를 함
                     for i in 0 .. n - 1 do
-                        setSlot frame i (args[i] fr)
+                        setSlot frame i ((args[i]) fr)
                     cl.Code frame
                 | fv ->
                     let mutable g = fv
                     for i in 0 .. n - 2 do
-                        g <- apply g (args[i] fr)
-                    apply g (args[n - 1] fr)
+                        g <- apply g ((args[i]) fr)
+                    apply g ((args[n - 1]) fr)
     | If (cond, thenExpr, elseExpr) ->
         let cond, t, e = test scope cond, c thenExpr, c elseExpr
         fun fr -> if cond fr then t fr else e fr
@@ -791,9 +805,44 @@ and private compile (scope: Scope) (expr: Expr) : Code =
         fun fr ->
             let h = head fr
             VList (h :: asList tail fr)
+    // 원소는 왼쪽부터 계산. 원소 둘, 셋은 리스트를 바로 만듦 (ListCollector 를 거치지 않음)
     | Tuple items ->
-        let items = List.map c items
-        fun fr -> VTuple [ for item in items -> item fr ]
+        match List.map c items with
+        | [ a; b ] ->
+            fun fr ->
+                let x = a fr
+                VTuple [ x; b fr ]
+        | [ a; b; d ] ->
+            fun fr ->
+                let x = a fr
+                let y = b fr
+                VTuple [ x; y; d fr ]
+        | items -> fun fr -> VTuple [ for item in items -> item fr ]
+    // match xs with [] -> a | x :: rest -> b (순서는 반대여도 됨, 변수나 _ 만): 패턴 함수 없이 바로 나누고 칸에 씀
+    | Match (scrutinee, ([ (PNil, None, _); (PCons ((PVar _ | PWildcard), (PVar _ | PWildcard)), None, _) ]
+                       | [ (PCons ((PVar _ | PWildcard), (PVar _ | PWildcard)), None, _); (PNil, None, _) ] as cases)) ->
+        let scrutinee = c scrutinee
+        let nilBody, consPattern, consBody =
+            match cases with
+            | [ (PNil, _, nb); (cp, _, cb) ] | [ (cp, _, cb); (PNil, _, nb) ] -> nb, cp, cb
+            | _ -> failwith "unreachable"
+        let nilBody = compile scope nilBody
+        let names = patternNames consPattern |> List.distinct
+        let inner = names |> List.fold (fun s name -> snd (bindSlot s name)) scope
+        let slotOfName p = match p with PVar n -> inner.Vars[n] |> snd | _ -> -1
+        let headSlot, tailSlot =
+            match consPattern with
+            | PCons (h, t) -> slotOfName h, slotOfName t
+            | _ -> -1, -1
+        let consBody = compile inner consBody
+        fun fr ->
+            match scrutinee fr with
+            | VList [] -> nilBody fr
+            | VList (x :: rest) ->
+                if headSlot >= 0 then setSlot fr headSlot x
+                if tailSlot >= 0 then setSlot fr tailSlot (VList rest)
+                consBody fr
+            | v -> matchFailure v
     | Match (scrutinee, cases) ->
         let scrutinee = c scrutinee
         let arms = cases |> List.map (compileArm scope) |> Array.ofList
@@ -809,7 +858,7 @@ and private compile (scope: Scope) (expr: Expr) : Code =
         let m, _, body = compileArm scope (pattern, None, body)
         fun fr ->
             let v = value fr
-            if m v fr then body fr else matchFailure v
+            if m.Invoke(v, fr) then body fr else matchFailure v
     | Ctor name ->
         match Map.tryFind name scope.Consts with
         | Some (VData _ | VConstructor _ as v) -> fun _ -> v
