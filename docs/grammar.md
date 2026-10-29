@@ -580,7 +580,7 @@ type Value =
 - 본문은 **호출한 곳의 환경이 아니라 함수를 정의한 곳의 환경(`cenv`)** 에서 평가합니다.
 - 인자 이름이 함수 이름과 같으면 인자가 우선합니다. `{x = av}`를 나중에 추가하기 때문입니다.
 - **tail call은 스택을 쓰지 않습니다.** 함수 본문의 마지막 계산이 호출이면(`if`, `match`, `let`, `;`의 마지막 식 포함), 그 호출은 호출한 함수의 스택 프레임을 다시 씁니다. `let rec go n acc = if n = 0 then acc else go (n - 1) (acc + 1)`은 깊이에 상관없이 돌고, `let rec f … and g …`처럼 서로 부르는 함수와 함수 인자로 받은 함수의 호출도 같습니다(Scheme, OCaml, F#과 같음).
-  - 인터프리터는 .NET의 tail call(`<Tailcalls>true</Tailcalls>`), 컴파일러는 LLVM의 `musttail`을 씁니다.
+  - 인터프리터는 .NET의 tail call(`<Tailcalls>true</Tailcalls>`), 컴파일러는 LLVM의 `tailcc` calling convention과 `tail` 호출을 씁니다.
   - `1 + f x`, `f x :: rest`처럼 호출 뒤에 할 일이 남은 호출은 tail call이 아닙니다. 이런 재귀의 깊이는 스택 크기(512MB)가 정합니다.
 
 ### 성질

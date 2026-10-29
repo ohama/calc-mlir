@@ -13,7 +13,7 @@ type Tools =
       /// 빌드 출력 폴더로 복사된 runtime/runtime.c
       Runtime: string
       /// 생성한 코드를 컴파일하는 clang 의 최적화 수준. 기본은 -O2.
-      /// tail call 은 musttail 이라 -O0 에서도 보장됨 (테스트가 -O0 으로 확인)
+      /// tail call 은 tailcc 의 tail 호출이라 -O0 에서도 보장됨 (테스트가 -O0 으로 확인)
       OptimizationLevel: string }
 
 /// 외부 도구 실행이 실패함 (도구의 표준 에러를 담음)

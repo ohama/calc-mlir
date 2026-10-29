@@ -39,6 +39,9 @@ type CExpr =
     | CMakeClosure of funcName: string * captured: string list
     /// 클로저 간접 호출
     | CApply of CExpr * CExpr
+    /// 이름이 알려진 함수에 인자를 모두 주는 호출: 최상위 함수 funcName 을 (클로저, 인자...) 로 직접 부름.
+    /// 클로저는 그 함수의 바깥 클로저 (캡처한 값을 꺼내는 곳). 중간 클로저를 만들지 않음
+    | CCallDirect of funcName: string * closure: CExpr * args: CExpr list
     /// let rec ... and ...: 그룹의 클로저(CMakeClosure)를 모두 만든 뒤 서로를 가리키는 칸을 채움
     | CLetRecGroup of closures: (string * CExpr) list * body: CExpr
     /// [] (즉시값)
@@ -56,10 +59,11 @@ type CExpr =
     /// try: 런타임의 calc_try 가 _setjmp 한 뒤 body 클로저를 () 로 부르고, raise 되면 handler 클로저를 예외 값으로 부름
     | CTry of body: CExpr * handler: CExpr
 
-/// fun param -> body 를 최상위로 옮긴 것. 호출 규약은 (클로저, 인자) -> 결과 (D4)
+/// fun param -> body 를 최상위로 옮긴 것. 호출 규약은 (클로저, 인자...) -> 결과 (D4).
+/// 클로저로 부르는 함수는 인자가 하나, 인자를 모두 받는 direct 함수(CCallDirect)는 여럿
 type CFunction =
     { Name: string
-      Param: string
+      Params: string list
       /// let rec 으로 정의한 함수의 이름. 본문에서 이 이름은 클로저 자신
       Self: string option
       /// 클로저에 저장한 변수. 순서가 클로저의 칸 순서
@@ -91,6 +95,7 @@ let rec freeVars (expr: CExpr) : Set<string> =
     | CPrim (_, args) -> args |> List.map freeVars |> Set.unionMany
     | CMakeClosure (_, captured) -> Set.ofList captured
     | CApply (f, a) -> Set.union (freeVars f) (freeVars a)
+    | CCallDirect (_, closure, args) -> (closure :: args) |> List.map freeVars |> Set.unionMany
     | CLetRecGroup (closures, body) ->
         let names = closures |> List.map fst |> Set.ofList
         Set.difference (Set.unionMany (freeVars body :: (closures |> List.map (snd >> freeVars)))) names

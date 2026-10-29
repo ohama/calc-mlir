@@ -365,6 +365,7 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
         fb.Emit(sprintf "%s = llvm.ptrtoint %s : !llvm.ptr to i64" r block)
         r
     | CApply (f, a) -> emitApply fb env "" f a
+    | CCallDirect (funcName, closure, args) -> emitCallDirect fb env "" funcName closure args
     // 런타임의 calc_try 가 _setjmp 한 뒤 본문 클로저를 부름 (setjmp 를 한 함수가 살아 있는 동안만 longjmp 할 수 있으므로 C 에서)
     | CTry (body, handler) ->
         let b = emitExpr fb env body
@@ -403,7 +404,7 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
                 emitIf fb cond (fun () -> emitExpr fb (emitBind fb pattern v env) body) (fun () -> emitCases rest)
         emitCases cases
 
-/// f a: 클로저의 1번 칸에서 코드 포인터를 꺼내 (클로저, 인자) 로 간접 호출. tailKind 는 "" 또는 "musttail "
+/// f a: 클로저의 1번 칸에서 코드 포인터를 꺼내 (클로저, 인자) 로 간접 호출. tailKind 는 "" 또는 "tail "
 and private emitApply (fb: FunctionBuilder) (env: Map<string, string>) (tailKind: string) (f: CExpr) (a: CExpr) =
     let fv = emitExpr fb env f
     let av = emitExpr fb env a
@@ -412,7 +413,20 @@ and private emitApply (fb: FunctionBuilder) (env: Map<string, string>) (tailKind
     let code = fb.Fresh()
     fb.Emit(sprintf "%s = llvm.load %s : !llvm.ptr -> !llvm.ptr" code (emitSlot fb block 1))
     let r = fb.Fresh()
-    fb.Emit(sprintf "%s = llvm.call %s%s(%s, %s) : !llvm.ptr, (!llvm.ptr, i64) -> i64" r tailKind code block av)
+    fb.Emit(sprintf "%s = llvm.call tailcc %s%s(%s, %s) : !llvm.ptr, (!llvm.ptr, i64) -> i64" r tailKind code block av)
+    r
+
+/// 알려진 함수 호출: 최상위 함수를 (클로저, 인자...) 로 직접 부름. 클로저와 인자는 왼쪽부터 계산
+and private emitCallDirect (fb: FunctionBuilder) (env: Map<string, string>) (tailKind: string) (funcName: string) (closure: CExpr) (args: CExpr list) =
+    let cv = emitExpr fb env closure
+    let values = args |> List.map (emitExpr fb env)
+    let block = fb.Fresh()
+    fb.Emit(sprintf "%s = llvm.inttoptr %s : i64 to !llvm.ptr" block cv)
+    let r = fb.Fresh()
+    let types = List.replicate values.Length "i64" |> String.concat ", "
+    fb.Emit(
+        sprintf "%s = llvm.call tailcc %s@%s%s(%s) : (!llvm.ptr, %s) -> i64"
+            r tailKind fb.Strings.Prefix funcName (String.concat ", " (block :: values)) types)
     r
 
 /// match 분기의 조건 (i1): 패턴 검사, 가드가 있으면 패턴이 맞을 때만 가드를 계산
@@ -516,10 +530,10 @@ and private emitBind (fb: FunctionBuilder) (pattern: Ast.Pattern) (v: string) (e
             List.fold2 (fun acc n r -> Map.add n r acc) env names results
     | _ -> env
 
-/// 함수 본문의 tail position: 값을 llvm.return 으로 돌려줌. 끝이 호출이면 musttail 호출 바로 뒤에 llvm.return
-/// (호출한 함수의 스택 프레임을 다시 씀. 최적화 수준과 상관없이 LLVM 이 보장).
+/// 함수 본문의 tail position: 값을 llvm.return 으로 돌려줌. 끝이 호출이면 tail 호출 바로 뒤에 llvm.return
+/// (호출한 함수의 스택 프레임을 다시 씀. 함수가 모두 tailcc 라서 인자 수가 달라도 최적화 수준과 상관없이 LLVM 이 보장).
 /// 그래서 tail position 의 if 와 match 는 scf.if 가 아니라 블록과 llvm.cond_br: scf.if 안의 호출 뒤에는
-/// 결과를 모으는 분기가 있어서 musttail 이 될 수 없음. tail position 이 아닌 곳은 emitExpr (scf.if)
+/// 결과를 모으는 분기가 있어서 tail call 이 될 수 없음. tail position 이 아닌 곳은 emitExpr (scf.if)
 and private emitTail (fb: FunctionBuilder) (env: Map<string, string>) (expr: CExpr) : unit =
     let branch (cond: string) (thenBranch: unit -> unit) (elseBranch: unit -> unit) =
         let thenBlock = fb.FreshBlock()
@@ -535,7 +549,8 @@ and private emitTail (fb: FunctionBuilder) (env: Map<string, string>) (expr: CEx
     | CIf (cond, thenExpr, elseExpr) ->
         let c = untagBool fb (emitExpr fb env cond)
         branch c (fun () -> emitTail fb env thenExpr) (fun () -> emitTail fb env elseExpr)
-    | CApply (f, a) -> fb.Emit(sprintf "llvm.return %s : i64" (emitApply fb env "musttail " f a))
+    | CApply (f, a) -> fb.Emit(sprintf "llvm.return %s : i64" (emitApply fb env "tail " f a))
+    | CCallDirect (funcName, closure, args) -> fb.Emit(sprintf "llvm.return %s : i64" (emitCallDirect fb env "tail " funcName closure args))
     | CMatch (scrutinee, cases) ->
         let v = emitExpr fb env scrutinee
         let rec emitCases cases =
@@ -566,12 +581,19 @@ let private emitFunction (strings: StringTable) (sb: StringBuilder) (f: CFunctio
             fb.Emit(sprintf "%s = llvm.ptrtoint %%closure : !llvm.ptr to i64" v)
             [ name, v ]
         | None -> []
-    // 인자가 가장 나중: let rec f f = ... 이면 본문의 f 는 인자 (인터프리터와 같음)
-    let env = Map.ofList (captured @ self @ [ f.Param, "%arg" ])
-    // 본문 끝(들)은 llvm.return. 모든 함수의 signature 가 같아서 다른 클로저를 musttail 로 부를 수 있음
+    // 클로저로 부르는 함수는 %arg, direct 함수는 %arg0, %arg1, ...
+    let parameters =
+        match f.Params with
+        | [ p ] -> [ p, "%arg" ]
+        | ps -> ps |> List.mapi (fun i p -> p, sprintf "%%arg%d" i)
+    // 인자가 가장 나중 (뒤 인자가 앞 인자를 가림): let rec f f = ... 이면 본문의 f 는 인자 (인터프리터와 같음)
+    let env = Map.ofList (captured @ self @ parameters)
+    // 본문 끝(들)은 llvm.return. tail position 의 호출은 tail call
     emitTail fb env f.Body
-    // internal: 모듈 밖에서 보이지 않음. 여러 프로그램의 오브젝트를 한 실행 파일로 링크해도 이름이 겹치지 않음
-    sb.AppendLine(sprintf "llvm.func internal @%s%s(%%closure: !llvm.ptr, %%arg: i64) -> i64 {" strings.Prefix f.Name) |> ignore
+    // internal: 모듈 밖에서 보이지 않음. 여러 프로그램의 오브젝트를 한 실행 파일로 링크해도 이름이 겹치지 않음.
+    // tailcc: tail 호출을 인자 수가 다른 함수 사이에서도 보장하는 calling convention. C 는 calc_apply 를 거쳐 부름
+    let signature = parameters |> List.map (fun (_, v) -> v + ": i64") |> String.concat ", "
+    sb.AppendLine(sprintf "llvm.func internal tailcc @%s%s(%%closure: !llvm.ptr, %s) -> i64 {" strings.Prefix f.Name signature) |> ignore
     sb.Append(fb.Text) |> ignore
     sb.AppendLine("}").AppendLine() |> ignore
 
@@ -587,6 +609,15 @@ let private declarations =
       "llvm.func @calc_compare(i64, i64) -> i32"
       "llvm.func @calc_match_failure(i64)"
       "llvm.func @calc_try(i64, i64) -> i64"
+      // 런타임(C)이 클로저를 부르는 함수 (calc_try). 클로저의 함수는 tailcc 라 C 에서 바로 부를 수 없으므로 여기서 정의.
+      // weak_odr: 모듈 여럿(테스트의 buildMany)을 한 실행 파일로 링크해도 하나만 남음 (linkonce_odr 는 모듈에서 쓰지 않으면 버려짐)
+      "llvm.func weak_odr @calc_apply(%f: i64, %a: i64) -> i64 {"
+      "  %block = llvm.inttoptr %f : i64 to !llvm.ptr"
+      "  %slot = llvm.getelementptr %block[1] : (!llvm.ptr) -> !llvm.ptr, i64"
+      "  %code = llvm.load %slot : !llvm.ptr -> !llvm.ptr"
+      "  %r = llvm.call tailcc %code(%block, %a) : !llvm.ptr, (!llvm.ptr, i64) -> i64"
+      "  llvm.return %r : i64"
+      "}"
       // 내장 함수: runtime/builtins.c
       // sprintf, printf, printfn 은 Lower 가 Calc 코드로 펼치므로 런타임 함수가 없음
       for KeyValue (name, arity) in Eval.builtinArity do

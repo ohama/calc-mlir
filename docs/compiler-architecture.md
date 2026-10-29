@@ -237,6 +237,7 @@ U _GC_init  U _GC_malloc  U _printf  U _fprintf  U _exit ← 실행할 때 동�
 
 - **타입 대응:** MLIR의 `i64`는 C의 `int64_t`(`value`), `i32`는 `int32_t`, 인자 없는 함수는 `void f(void)`입니다. 플랫폼의 C calling convention 그대로 레지스터로 넘깁니다.
 - **약속을 적은 곳:** 생성 코드와 런타임 사이의 약속은 `runtime.h`에 적습니다(태그 상수, 함수 목록). 런타임 함수 이름은 모두 `calc_`로 시작합니다.
+- **생성한 함수끼리는 `tailcc`:** 클로저 함수와 direct 함수는 tail call을 보장하는 `tailcc` calling convention입니다(12장). C는 `tailcc` 함수를 부를 수 없으므로, 런타임이 클로저를 부르는 `calc_apply`는 생성한 모듈에 있습니다.
 - **런타임 함수가 필요한 연산:** 타입이 여럿일 수 있는 연산(`+`, `=`, `<`)과 바깥 세계와 닿는 일(출력, 오류 종료, GC)을 런타임이 맡습니다. 정수 사칙연산처럼 타입이 하나뿐인 연산은 인라인 `arith`로 만듭니다(설계 D6).
 
 ## 5. 지금 구조의 한계
@@ -448,39 +449,40 @@ Ast.Expr ──▶ Prelude.wrap ──▶ let rec fold f acc xs = …  in
 
 - **쓰는 정의만:** `Prelude.wrap`은 프로그램에 나오는 이름에서 시작해, 붙일 정의가 쓰는 이름을 따라 필요한 정의를 고릅니다. 위 10장의 예제는 `fold`, `reverse`, `map`만 붙습니다. 생성한 MLIR의 함수는 `@lambda_0`부터 `@lambda_13`까지 14개입니다(`fold` 3개, `reverse` 3개, `map` 4개, `length` 값 1개, `substr` 값 3개).
 - **같은 정의:** 인터프리터도 같은 `Prelude.wrap`을 거칩니다. 차등 테스트가 같은 정의의 두 실행을 비교합니다.
-- **비용:** 내장 함수였을 때는 C 루프였지만, 지금은 원소마다 `calc_apply`로 클로저를 부릅니다. 100만 개 리스트에 `range`, `map`, `filter`, `sum`, `exists`를 쓰는 프로그램이 0.04초에서 0.23초가 되었습니다. 알려진 함수를 direct call로 부르는 최적화(단계 9)가 이 비용을 줄일 수 있습니다.
+- **비용:** 내장 함수였을 때는 C 루프였지만, 지금은 원소마다 클로저를 부릅니다. 100만 개 리스트에 `range`, `map`, `filter`, `sum`, `exists`를 쓰는 프로그램이 0.04초에서 0.23초가 되었습니다. 0.34.0의 알려진 함수 direct call(15장)로 0.12초가 되었습니다.
 - **`upper`, `lower`, `trim`:** C 표준 라이브러리 대신 .NET에서 만든 표(`unicode.h`)를 씁니다. `ß`와 `İ`처럼 invariant 변환이 그대로 두는 문자까지 인터프리터와 같습니다.
 
 ## 12. tail call
 
-함수 본문의 tail position에 있는 호출은 `musttail`로 부르고, 바로 뒤에서 그 결과를 `llvm.return`합니다. LLVM은 `musttail` 호출을 최적화 수준과 상관없이 호출한 함수의 스택 프레임을 다시 쓰는 jump로 만듭니다.
+함수 본문의 tail position에 있는 호출은 `tail` 표시를 붙여 부르고, 바로 뒤에서 그 결과를 `llvm.return`합니다. 생성한 함수는 모두 `tailcc` calling convention입니다. LLVM은 `tailcc` 함수 사이의 `tail` 호출을 최적화 수준과 상관없이 호출한 함수의 스택 프레임을 다시 쓰는 jump로 만듭니다.
 
 ```
 let rec go n acc = if n = 0 then acc else go (n - 1) (acc + 1) in go 10 0
 ```
 
-`go`는 커링되어 함수 두 개가 됩니다. `n`을 받아 클로저를 만드는 함수와, `n`을 캡처하고 `acc`를 받는 아래 `@lambda_0`입니다(`--emit-mlir`, 일부 생략).
+`go`는 함수 세 개가 됩니다. `n`을 받아 클로저를 만드는 `@lambda_0`과 `acc`를 받는 `@lambda_1`(값으로 쓸 때)이 있고, 인자를 모두 받는 `@lambda_0_direct`가 있습니다(15장). 아래는 `@lambda_0_direct`입니다(`--emit-mlir`, 일부 생략).
 
 ```mlir
-llvm.func internal @lambda_0(%closure: !llvm.ptr, %arg: i64) -> i64 {
-  ...                                                     // %v1 = go, %v3 = n (캡처한 값)
-  %v7 = arith.cmpi eq, %v6, %v8 : i64                     // n = 0
-  llvm.cond_br %v7, ^bb1, ^bb2
+llvm.func internal tailcc @lambda_0_direct(%closure: !llvm.ptr, %arg0: i64, %arg1: i64) -> i64 {
+  %v1 = llvm.ptrtoint %closure : !llvm.ptr to i64                // go (바깥 클로저)
+  %v3 = llvm.call @calc_eq(%arg0, %v2) : (i64, i64) -> i64       // n = 0
+  ...
+  llvm.cond_br %v4, ^bb1, ^bb2
 ^bb1:
-  llvm.return %arg : i64                                  // acc
+  llvm.return %arg1 : i64                                        // acc
 ^bb2:
-  ...
-  %v25 = llvm.call %v23(%v22, %v21) : !llvm.ptr, (!llvm.ptr, i64) -> i64          // go (n - 1): 결과를 다시 적용하므로 보통 호출
-  %v27 = llvm.call @calc_add(%arg, %v26) : (i64, i64) -> i64                      // acc + 1
-  ...
-  %v31 = llvm.call musttail %v29(%v28, %v27) : !llvm.ptr, (!llvm.ptr, i64) -> i64 // (go (n - 1)) (acc + 1)
-  llvm.return %v31 : i64
+  ...                                                            // %v18 = n - 1
+  %v20 = llvm.call @calc_add(%arg1, %v19) : (i64, i64) -> i64    // acc + 1
+  %v21 = llvm.inttoptr %v1 : i64 to !llvm.ptr
+  %v22 = llvm.call tailcc tail @lambda_0_direct(%v21, %v18, %v20) : (!llvm.ptr, i64, i64) -> i64
+  llvm.return %v22 : i64
 }
 ```
 
-- **tail position의 분기는 블록으로:** tail position이 아닌 `if`와 `match`는 값을 내는 `scf.if`입니다. 그런데 `scf.if` 안의 호출은 뒤에 결과를 모으는 분기가 있어서 `musttail`이 될 수 없습니다(`musttail` 바로 뒤에는 `ret`만 올 수 있음). 그래서 함수 본문의 tail position은 `Codegen.emitTail`이 따로 만듭니다. 분기는 `llvm.cond_br`와 블록으로, 끝은 분기마다 `llvm.return`으로 만듭니다. tail position은 본문, `let`과 `;`의 마지막 식, `if`의 두 분기, `match`의 분기 본문입니다. 마지막 분기 뒤의 `Match failure`는 `llvm.unreachable`로 끝납니다.
-- **signature가 같아서 가능:** `musttail`은 호출하는 함수와 호출되는 함수의 signature가 같아야 합니다. 모든 클로저 함수가 `(!llvm.ptr, i64) -> i64`이므로, 어떤 클로저든 다른 클로저를 `musttail`로 부를 수 있습니다. 진입 함수(`@calc_main() -> i64`)는 signature가 달라서 tail call을 하지 않습니다. 진입 함수는 한 번만 불리므로 문제가 없습니다.
-- **`-O2`만으로는 보장되지 않음:** `musttail`이 없던 0.30.0도 `-O2`에서는 LLVM이 대부분의 tail call을 jump로 바꿨습니다(위 예제를 1억 번 돌려도 통과). 같은 코드를 `-O0`으로 컴파일하면 깊이 1000만에서 stack overflow로 죽었습니다(exit 138). 지금은 `-O0`에서도 통과하고, 테스트가 `Toolchain.Tools.OptimizationLevel = "-O0"`으로 이것을 확인합니다.
+- **tail position의 분기는 블록으로:** tail position이 아닌 `if`와 `match`는 값을 내는 `scf.if`입니다. 그런데 `scf.if` 안의 호출은 뒤에 결과를 모으는 분기가 있어서 tail call이 될 수 없습니다(tail call 바로 뒤에는 `ret`만 올 수 있음). 그래서 함수 본문의 tail position은 `Codegen.emitTail`이 따로 만듭니다. 분기는 `llvm.cond_br`와 블록으로, 끝은 분기마다 `llvm.return`으로 만듭니다. tail position은 본문, `let`과 `;`의 마지막 식, `if`의 두 분기, `match`의 분기 본문입니다. 마지막 분기 뒤의 `Match failure`는 `llvm.unreachable`로 끝납니다.
+- **`musttail`이 아니라 `tailcc`:** 0.31.0~0.33.0은 `musttail`을 썼습니다. `musttail`은 호출하는 함수와 호출되는 함수의 signature가 같아야 합니다. 클로저 함수가 모두 `(!llvm.ptr, i64) -> i64`일 때는 이것으로 충분했습니다. 그런데 인자를 모두 받는 direct 함수(15장)는 인자 수만큼 signature가 다릅니다. `tailcc`는 signature가 달라도 `tail` 호출을 보장합니다(arm64와 x86-64). 그래서 0.34.0부터 생성한 함수를 모두 `tailcc`로 만듭니다. 진입 함수(`@calc_main() -> i64`)는 C에서 부르므로 보통 C calling convention이고, 그 안의 호출은 tail call이 아닙니다. 진입 함수는 한 번만 불리므로 문제가 없습니다.
+- **C에서 클로저 부르기:** C는 `tailcc` 함수를 부를 수 없습니다. 그래서 런타임(`calc_try`)이 클로저를 부르는 `calc_apply`를 C가 아니라 생성한 모듈에 정의합니다(보통 C calling convention 함수가 `tailcc`로 클로저를 부름). 테스트는 모듈 여럿을 한 실행 파일로 링크하므로 `weak_odr`로 정의합니다. `linkonce_odr`는 그 모듈에서 쓰지 않으면 버려져서 링크 오류가 납니다.
+- **`-O2`만으로는 보장되지 않음:** `musttail`이 없던 0.30.0도 `-O2`에서는 LLVM이 대부분의 tail call을 jump로 바꿨습니다. 같은 코드를 `-O0`으로 컴파일하면 깊이 1000만에서 stack overflow로 죽었습니다(exit 138). 지금은 `-O0`에서도 통과하고, 테스트가 `Toolchain.Tools.OptimizationLevel = "-O0"`으로 이것을 확인합니다. 인자 수가 다른 함수 사이의 tail call(`one n → two n d → three n d z → one …`)도 같은 테스트에 있습니다.
 
 ## 13. 예외
 
@@ -513,7 +515,7 @@ value calc_try(value body, value handler) {
 - **`_setjmp`와 `_longjmp`:** `setjmp`와 달리 시그널 마스크를 저장하지 않아서 시스템 호출이 없습니다.
 - **잡히지 않은 예외:** `calc_try`가 없으면 `calc_raise`가 `Failure msg`는 `Error: msg`로, 나머지는 `Error: exception <값>`으로 출력하고 종료 코드 1로 끝냅니다(인터프리터의 `CalcException.Message`와 같음).
 - **생성자:** 예외는 `exn` 타입의 생성자라서 보통 생성자처럼 이름 전역과 `DATA` 블록이 됩니다(9장). 실행 중에는 이름 포인터로 구분하므로, 타입 검사가 같은 이름의 예외를 프로그램에 하나만 허용합니다.
-- **tail call:** `try`의 본문과 handler는 클로저 안에서 불리므로 `try` 바깥 함수의 tail position이 아닙니다. 본문 안의 tail call은 그 클로저 안에서 그대로 `musttail`입니다(12장).
+- **tail call:** `try`의 본문과 handler는 클로저 안에서 불리므로 `try` 바깥 함수의 tail position이 아닙니다. 본문 안의 tail call은 그 클로저 안에서 그대로 tail call입니다(12장).
 
 ## 14. 문자열 포맷
 
@@ -531,6 +533,26 @@ $"a{x}"
 - **범위:** 펼친 코드는 `toString`, `print`, `println`이 내장 함수인 범위에서 낮춥니다(`Lower`의 `scope`가 빈 집합). 사용자가 `toString`을 가려도 포맷의 결과는 같습니다. 인터프리터도 펼친 코드를 처음 환경(`Eval.builtins`)에서 평가합니다.
 - **`sprintf`를 가린 경우:** `Lower`와 `Infer`는 `sprintf`가 아직 내장 함수일 때만 포맷으로 다룹니다. `Infer`는 처음 환경의 `sprintf`에 보통 타입 대신 표시(`$format:sprintf`)를 넣어 둡니다. 사용자가 같은 이름을 묶으면 그 표시가 사라집니다.
 - **C 런타임:** 바뀐 것이 없습니다. 모듈의 선언에서도 `sprintf`, `printf`, `printfn`은 뺍니다.
+
+## 15. 알려진 함수의 direct call
+
+커링된 함수 `fold f acc xs`를 부르면 인자 하나마다 클로저 호출이 한 번씩 일어납니다. `fold f`가 클로저를 할당하고, `(fold f) acc`가 또 할당하고, 마지막 호출에서야 본문이 실행됩니다. 원소마다 이것을 반복하는 prelude 함수(`fold`, `map`, `filter`)에서는 이 비용이 큽니다.
+
+**이름에 묶은 함수**(`let f a b = …`, `let rec`, `and`)는 그 이름으로 부를 때 어떤 함수인지 컴파일할 때 압니다. 그래서 인자를 모두 받는 함수를 하나 더 만들고, 인자가 다 모인 호출은 그 함수를 바로 부릅니다.
+
+```
+let rec go n acc = …
+  @lambda_0         (closure, n)        -> acc 를 받는 클로저   값으로 쓸 때 (map (go 1) xs)
+  @lambda_1         (closure, acc)      -> 본문                 
+  @lambda_0_direct  (closure, n, acc)   -> 본문                 go 10 0, 본문의 go (n - 1) (acc + 1)
+```
+
+- **Lower:** `Let`, `LetRec`, `LetRecs`의 값이 `fun a -> fun b -> …`이면(인자 표기 `let a = (a : t) in`과 결과 표기는 건너뜀) `State.AddCurried`가 두 가지를 만듭니다. 하나는 하나씩 받는 클로저들이고, 다른 하나는 `Params`가 여럿인 direct 함수(`CFunction`)입니다. 본문은 한 번 낮춘 것을 함께 씁니다. 그래서 안쪽에 정의한 함수가 두 번 생기지 않습니다.
+- **같은 캡처:** direct 함수는 바깥 클로저(그 이름의 값)를 `%closure`로 받아서 같은 칸에서 캡처한 값을 꺼냅니다. 바깥 클로저의 캡처는 "본문의 free variable − 인자 − 자기 자신"이고, direct 함수에 필요한 것도 같습니다. 그래서 캡처할 값을 따로 들고 다닐 필요가 없습니다.
+- **호출:** 범위의 `Known`에 있는 이름에 인자를 그 수 이상 주면 `CCallDirect (direct, CVar 이름, 인자들)`입니다. 모자라면 지금처럼 클로저 적용(partial application)이고, 남는 인자는 결과에 차례로 적용합니다. 인자가 하나인 함수는 바깥 클로저의 함수가 곧 direct 함수입니다(간접 호출 대신 직접 호출).
+- **다시 묶으면 빠짐:** `let`, 함수 인자, 패턴이 같은 이름을 묶으면 `Known`에서 뺍니다(`Lower.bind`). `let f a b = … in fun f -> f 1 2`의 안쪽 `f`는 인자이므로 클로저 적용입니다.
+- **이름을 먼저 정함:** 재귀 호출이 direct 함수 이름을 알아야 하므로, 바깥 클로저 이름(`lambda_N`)과 direct 함수 이름(`lambda_N_direct`)을 본문을 낮추기 전에 정합니다(`State.Reserve`). `and` 그룹은 모든 함수의 이름을 먼저 정합니다.
+- **효과:** 100만 개 리스트에 `range`, `map`, `filter`, `sum`, `exists`를 쓰는 프로그램이 0.24초에서 0.12초가 되었습니다(`-O2`, 3번 잰 값). 인터프리터는 바뀌지 않았습니다.
 
 ## 관련 문서
 

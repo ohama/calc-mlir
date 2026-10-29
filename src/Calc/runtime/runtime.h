@@ -63,7 +63,8 @@ int32_t calc_compare(value a, value b); /* -1, 0, 1 */
 /* "Error: Match failure: <값>" (Eval.formatValue 형식) 을 출력하고 종료 */
 void calc_match_failure(value v);
 
-/* 클로저 f 를 인자 하나로 호출. 생성한 코드의 호출 규약 (클로저, 인자) -> 결과 와 같음 */
+/* 클로저 f 를 인자 하나로 호출. 생성한 코드의 함수는 tailcc 라 C 에서 바로 부를 수 없으므로,
+   생성한 모듈이 정의함 (Codegen 의 declarations) */
 value calc_apply(value f, value arg);
 
 /* 예외. try e with ... 는 calc_try(fun () -> e, fun $exn -> match $exn with ... | _ -> raise $exn) (Lower).

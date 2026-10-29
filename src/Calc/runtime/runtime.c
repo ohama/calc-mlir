@@ -67,11 +67,6 @@ int64_t calc_list_length(value v) {
     return n;
 }
 
-value calc_apply(value f, value arg) {
-    value (*code)(value *, value) = (value(*)(value *, value))CALC_FIELD(f, 1);
-    return code((value *)f, arg);
-}
-
 /* ---- UTF-16 버퍼와 formatValue ---- */
 
 static void buffer_reserve(calc_buffer *b, int64_t extra) {

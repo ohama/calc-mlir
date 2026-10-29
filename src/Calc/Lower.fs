@@ -4,17 +4,59 @@ module Lower
 open Ast
 open Core
 
+/// 이름으로 알려진 함수: 인자 Arity 개를 모두 받는 최상위 함수 Direct. 그 이름의 값(바깥 클로저)을 클로저로 받음
+type private Known = { Direct: string; Arity: int }
+
+/// 지금 범위: 보이는 변수와, 그 가운데 알려진 함수. 이름을 다시 묶으면 알려진 함수에서 빠짐
+type private Scope =
+    { Vars: Set<string>
+      Known: Map<string, Known> }
+
+let private emptyScope = { Vars = Set.empty; Known = Map.empty }
+let private bind (name: string) (scope: Scope) = { Vars = Set.add name scope.Vars; Known = Map.remove name scope.Known }
+let private bindAll (names: seq<string>) (scope: Scope) = Seq.fold (fun acc name -> bind name acc) scope names
+let private know (name: string) (known: Known) (scope: Scope) = { bind name scope with Known = Map.add name known scope.Known }
+
 /// 프로그램 하나를 바꾸는 동안의 상태: 만든 함수와 다음 이름 번호 (테스트가 병렬이라 호출마다 새로)
 type private State() =
     let functions = ResizeArray<CFunction>()
+    let mutable next = 0
 
-    member _.AddFunction(param: string, self: string option, body: CExpr) =
-        let name = sprintf "lambda_%d" functions.Count
+    member _.FreshName() =
+        let name = sprintf "lambda_%d" next
+        next <- next + 1
+        name
+
+    member _.AddFunctionNamed(name: string, param: string, self: string option, body: CExpr) =
         // 자유 변수 중 인자와 자기 자신을 뺀 나머지를 캡처. 정렬된 순서가 클로저의 칸 순서
         let bound = Set.ofList (param :: Option.toList self)
         let captured = Set.toList (Set.difference (freeVars body) bound)
-        functions.Add { Name = name; Param = param; Self = self; Captured = captured; Body = body }
+        functions.Add { Name = name; Params = [ param ]; Self = self; Captured = captured; Body = body }
         CMakeClosure (name, captured)
+
+    member this.AddFunction(param: string, self: string option, body: CExpr) =
+        this.AddFunctionNamed(this.FreshName(), param, self, body)
+
+    /// 이름에 묶을 함수의 바깥 클로저 이름과 Known. 본문의 (재귀) 호출이 쓰므로 본문을 낮추기 전에 정함.
+    /// 인자가 하나면 바깥 클로저의 함수가 곧 direct 함수
+    member this.Reserve(arity: int) =
+        let outer = this.FreshName()
+        outer, { Direct = (if arity = 1 then outer else outer + "_direct"); Arity = arity }
+
+    /// 인자 parameters 를 하나씩 받는 클로저들(값으로 쓸 때)과, 인자를 모두 받는 direct 함수.
+    /// 둘은 한 번 낮춘 본문을 함께 씀. direct 함수는 바깥 클로저를 받아 같은 칸에서 캡처한 값을 꺼냄
+    /// (바깥 클로저의 캡처 = 본문의 자유 변수 - 인자 - 자기 자신 = direct 함수의 캡처)
+    member this.AddCurried(outer: string, parameters: string list, self: string option, body: CExpr) =
+        match parameters with
+        | first :: rest ->
+            let inner = List.foldBack (fun p acc -> this.AddFunction(p, None, acc)) rest body
+            let closure = this.AddFunctionNamed(outer, first, self, inner)
+            match closure with
+            | CMakeClosure (_, captured) when not rest.IsEmpty ->
+                functions.Add { Name = outer + "_direct"; Params = parameters; Self = self; Captured = captured; Body = body }
+            | _ -> ()
+            closure
+        | [] -> failwith "Lower: function without parameters"
 
     member _.Functions = List.ofSeq functions
 
@@ -34,10 +76,20 @@ let rec private spine (expr: Expr) =
         head, args @ [ a ]
     | _ -> expr, []
 
+/// fun a -> fun b -> body 를 ([a; b], body) 로. 인자 표기(let a = (a : t) in ...)와 결과 표기는 값이 그대로라 건너뜀
+let rec private lambdaChain (expr: Expr) =
+    match expr with
+    | Lambda (param, body) ->
+        let parameters, inner = lambdaChain body
+        param :: parameters, inner
+    | Let (name, Annot (Var same, _), body) when name = same -> lambdaChain body
+    | Annot (e, _) -> lambdaChain e
+    | _ -> [], expr
+
 /// ctors 는 지금 범위의 생성자 이름 → 인자가 있는지. type 선언이 범위를 넓힘 (안쪽 선언이 같은 이름을 가림).
 /// scope 는 지금 범위의 변수. 범위에 없는 이름은 내장 함수 (let 으로 가린 내장 함수는 보통 변수)
-let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Set<string>) (expr: Expr) : CExpr =
-    let isBuiltin name = not (Set.contains name scope) && Eval.builtinArity.ContainsKey name
+let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Scope) (expr: Expr) : CExpr =
+    let isBuiltin name = not (Set.contains name scope.Vars) && Eval.builtinArity.ContainsKey name
     let prim p args = CPrim (p, List.map (lower state ctors scope) args)
     match expr with
     | Number n -> CInt n
@@ -49,7 +101,13 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Set<stri
     | Seq (first, rest) -> CLet ("$seq", lower state ctors scope first, lower state ctors scope rest)
     | Var name when isBuiltin name -> builtinValue state name
     | Var name -> CVar name
-    | Let (name, value, body) -> CLet (name, lower state ctors scope value, lower state ctors (Set.add name scope) body)
+    // 이름에 묶은 함수: 이 이름에 인자를 모두 주는 호출은 direct 함수로
+    | Let (name, value, body) when not (fst (lambdaChain value)).IsEmpty ->
+        let parameters, inner = lambdaChain value
+        let outer, known = state.Reserve parameters.Length
+        let closure = state.AddCurried(outer, parameters, None, lower state ctors (bindAll parameters scope) inner)
+        CLet (name, closure, lower state ctors (know name known scope) body)
+    | Let (name, value, body) -> CLet (name, lower state ctors scope value, lower state ctors (bind name scope) body)
     | If (c, t, e) -> CIf (lower state ctors scope c, lower state ctors scope t, lower state ctors scope e)
     | Add (a, b) -> prim PAdd [ a; b ]
     | Subtract (a, b) -> prim PSubtract [ a; b ]
@@ -67,17 +125,25 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Set<stri
     // 단락 평가: 오른쪽은 if 의 한 분기에서만 계산
     | And (a, b) -> CIf (lower state ctors scope a, lower state ctors scope b, CBool false)
     | Or (a, b) -> CIf (lower state ctors scope a, CBool true, lower state ctors scope b)
-    | Lambda (param, body) -> state.AddFunction(param, None, lower state ctors (Set.add param scope) body)
-    // let rec f x = body in e: 본문의 f 는 클로저 자신이라 캡처하지 않음
+    | Lambda (param, body) -> state.AddFunction(param, None, lower state ctors (bind param scope) body)
+    // let rec f x = body in e: 본문의 f 는 클로저 자신이라 캡처하지 않음. 본문의 재귀 호출도 direct 함수로
     | LetRec (name, param, body, inExpr) ->
-        let closure = state.AddFunction(param, Some name, lower state ctors (scope |> Set.add name |> Set.add param) body)
-        CLet (name, closure, lower state ctors (Set.add name scope) inExpr)
+        let rest, inner = lambdaChain body
+        let parameters = param :: rest
+        let outer, known = state.Reserve parameters.Length
+        let scope = know name known scope
+        CLet (name, state.AddCurried(outer, parameters, Some name, lower state ctors (bindAll parameters scope) inner), lower state ctors scope inExpr)
     // 함수마다 클로저. 자기 자신은 %closure, 다른 함수는 캡처한 칸 (Codegen 이 나중에 채움)
     | LetRecs (bindings, inExpr) ->
-        let groupScope = bindings |> List.fold (fun acc (name, _, _) -> Set.add name acc) scope
-        let closures =
+        let reserved =
             [ for name, param, body in bindings ->
-                  name, state.AddFunction(param, Some name, lower state ctors (Set.add param groupScope) body) ]
+                  let rest, inner = lambdaChain body
+                  let outer, known = state.Reserve(1 + rest.Length)
+                  name, outer, known, param :: rest, inner ]
+        let groupScope = reserved |> List.fold (fun acc (name, _, known, _, _) -> know name known acc) scope
+        let closures =
+            [ for name, outer, _, parameters, inner in reserved ->
+                  name, state.AddCurried(outer, parameters, Some name, lower state ctors (bindAll parameters groupScope) inner) ]
         CLetRecGroup (closures, lower state ctors groupScope inExpr)
     // 생성자를 바로 적용하면 그 자리에서 블록을 만듦 (인터프리터의 VConstructor 호출과 같은 결과)
     | App (Ctor name, a) when Map.tryFind name ctors = Some true -> CData (name, Some (lower state ctors scope a))
@@ -91,7 +157,7 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Set<stri
     // 포맷의 함수 (Format.expand) 는 내장 함수(toString, print)만 쓰므로 사용자 이름이 없는 범위에서 낮춤
     | Printf (kind, format) ->
         match Format.parse format with
-        | Ok pieces -> lower state ctors Set.empty (Format.expand kind pieces)
+        | Ok pieces -> lower state ctors emptyScope (Format.expand kind pieces)
         | Error message -> failwithf "Lower: %s" message // 타입 검사를 통과했으므로 생기지 않음
     // 인자가 다 모인 내장 함수는 런타임 함수를 바로 호출. 남는 인자는 결과에 차례로 적용
     | App _ when (match spine expr with
@@ -103,6 +169,16 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Set<stri
         let arity = Eval.builtinArity[name]
         let call = CBuiltin (name, args |> List.take arity |> List.map (lower state ctors scope))
         args |> List.skip arity |> List.fold (fun f a -> CApply (f, lower state ctors scope a)) call
+    // 알려진 함수에 인자를 모두 주면 direct 함수를 바로 부름. 남는 인자는 결과에 차례로 적용
+    | App _ when (match spine expr with
+                  | Var name, args -> scope.Known |> Map.tryFind name |> Option.exists (fun k -> args.Length >= k.Arity)
+                  | _ -> false) ->
+        let name, args = match spine expr with
+                         | Var name, args -> name, args
+                         | _ -> failwith "unreachable"
+        let known = scope.Known[name]
+        let call = CCallDirect (known.Direct, CVar name, args |> List.take known.Arity |> List.map (lower state ctors scope))
+        args |> List.skip known.Arity |> List.fold (fun f a -> CApply (f, lower state ctors scope a)) call
     | App (f, a) -> CApply (lower state ctors scope f, lower state ctors scope a)
     | Ctor name ->
         match Map.tryFind name ctors with
@@ -114,9 +190,9 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Set<stri
     | ExceptionDecl (name, argType, body) -> lower state (Map.add name (Option.isSome argType) ctors) scope body
     // 본문은 fun () -> body, handler 는 fun $exn -> match $exn with <분기> | _ -> raise $exn (맞는 분기가 없으면 다시 raise)
     | Try (body, cases) ->
-        let handlerScope = Set.add "$exn" scope
+        let handlerScope = bind "$exn" scope
         let lowerCase (pattern, guard, handler) =
-            let scope = Set.union handlerScope (patternVars pattern)
+            let scope = bindAll (patternVars pattern) handlerScope
             pattern, Option.map (lower state ctors scope) guard, lower state ctors scope handler
         let reraise = PWildcard, None, CBuiltin ("raise", [ CVar "$exn" ])
         let handler = CMatch (CVar "$exn", List.map lowerCase cases @ [ reraise ])
@@ -129,15 +205,15 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Set<stri
     | Tuple items -> CTuple (List.map (lower state ctors scope) items)
     | Match (scrutinee, cases) ->
         let lowerCase (pattern, guard, body) =
-            let scope = Set.union scope (patternVars pattern)
+            let scope = bindAll (patternVars pattern) scope
             pattern, Option.map (lower state ctors scope) guard, lower state ctors scope body
         CMatch (lower state ctors scope scrutinee, List.map lowerCase cases)
     // let (a, b) = e in body 는 분기 하나짜리 match (일치하지 않으면 같은 Match failure)
     | LetPattern (pattern, value, body) ->
-        CMatch (lower state ctors scope value, [ pattern, None, lower state ctors (Set.union scope (patternVars pattern)) body ])
+        CMatch (lower state ctors scope value, [ pattern, None, lower state ctors (bindAll (patternVars pattern) scope) body ])
 
 let lowerProgram (expr: Expr) : CProgram =
     let state = State()
     // 'a option = None | Some of 'a 와 예외 Failure, Not_found 는 선언 없이 쓸 수 있음 (Eval 의 초기 환경과 같음)
-    let main = lower state (Map.ofList [ "None", false; "Some", true; "Failure", true; "Not_found", false ]) Set.empty expr
+    let main = lower state (Map.ofList [ "None", false; "Some", true; "Failure", true; "Not_found", false ]) emptyScope expr
     { Functions = state.Functions; Main = main }

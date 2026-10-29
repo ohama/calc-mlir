@@ -352,6 +352,19 @@ let private runCases =
           "let p = printfn \"%d\" in ignore (map p [1; 2])", ("1\n2\n", "", 0), "partial application"
           "$\"π={3}, s={\"x\"}, t={(true, [\"y\"])}\"", ("\"π=3, s=x, t=(true, [\\\"y\\\"])\"\n", "", 0), "결과 문자열은 따옴표와 이스케이프를 붙여 출력"
         ]
+      "알려진 함수의 direct 호출",
+        [
+          "let f a b = a * 10 + b in (f 1 2, f 3 4)", ("(12, 34)\n", "", 0), "인자를 모두 주면 direct 호출"
+          "let f a b = a * 10 + b in let g = f 1 in (g 2, map (f 2) [3])", ("(12, [23])\n", "", 0), "partial application 은 클로저"
+          "let id x = x in id (fun y -> y + 1) 2", ("3\n", "", 0), "남는 인자는 결과에 적용"
+          "let f a b = a + b in let f = fun x -> x * 2 in f 5", ("10\n", "", 0), "다시 묶은 이름은 보통 클로저"
+          "let f a b = a + b in (fun f -> f 1 2) (fun a b -> a - b)", ("-1\n", "", 0), "인자로 가린 이름"
+          "let k = 5 in let f a b = a + b + k in f 1 2", ("8\n", "", 0), "캡처한 값은 바깥 클로저에서"
+          "let f a b = a - b in f (print 1; 10) (print 2; 3)", ("127\n", "", 0), "인자는 왼쪽부터 계산"
+          "let f (a: int) (b: int) : int = a + b in f 1 2", ("3\n", "", 0), "인자 표기"
+          "let rec f f = f + 1 in f 1", ("2\n", "", 0), "인자가 자기 이름을 가림"
+          "let rec even n k = if n = 0 then k true else odd (n - 1) k and odd n k = if n = 0 then k false else even (n - 1) k in even 7 (fun b -> b)", ("false\n", "", 0), "and 그룹"
+        ]
       "Match failure",
         [
           "match [1] with | [] -> 0", ("", "Error: Match failure: [1]\n", 1), ""
@@ -447,11 +460,18 @@ let tests =
                 Expect.equal (Codegen.dataHeader true) 0x205L "이름 + 인자"
             }
             test "클로저는 calc_alloc 으로 할당하고 간접 호출" {
-                let mlir = Codegen.emitProgram (Program.parse "let k = 10 in let add = fun x -> x + k in add 32")
-                Expect.stringContains mlir "llvm.func internal @lambda_0(%closure: !llvm.ptr, %arg: i64) -> i64" ""
+                let mlir = Codegen.emitProgram (Program.parse "let k = 10 in (fun f -> f 32) (fun x -> x + k)")
+                Expect.stringContains mlir "llvm.func internal tailcc @lambda_0(%closure: !llvm.ptr, %arg: i64) -> i64" ""
                 Expect.stringContains mlir "llvm.call @calc_alloc(" ""
                 Expect.stringContains mlir "llvm.mlir.addressof @lambda_0" ""
                 Expect.stringContains mlir ": !llvm.ptr, (!llvm.ptr, i64) -> i64" "간접 호출"
+            }
+            test "이름에 묶은 함수는 인자를 모두 받는 함수를 직접 호출" {
+                let mlir = Codegen.emitProgram (Program.parse "let add a b = a + b in add 1 2")
+                Expect.stringContains mlir "llvm.func internal tailcc @lambda_0_direct(%closure: !llvm.ptr, %arg0: i64, %arg1: i64) -> i64" ""
+                Expect.stringContains mlir "= llvm.call tailcc @lambda_0_direct(" "직접 호출"
+                let program = mlir.Substring(mlir.IndexOf "llvm.func internal") // 선언부의 calc_apply 는 빼고
+                Expect.isFalse (program.Contains "!llvm.ptr, (!llvm.ptr, i64) -> i64") "간접 호출 없음"
             }
             test "문자열 상수는 8바이트 정렬 전역, 같은 내용은 하나" {
                 let mlir = Codegen.emitProgram (Program.parse "\"hi\" + \"hi\" + \"\"")
@@ -508,21 +528,22 @@ let tests =
 
         testList "tail call" [
             let functionsOf (mlir: string) =
-                mlir.Split("llvm.func internal @")
+                mlir.Split("llvm.func internal tailcc @")
                 |> Array.skip 1
                 |> Array.map (fun f -> f.Substring(0, f.IndexOf "\n}"))
             let lines (text: string) = text.Split('\n') |> Array.map (fun l -> l.Trim())
-            // musttail 호출 바로 다음 줄은 그 결과를 돌려주는 llvm.return (LLVM 의 musttail 조건)
-            let musttailReturns (mlir: string) =
+            // tail 호출 바로 다음 줄은 그 결과를 돌려주는 llvm.return (tailcc 의 tail call 조건)
+            let tailReturns (mlir: string) =
                 let ls = lines mlir
                 [ for i in 0 .. ls.Length - 2 do
-                      if ls[i].Contains "llvm.call musttail" then
+                      if ls[i].Contains "llvm.call tailcc tail " then
                           let result = ls[i].Substring(0, ls[i].IndexOf " =")
                           yield ls[i + 1] = sprintf "llvm.return %s : i64" result ]
-            test "tail position 의 호출은 musttail 다음 llvm.return" {
+            test "tail position 의 호출은 tail 호출 다음 llvm.return" {
                 let mlir = Codegen.emitProgram (Program.parse "let rec go n acc = if n = 0 then acc else go (n - 1) (acc + 1) in go 10 0")
-                // go (n - 1) 은 결과에 다시 적용하므로 보통 호출, 바깥 적용만 tail call
-                Expect.equal (musttailReturns mlir) [ true ] ""
+                // 본문을 함께 쓰는 두 함수(acc 를 받는 클로저, 인자를 모두 받는 direct 함수)에 하나씩. 진입 함수의 go 10 0 은 보통 호출
+                Expect.equal (tailReturns mlir) [ true; true ] ""
+                Expect.stringContains mlir "llvm.call tailcc tail @lambda_0_direct(" "재귀 호출도 direct"
             }
             test "tail position 의 if 는 블록과 llvm.cond_br, 안쪽 if 는 scf.if" {
                 let mlir = Codegen.emitProgram (Program.parse "fun x -> if x = 1 then (if x = 2 then 3 else 4) + 1 else 5")
@@ -532,12 +553,12 @@ let tests =
                 Expect.equal (lines body |> Array.filter (fun l -> l.StartsWith "llvm.return") |> Array.length) 2 "분기마다 return"
             }
             test "tail position 이 아닌 호출과 진입 함수의 호출은 보통 호출" {
-                Expect.equal (musttailReturns (Codegen.emitProgram (Program.parse "fun f -> 1 + f 2"))) [] "+ 의 피연산자"
-                Expect.equal (musttailReturns (Codegen.emitProgram (Program.parse "(fun x -> x) 1"))) [] "진입 함수 (signature 가 다름)"
+                Expect.equal (tailReturns (Codegen.emitProgram (Program.parse "fun f -> 1 + f 2"))) [] "+ 의 피연산자"
+                Expect.equal (tailReturns (Codegen.emitProgram (Program.parse "(fun x -> x) 1"))) [] "진입 함수 (signature 가 다름)"
             }
             test "tail position 의 match: 분기마다 블록, 마지막은 Match failure 뒤 unreachable" {
                 let mlir = Codegen.emitProgram (Program.parse "fun f -> fun n -> match n with 0 -> f 0 | 1 -> f 1")
-                Expect.equal (musttailReturns mlir) [ true; true ] ""
+                Expect.equal (tailReturns mlir) [ true; true ] ""
                 Expect.stringContains mlir "llvm.unreachable" ""
             }
         ]
@@ -548,7 +569,7 @@ let tests =
                 let p = lowered "let k = 1 in let j = 2 in fun x -> x + k + j"
                 Expect.equal p.Functions.Length 1 ""
                 let f = p.Functions.Head
-                Expect.equal (f.Name, f.Param, f.Captured, f.Self) ("lambda_0", "x", [ "j"; "k" ], None) "정렬된 순서"
+                Expect.equal (f.Name, f.Params, f.Captured, f.Self) ("lambda_0", [ "x" ], [ "j"; "k" ], None) "정렬된 순서"
                 Expect.equal p.Main (Core.CLet ("k", Core.CInt 1, Core.CLet ("j", Core.CInt 2, Core.CMakeClosure ("lambda_0", [ "j"; "k" ])))) ""
             }
             test "인자와 안쪽 let 은 캡처하지 않음" {
@@ -562,7 +583,50 @@ let tests =
             test "커링: 안쪽 함수가 바깥 인자를 캡처" {
                 let p = lowered "fun a -> fun b -> a + b"
                 // 안쪽 함수가 먼저 만들어짐
-                Expect.equal (p.Functions |> List.map (fun f -> f.Name, f.Param, f.Captured)) [ "lambda_0", "b", [ "a" ]; "lambda_1", "a", [] ] ""
+                Expect.equal (p.Functions |> List.map (fun f -> f.Name, f.Params, f.Captured)) [ "lambda_0", [ "b" ], [ "a" ]; "lambda_1", [ "a" ], [] ] ""
+            }
+            test "이름에 묶은 함수: 클로저들과 인자를 모두 받는 direct 함수, 호출은 CCallDirect" {
+                let p = lowered "let add a b = a + b in add 1 2"
+                Expect.equal
+                    p.Main
+                    (Core.CLet ("add", Core.CMakeClosure ("lambda_0", []), Core.CCallDirect ("lambda_0_direct", Core.CVar "add", [ Core.CInt 1; Core.CInt 2 ])))
+                    "바깥 클로저 이름은 본문보다 먼저 정함"
+                Expect.equal
+                    (p.Functions |> List.map (fun f -> f.Name, f.Params, f.Captured))
+                    [ "lambda_1", [ "b" ], [ "a" ]; "lambda_0", [ "a" ], []; "lambda_0_direct", [ "a"; "b" ], [] ]
+                    "direct 함수의 캡처는 바깥 클로저와 같음"
+            }
+            test "인자가 모자라면 클로저 적용, 남으면 결과에 적용, 하나면 바깥 함수가 direct" {
+                Expect.equal
+                    (lowered "let add a b = a + b in add 1").Main
+                    (Core.CLet ("add", Core.CMakeClosure ("lambda_0", []), Core.CApply (Core.CVar "add", Core.CInt 1)))
+                    ""
+                Expect.equal
+                    (lowered "let id x = x in id id 1").Main
+                    (Core.CLet ("id", Core.CMakeClosure ("lambda_0", []), Core.CApply (Core.CCallDirect ("lambda_0", Core.CVar "id", [ Core.CVar "id" ]), Core.CInt 1)))
+                    ""
+            }
+            test "다시 묶은 이름은 알려진 함수가 아님" {
+                let p = lowered "let f a b = a in fun f -> f 1 2"
+                let inner = p.Functions |> List.find (fun f -> f.Params = [ "f" ])
+                Expect.equal inner.Body (Core.CApply (Core.CApply (Core.CVar "f", Core.CInt 1), Core.CInt 2)) "인자 f"
+                Expect.equal
+                    (lowered "let f a b = a in let f = 1 in f").Main
+                    (Core.CLet ("f", Core.CMakeClosure ("lambda_0", []), Core.CLet ("f", Core.CInt 1, Core.CVar "f")))
+                    ""
+            }
+            test "let rec: 재귀 호출도 direct, 인자 표기는 건너뜀" {
+                let p = lowered "let rec go (n: int) acc = if n = 0 then acc else go (n - 1) acc in go 3 0"
+                let direct = p.Functions |> List.find (fun f -> f.Name = "lambda_0_direct")
+                Expect.equal (direct.Params, direct.Self, direct.Captured) ([ "n"; "acc" ], Some "go", []) ""
+                Expect.equal
+                    direct.Body
+                    (Core.CIf (
+                        Core.CPrim (Core.PEqual, [ Core.CVar "n"; Core.CInt 0 ]),
+                        Core.CVar "acc",
+                        Core.CCallDirect ("lambda_0_direct", Core.CVar "go", [ Core.CPrim (Core.PSubtract, [ Core.CVar "n"; Core.CInt 1 ]); Core.CVar "acc" ])
+                    ))
+                    ""
             }
             test "생성자: 바로 적용하면 블록, 값으로 쓰면 함수" {
                 Expect.equal (lowered "Some 1").Main (Core.CData ("Some", Some (Core.CInt 1))) ""
@@ -588,8 +652,8 @@ let tests =
                 let p = lowered "substr"
                 Expect.equal p.Main (Core.CMakeClosure ("lambda_2", [])) "바깥 함수"
                 Expect.equal
-                    (p.Functions |> List.map (fun f -> f.Name, f.Param, f.Captured))
-                    [ "lambda_0", "$b2", [ "$b0"; "$b1" ]; "lambda_1", "$b1", [ "$b0" ]; "lambda_2", "$b0", [] ]
+                    (p.Functions |> List.map (fun f -> f.Name, f.Params, f.Captured))
+                    [ "lambda_0", [ "$b2" ], [ "$b0"; "$b1" ]; "lambda_1", [ "$b1" ], [ "$b0" ]; "lambda_2", [ "$b0" ], [] ]
                     "안쪽 함수가 바깥 인자를 캡처"
             }
             test "let 으로 가린 내장 함수는 보통 변수" {
@@ -626,7 +690,7 @@ let tests =
             test "재귀 깊이 100만 (링크 옵션의 512MB 스택)" {
                 Expect.equal (compileAndRun "let rec f n = if n = 0 then 0 else 1 + f (n - 1) in f 1000000") ("1000000\n", "", 0) ""
             }
-            test "tail call 은 -O0 에서도 스택을 쓰지 않음 (musttail): 깊이 1000만, if, match, 가드, and, ;, let, 함수 인자" {
+            test "tail call 은 -O0 에서도 스택을 쓰지 않음 (tailcc): 깊이 1000만, if, match, 가드, and, ;, let, 함수 인자, 인자 수가 다른 함수" {
                 let input =
                     String.concat "\n"
                         [ "let rec a n = if n = 0 then 0 else a (n - 1)"
@@ -634,12 +698,15 @@ let tests =
                           "let rec even n = if n = 0 then true else odd (n - 1) and odd n = if n = 0 then false else even (n - 1)"
                           "let rec c n acc = if n = 0 then acc else (ignore n; let m = n - 1 in c m (acc + 1))"
                           "let rec loop g n = if n = 0 then g 0 else loop g (n - 1)"
+                          // 인자 수가 다른 direct 함수와 클로저 사이 (tailcc 라서 signature 가 달라도 tail call)
+                          "let rec one n = if n = 0 then 0 else two n 1 and two n d = if n = 0 then 0 else three (n - d) d 0 and three n d z = one (n + z)"
+                          "let rec viaClosure n k = if n = 0 then k 0 else (fun m -> viaClosure m k) (n - 1)"
                           ";;"
-                          "(a 10000000, b 10000000, even 10000000, c 10000000 0, loop (fun x -> x + 1) 10000000)" ]
-                // -O2 는 musttail 이 없어도 대부분 tail call 로 바꾸므로, 최적화하지 않는 -O0 으로 보장을 확인
+                          "(a 10000000, b 10000000, even 10000000, c 10000000 0, loop (fun x -> x + 1) 10000000, one 10000000, viaClosure 10000000 (fun x -> x))" ]
+                // -O2 는 tail 표시가 없어도 대부분 tail call 로 바꾸므로, 최적화하지 않는 -O0 으로 보장을 확인
                 Expect.equal
                     (compileAndRunWith (fun t -> { t with OptimizationLevel = "-O0" }) input)
-                    ("(0, 0, true, 10000000, 1)\n", "", 0)
+                    ("(0, 0, true, 10000000, 1, 0, 0)\n", "", 0)
                     ""
             }
         ]

@@ -4,6 +4,15 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.34.0] - 2026-10-29
+
+### 변경
+- 컴파일러가 알려진 함수를 direct call합니다. 이름에 묶은 함수(`let f a b = …`, `let rec`, `and`)마다 인자를 모두 받는 함수를 하나 더 만들고, 인자가 다 모인 호출(`f 1 2`, 본문의 재귀 호출)은 중간 클로저 없이 그 함수를 바로 부릅니다. partial application과 값으로 쓰는 경우는 지금처럼 클로저입니다.
+  - 100만 개 리스트에 `range`, `map`, `filter`, `sum`, `exists`를 쓰는 프로그램(컴파일한 실행 파일): 0.24초 → 0.12초. 인터프리터는 바뀌지 않았습니다.
+- 생성한 함수를 모두 LLVM `tailcc` calling convention으로 만들고 tail call을 `musttail` 대신 `tail`로 부릅니다. 인자 수가 다른 함수 사이의 tail call도 `-O0`에서 보장됩니다.
+- 런타임이 클로저를 부르는 `calc_apply`를 C 런타임에서 생성한 모듈로 옮겼습니다(C는 `tailcc` 함수를 부를 수 없음).
+- 테스트 6개 추가 (총 942개)
+
 ## [0.33.0] - 2026-10-29
 
 ### 추가
