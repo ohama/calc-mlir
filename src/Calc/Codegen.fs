@@ -20,6 +20,7 @@ let kindCons = 3L
 let kindTuple = 4L
 let kindData = 5L
 let kindRef = 6L
+let kindRecord = 7L
 
 /// [] 는 즉시값 5
 let nilValue = 5L
@@ -40,6 +41,9 @@ let dataHeader (hasPayload: bool) = kindData ||| ((if hasPayload then 2L else 1L
 
 /// ref 블록 = [헤더, 내용]. := 가 내용 칸을 바꿈
 let refHeader = kindRef ||| (1L <<< 8)
+
+/// 레코드 블록 = [헤더, 필드 이름들("x;y" C 문자열), 값...]. 필드 이름은 결과 출력에만 씀
+let recordHeader (count: int) = kindRecord ||| (int64 (1 + count) <<< 8)
 
 /// 런타임 함수 없이 Codegen 이 바로 만드는 내장 함수 (가변 참조)
 let private inlineBuiltins = set [ "ref"; "!"; ":=" ]
@@ -401,6 +405,11 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
     | CBuiltin (name, args) ->
         let values = args |> List.map (emitExpr fb env)
         emitCall fb ("calc_builtin_" + name) values "i64"
+    // 필드 이름 문자열은 생성자 이름과 같은 표에 둠 (필드 이름은 소문자로 시작하고 ; 가 들어가므로 생성자와 겹치지 않음)
+    | CRecord (names, values) ->
+        let namesAddress = emitGlobalAddress fb (fb.Strings.CtorName (String.concat ";" names))
+        emitBlock fb (recordHeader values.Length) (namesAddress :: List.map (emitExpr fb env) values)
+    | CField (e, index) -> emitField fb (emitExpr fb env e) (2 + index)
     | CData (ctor, None) -> emitGlobalAddress fb (fb.Strings.CtorUnit ctor)
     | CData (ctor, Some payload) ->
         let pv = emitExpr fb env payload

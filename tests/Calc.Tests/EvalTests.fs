@@ -367,7 +367,22 @@ let cases =
       "let n = ref 0 in let s = ref 0 in while !n < 1000000 do n := !n + 1; s := !s + 2 done; !s", VInt 2000000
       "let rec fib n = let a = ref 0 in let b = ref 1 in for i = 1 to n do let t = !a + !b in a := !b; b := t done; !a in map fib [0; 1; 10; 30]", VList [ VInt 0; VInt 1; VInt 55; VInt 832040 ]
       "let ref x = x + 1 in ref 1", VInt 2 // ref 는 보통 이름 (가릴 수 있음)
-      "let do_ = 1 in let done_ = 2 in do_ + done_", VInt 3 ]
+      "let do_ = 1 in let done_ = 2 in do_ + done_", VInt 3
+      // 레코드
+      "type p = { x: int; y: int } in let a = { y = 2; x = 1 } in (a, a.x * 10 + a.y)", VTuple [ VRecord ("p", [ "x", VInt 1; "y", VInt 2 ]); VInt 12 ]
+      "type p = { x: int; y: int } in let a = { x = 1; y = 2 } in let b = { a with x = 10 } in (a.x, b.x, b.y)", VTuple [ VInt 1; VInt 10; VInt 2 ]
+      "type p = { x: int; y: int } in { { x = 1; y = 2 } with y = 3; x = 4 }", VRecord ("p", [ "x", VInt 4; "y", VInt 3 ])
+      "type 'a box = { value: 'a; label: string } in let b = { value = [1]; label = \"l\" } in (b.value, { b with label = \"m\" }.label)", VTuple [ VList [ VInt 1 ]; VString "m" ]
+      "type p = { x: int; y: int } in ({ x = 1; y = 2 } = { y = 2; x = 1 }, { x = 1; y = 2 } <> { x = 1; y = 3 })", VTuple [ VBool true; VBool true ]
+      "type p = { x: int } in type q = { x: string } in { x = \"a\" }.x", VString "a" // 같은 필드 이름은 뒤의 타입
+      "type v = { x: int; y: int } in let p = { x = 1; y = 2 } in let f a b = a - b in f p.y p.x", VInt 1 // f p.x == f (p.x)
+      "type t = { r: int ref } in let a = { r = ref 0 } in a.r := 5; incr a.r; !a.r", VInt 6
+      "type n = { value: int; next: n option } in let rec sum o = match o with None -> 0 | Some c -> c.value + sum c.next in sum (Some { value = 1; next = Some { value = 2; next = None } })", VInt 3
+      "type inner = { v: int } in type outer = { i: inner } in let o = { i = { v = 7 } } in o.i.v", VInt 7
+      "type p = { x: int; y: int } in let s = ref \"\" in let f t v = s := !s + t; v in let r = { y = f \"y\" 1; x = f \"x\" 2 } in (!s, r)", VTuple [ VString "yx"; VRecord ("p", [ "x", VInt 2; "y", VInt 1 ]) ] // 쓴 순서대로 계산
+      "type p = { name: string; tags: string list } in [{ name = \"a\"; tags = [] }; { name = \"b\"; tags = [\"t\"] }]", VList [ VRecord ("p", [ "name", VString "a"; "tags", VList [] ]); VRecord ("p", [ "name", VString "b"; "tags", VList [ VString "t" ] ]) ]
+      "type p = { x: int } in Some { x = -1 }", some (VRecord ("p", [ "x", VInt -1 ]))
+      "type p = { x: int; y: int; } in { x = 1; y = 2; }.y", VInt 2 ]
 
 /// 오류 메시지가 정확히 일치하는지 확인
 let expectError input message =

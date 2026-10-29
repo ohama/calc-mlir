@@ -79,6 +79,14 @@ type Expr =
     | Ctor of string
     /// type 'a name = C1 | C2 of t | ... in body
     | TypeDecl of name: string * typeParams: string list * ctors: (string * TypeExpr option) list * body: Expr
+    /// type 'a name = { f1: t1; f2: t2 } in body (레코드 타입). 필드 순서가 값의 칸 순서이고 출력 순서
+    | RecordDecl of name: string * typeParams: string list * fields: (string * TypeExpr) list * body: Expr
+    /// { f1 = e1; f2 = e2 }: 쓴 순서대로 계산. 어느 레코드 타입인지는 필드 이름이 정함 (마지막에 선언한 타입)
+    | Record of fields: (string * Expr) list
+    /// e.f
+    | Field of Expr * field: string
+    /// { e with f1 = e1 }: e 를 먼저, 그다음 새 값을 쓴 순서대로 계산한 새 레코드 (e 는 바뀌지 않음)
+    | RecordUpdate of Expr * fields: (string * Expr) list
     /// (e : t): e 의 타입이 t 여야 함. 실행할 때는 e 와 같음.
     /// 매개변수 표기 fun (x: t) -> body 는 fun x -> let x = (x : t) in body, 반환 타입 표기 let f x : t = e 는 let f x = (e : t)
     | Annot of Expr * TypeExpr
@@ -98,5 +106,6 @@ type TopItem =
     | TopLetRecs of (string * string * Expr) list * FSharp.Text.Lexing.Position
     | TopLetPattern of Pattern * Expr * FSharp.Text.Lexing.Position
     | TopType of string * string list * (string * TypeExpr option) list * FSharp.Text.Lexing.Position
+    | TopRecord of string * string list * (string * TypeExpr) list * FSharp.Text.Lexing.Position
     | TopException of string * TypeExpr option * FSharp.Text.Lexing.Position
     | TopExpr of Expr

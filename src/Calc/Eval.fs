@@ -25,6 +25,10 @@ type Value =
     | VUnit
     /// ref v: 내용을 바꿀 수 있는 칸 하나 (!r 로 읽고 r := v 로 씀)
     | VRef of Value ref
+    /// { x = 1; y = 2 }. fields 는 선언한 순서
+    | VRecord of typeName: string * fields: (string * Value) list
+    /// 레코드 타입의 선언 (환경에만 있는 값): 환경의 "." + 필드 이름이 이 값. 필드 이름으로 타입과 필드 순서를 찾음
+    | VRecordType of typeName: string * fields: string list
 
 type Env = Map<string, Value>
 
@@ -47,6 +51,8 @@ let rec formatValue value =
     | VData (_, ctor, None) -> ctor
     | VData (_, ctor, Some payload) -> applied ctor payload
     | VRef cell -> applied "ref" cell.Value
+    | VRecord (_, fields) -> "{ " + (fields |> List.map (fun (f, v) -> f + " = " + formatValue v) |> String.concat "; ") + " }"
+    | VRecordType (typeName, _) -> "<type " + typeName + ">"
 
 /// 생성자나 ref 를 인자에 적용한 모양. 다시 입력했을 때 같은 값이 되도록 괄호: Some (Some 1), Some (-1), ref (ref 1).
 /// 튜플은 이미 괄호가 있음
@@ -75,6 +81,7 @@ let typeName value =
     | VTuple _ -> "tuple"
     | VData (typeName, _, _) -> typeName
     | VRef _ -> "ref"
+    | VRecord (typeName, _) | VRecordType (typeName, _) -> typeName
 
 /// 오류 메시지용: 튜플은 원소 수까지
 let describe value =
@@ -103,6 +110,8 @@ let rec valueEquals a b =
             | _ -> true)
     // 내용을 비교 (OCaml, F# 와 같음). 같은 칸인지는 보지 않음
     | VRef x, VRef y -> valueEquals x.Value y.Value
+    // 같은 타입끼리: 필드를 선언한 순서로 비교
+    | VRecord (t1, xs), VRecord (t2, ys) when t1 = t2 -> List.forall2 (fun (_, x) (_, y) -> valueEquals x y) xs ys
     | VInt _, v -> typeError "int" v
     | VBool _, v -> typeError "bool" v
     | VString _, v -> typeError "string" v
@@ -110,6 +119,7 @@ let rec valueEquals a b =
     | VTuple _, v -> typeError "tuple" v
     | VData (t, _, _), v -> typeError t v
     | VRef _, v -> typeError "ref" v
+    | VRecord (t, _), v -> typeError t v
     | v, _ -> typeError "int, bool, string, list, tuple or data" v
 
 /// 패턴이 값과 일치하면 묶을 이름들을 env 에 추가해서 반환. 타입이 달라도 오류가 아니라 불일치
@@ -319,6 +329,18 @@ let declareConstructors (env: Env) (typeName: string) (ctors: (string * TypeExpr
         Map.add ctor value env
     List.fold bindCtor env ctors
 
+/// 레코드 타입 선언: 필드마다 "." + 필드 이름으로 타입을 환경에 추가 (사용자가 쓸 수 없는 이름이라 변수와 겹치지 않음).
+/// 같은 필드 이름의 타입을 다시 선언하면 뒤의 것이 가림 (OCaml 과 같음)
+let declareRecord (env: Env) (typeName: string) (fields: (string * TypeExpr) list) =
+    let names = List.map fst fields
+    names |> List.fold (fun acc f -> Map.add ("." + f) (VRecordType (typeName, names)) acc) env
+
+/// 필드 이름으로 찾은 레코드 타입 (타입 이름, 선언한 필드 순서)
+let recordTypeOf (env: Env) (field: string) =
+    match Map.tryFind ("." + field) env with
+    | Some (VRecordType (typeName, names)) -> typeName, names
+    | _ -> failwithf "Unknown record field: %s" field
+
 /// let rec ... and ...: 그룹의 함수마다 VRecGroup 값을 환경에 추가 (서로를 부를 수 있음)
 let declareRecGroup (env: Env) (bindings: (string * string * Expr) list) =
     bindings |> List.indexed |> List.fold (fun acc (i, (name, _, _)) -> Map.add name (VRecGroup (i, bindings, env)) acc) env
@@ -399,6 +421,32 @@ let rec evalIn (env: Env) expr =
         | Some (VData _ | VConstructor _ as v) -> v
         | _ -> failwithf "Unknown constructor: %s" name
     | TypeDecl (typeName, _, ctors, body) -> evalIn (declareConstructors env typeName ctors) body
+    | RecordDecl (typeName, _, fields, body) -> evalIn (declareRecord env typeName fields) body
+    // 쓴 순서대로 계산한 뒤 선언한 순서로 놓음. 필드가 빠지거나 다른 타입의 필드면 오류 (타입 검사가 먼저 막음)
+    | Record fields ->
+        let typeName, names = recordTypeOf env (fst fields.Head)
+        let values = fields |> List.map (fun (f, e) -> f, evalIn env e)
+        for f, _ in fields do
+            if not (List.contains f names) then failwithf "The record field %s does not belong to type %s" f typeName
+        let missing = names |> List.filter (fun n -> not (List.exists (fun (f, _) -> f = n) fields))
+        if not missing.IsEmpty then failwithf "Missing record field: %s" (String.concat ", " missing)
+        VRecord (typeName, names |> List.map (fun n -> n, List.find (fun (f, _) -> f = n) values |> snd))
+    | Field (e, field) ->
+        match evalIn env e with
+        | VRecord (_, values) as v ->
+            match List.tryFind (fun (f, _) -> f = field) values with
+            | Some (_, x) -> x
+            | None -> failwithf "Type error: the record %s has no field %s" (formatValue v) field
+        | v -> typeError "record" v
+    | RecordUpdate (e, fields) ->
+        match evalIn env e with
+        | VRecord (typeName, values) as v ->
+            let updates = fields |> List.map (fun (f, x) -> f, evalIn env x)
+            for f, _ in updates do
+                if not (List.exists (fun (n, _) -> n = f) values) then
+                    failwithf "Type error: the record %s has no field %s" (formatValue v) f
+            VRecord (typeName, values |> List.map (fun (n, old) -> n, defaultArg (updates |> List.tryFind (fun (f, _) -> f = n) |> Option.map snd) old))
+        | v -> typeError "record" v
     | ExceptionDecl (name, argType, body) -> evalIn (declareConstructors env "exn" [ name, argType ]) body
     | Printf (kind, format) -> formatFunction kind format
     // 본문에서 raise 된 예외만 받음 (0으로 나누기 같은 실행 중 오류는 받지 않음). 맞는 분기가 없으면 같은 값을 다시 raise

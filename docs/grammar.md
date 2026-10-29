@@ -37,6 +37,7 @@ Calc 언어의 어휘 구조, 구문, 의미를 정리한 문서입니다. 구�
 | `CONS` | `::` | |
 | `COLON` | `:` (타입 표기) | |
 | `COLONEQUALS` `BANG` | `:=` `!` (mutable reference) | |
+| `LBRACE` `RBRACE` `DOT` | `{` `}` `.` (레코드) | |
 | `BAR` | `\|` | |
 | `EOF` | 입력의 끝 | |
 
@@ -104,6 +105,7 @@ decl    = "let" IDENT [ params ] [ ":" type ] "=" seq
         | "let" letPat "=" seq
         | "let" "rec" recBinding { "and" recBinding }
         | "type" [ typeParams ] typeName "=" [ "|" ] ctorDecl { "|" ctorDecl }
+        | "type" [ typeParams ] typeName "=" "{" fieldDecls "}"   (* 레코드 타입 *)
         | "exception" ctorDecl ;                         (* 예외 선언 *)
 
 seq     = expr [ ";" seq ] ;                             (* e1; e2: 순서 실행 *)
@@ -120,6 +122,7 @@ expr    = app
         | "try" seq "with" [ "|" ] arm { "|" arm }       (* 예외 받기 *)
         | "exception" ctorDecl "in" seq                  (* 예외 선언 *)
         | "type" [ typeParams ] typeName "=" [ "|" ] ctorDecl { "|" ctorDecl } "in" seq
+        | "type" [ typeParams ] typeName "=" "{" fieldDecls "}" "in" seq
         | "while" seq "do" seq "done"                    (* 반복문 *)
         | "for" IDENT "=" seq ( "to" | "downto" ) seq "do" seq "done"
         | expr binop expr
@@ -129,12 +132,17 @@ expr    = app
 app     = app atom                                       (* 함수 호출 *)
         | atom ;
 
-atom    = NUMBER
+atom    = primary
+        | "!" atom ;                                     (* mutable reference 읽기 *)
+
+primary = NUMBER
         | STRING
         | INTERP                                         (* $"a{e}b" *)
         | "true" | "false"
         | IDENT
-        | "!" atom                                       (* mutable reference 읽기 *)
+        | primary "." IDENT                              (* 필드 읽기 *)
+        | "{" fields "}"                                 (* 레코드 *)
+        | "{" primary "with" fields "}"                  (* 필드 몇 개를 바꾼 새 레코드 *)
         | CTOR                                           (* 생성자 *)
         | "(" ")"                                        (* unit *)
         | "(" expr ")"
@@ -144,6 +152,9 @@ atom    = NUMBER
         | "[" [ expr { ";" expr } ] "]" ;                (* 리스트 리터럴 *)
 
 arm     = pattern [ "when" expr ] "->" seq ;
+
+fields     = IDENT "=" expr { ";" IDENT "=" expr } [ ";" ] ;
+fieldDecls = IDENT ":" type { ";" IDENT ":" type } [ ";" ] ;
 
 recBinding = IDENT params [ ":" type ] "=" seq ;
 
@@ -200,9 +211,10 @@ binop   = "+" | "-" | "*" | "/" | "%"
 | 8 | `*` `/` `%` | 왼쪽 | `%left STAR SLASH PERCENT` |
 | 9 | `-` (단항), `not` | — | `%nonassoc UMINUS NOT` |
 | 10 | 함수 호출 `f x` | 왼쪽 | 문법 계층 (`app = app atom`) |
-| 11 (가장 높음) | `!` (mutable reference 읽기) | — | 문법 계층 (`atom = "!" atom`) |
+| 11 | `!` (mutable reference 읽기) | — | 문법 계층 (`atom = "!" atom`) |
+| 12 (가장 높음) | `.` (필드 읽기) | 왼쪽 | 문법 계층 (`primary = primary "." IDENT`) |
 
-F#과 같은 순서입니다. 함수 호출은 `!`를 뺀 어떤 연산자보다 먼저 묶입니다. `:=`와 `!`의 자리는 OCaml과 같습니다.
+F#과 같은 순서입니다. 함수 호출은 `!`와 `.`를 뺀 어떤 연산자보다 먼저 묶입니다. `:=`, `!`, `.`의 자리는 OCaml과 같습니다.
 
 예:
 
@@ -230,6 +242,9 @@ F#과 같은 순서입니다. 함수 호출은 `!`를 뺀 어떤 연산자보다
 | `f !r` | `f (!r)` |
 | `!f x` | `(!f) x` |
 | `a := b := c` | `a := (b := c)` |
+| `f p.x` | `f (p.x)` |
+| `!p.r` | `!(p.r)` |
+| `a.b.c` | `(a.b).c` |
 
 > **F#과 다른 점:** F#은 `f -1`처럼 `-` 뒤에 공백이 없으면 함수 호출로 해석하는 특별 규칙이 있습니다. 이 언어는 공백을 구분하지 않으므로 `f -1`은 항상 뺄셈입니다.
 
@@ -444,6 +459,28 @@ let safeDiv a b = try Some (a / (if b = 0 then failwith "div" else b)) with Fail
   - 같은 이름의 예외는 프로그램에 하나만 선언할 수 있습니다(`Exception E is already defined`). 실행 중에는 예외를 이름으로 구분하기 때문입니다. OCaml은 선언마다 다른 예외입니다.
   - `try`의 분기 본문은 tail position이 아닙니다.
 
+### 레코드
+
+이름이 붙은 필드의 묶음입니다. F#, OCaml과 같은 문법입니다.
+
+```
+type point = { x: int; y: int }
+type 'a box = { value: 'a; label: string }
+;;
+let p = { y = 2; x = 1 } in            (* { x = 1; y = 2 } *)
+let q = { p with x = 10 } in           (* { x = 10; y = 2 }, p 는 그대로 *)
+p.x + q.x                              (* 11 *)
+```
+
+- **선언:** `type t = { f1: t1; f2: t2 }`. 최상위 선언이나 `type … in 식`으로 씁니다. type parameter를 쓸 수 있고(`'a box`), 자기 자신을 필드 타입에 쓸 수 있습니다(`type n = { value: int; next: n option }`). 같은 필드 이름을 두 번 쓰면 `Duplicate field: x`입니다.
+- **만들기:** `{ f1 = e1; f2 = e2 }`. 필드는 아무 순서로 쓸 수 있고, 값은 **쓴 순서대로** 계산합니다. 모든 필드가 있어야 합니다(`Missing record field: y`).
+- **필드 읽기:** `e.f`. 함수 호출보다 강하게 묶입니다(`f p.x == f (p.x)`).
+- **`{ e with f = v }`:** `e`를 먼저 계산하고, 적은 필드만 바꾼 **새** 레코드를 만듭니다. `e`는 바뀌지 않습니다. `e`는 이름, 괄호, 필드 읽기 같은 작은 식입니다(`{ (f x) with … }`).
+- **타입은 필드 이름이 정함:** `fun r -> r.x`의 `r`은 필드 `x`를 선언한 레코드 타입입니다. 같은 필드 이름을 가진 레코드 타입이 여럿이면 **마지막에 선언한** 타입입니다(OCaml과 같음). 앞의 타입으로 쓰려면 타입 표기도 도와주지 않습니다(`expected q but got p`).
+- **비교와 출력:** `=`는 필드를 차례로 비교합니다. `<`와 `sort`에는 쓸 수 없습니다. 결과는 `{ x = 1; y = 2 }`처럼 선언한 순서로 출력합니다.
+- **필드는 바꿀 수 없음:** 바꿔야 하면 필드에 `ref`를 둡니다(`type t = { r: int ref }`, `a.r := 5`).
+- **아직 없는 것:** 레코드 패턴(`match p with { x = 0 } -> …`, `let { x; y } = p`), 필드 이름만 쓰는 줄임(`{ x; y }`), `mutable` 필드, F#처럼 타입 표기로 같은 이름의 필드를 고르는 것.
+
 ### mutable reference와 반복문
 
 OCaml, F#과 같은 mutable reference와 반복문입니다.
@@ -546,6 +583,10 @@ defaultValue 0 (tryFind (fun x -> x > 10) xs)
 | `exception E of t in e` | `ExceptionDecl ("E", Some t, e)` |
 | `$"a{x}"` | `App (Printf ("sprintf", "a%A"), Var "x")` (`sprintf "…"`는 파서에서 보통 `App`) |
 | `!r` / `r := v` | `App (Var "!", r)` / `App (App (Var ":=", r), v)` (사용자가 쓸 수 없는 이름의 내장 함수) |
+| `type 'a p = { x: int; y: 'a } in e` | `RecordDecl ("p", ["a"], [ ("x", TName ("int", [])); ("y", TVar "a") ], e)` |
+| `{ y = 1; x = 2 }` | `Record [ ("y", Number 1); ("x", Number 2) ]` (쓴 순서) |
+| `e.x` | `Field (e, "x")` |
+| `{ e with x = 1 }` | `RecordUpdate (e, [ ("x", Number 1) ])` |
 | `while c do e done` | `LetRec ("$while", "$u", If (c, Seq (e, App (Var "$while", Unit)), Unit), App (Var "$while", Unit))` |
 | `for i = a to b do e done` | `Let ("$start", Annot (a, int), Let ("$stop", Annot (b, int), LetRec ("$for", "i", …)))` (위 "mutable reference와 반복문") |
 | `let (a, b) = e1 in e2` | `LetPattern (PTuple [PVar "a"; PVar "b"], e1, e2)` |
@@ -581,6 +622,7 @@ type Value =
     | VConstructor of typeName * ctor * fields            // 인자 있는 생성자 자체 (Some, Rect)
     | VUnit                                               // ()
     | VRef of Value ref                                   // ref v (:= 가 내용을 바꿈)
+    | VRecord of typeName * fields                        // { x = 1; y = 2 } (선언한 순서)
 ```
 
 평가는 환경 `env : Map<string, Value>`에서 이루어집니다. 처음 환경에는 내장 함수만 들어 있습니다(아래 "내장 함수" 참고). 결과는 `formatValue`로 출력합니다.
@@ -593,6 +635,7 @@ type Value =
 - 튜플은 `(1, "a", [true])`처럼 출력됩니다.
 - 생성자 값은 `None`, `Some 1`, `Node (Leaf, 1, Leaf)`처럼 출력됩니다. 다시 입력해도 같은 값이 되도록 인자가 있는 생성자 값과 음수는 괄호로 감쌉니다(`Some (Some 1)`, `Some (-1)`).
 - mutable reference는 `ref 1`, `ref (Some 1)`, `ref (ref 1)`처럼 생성자와 같은 규칙으로 출력됩니다.
+- 레코드는 `{ x = 1; y = "a" }`처럼 선언한 순서로 출력됩니다. 생성자의 인자여도 괄호를 붙이지 않습니다(`Some { x = 1 }`).
 
 타입 오류 메시지에서 문자열의 타입 이름은 `string`, 함수는 `function`, 리스트는 `list`, 튜플은 `tuple`입니다. 생성자 값의 타입 이름은 선언한 타입 이름입니다(`option`, `shape`).
 
@@ -902,6 +945,7 @@ Error: parse error: unexpected '+' (line 1, column 5)
 | `t1 -> t2` | `fun x -> x + 1`: `int -> int` |
 | `t option` | `Some 1`: `int option` |
 | `t ref` | `ref 1`: `int ref` |
+| 레코드 타입 | `{ x = 1; y = 2 }`: `point` |
 | `exn` | `Not_found`, `Failure "x"`: `exn` |
 | 사용자 타입 | `Node (Leaf, 1, Leaf)`: `int tree` |
 | type variable | `'a`, `'b`, ... |
@@ -975,6 +1019,7 @@ Error: parse error: unexpected '+' (line 1, column 5)
 | 정의되지 않은 변수, 생성자 | `Unbound variable: x`, `Unknown constructor: X` |
 | 생성자 패턴의 인자 유무 | `Constructor Some requires an argument`, `Constructor None takes no argument` |
 | `type` 선언과 타입 표기의 타입 | `Unknown type: foo`, `Unbound type variable: 'b`(`type`과 `exception` 선언만), `Duplicate type variable: 'a`, `Type list expects 1 type argument(s) but got 0` |
+| 레코드 | `Unknown record field: x`, `Missing record field: y`, `The record field y does not belong to type p` |
 | 같은 이름의 예외를 다시 선언 | `Exception E is already defined` (범위가 겹치지 않아도, `Failure`와 `Not_found` 포함) |
 
 - **위치:** 오류에는 문제가 된 식이나 패턴의 위치가 붙습니다(OCaml처럼). `calc`는 파서 오류와 같은 형식으로 위치와 `^`를 출력합니다.

@@ -33,6 +33,7 @@ let rec valueMatches value t =
     | VData (typeName, _, _), TyCon (name, _) -> name.StartsWith(typeName + "@")
     | VTuple vs, TyTuple ts -> List.length vs = List.length ts && List.forall2 valueMatches vs ts
     | VRef cell, TyCon ("ref", [ e ]) -> valueMatches cell.Value e
+    | VRecord (typeName, _), TyCon (name, _) -> name.StartsWith(typeName + "@")
     | (VClosure _ | VRecClosure _ | VRecGroup _ | VBuiltin _ | VConstructor _), TyFun _ -> true
     | _ -> false
 
@@ -157,6 +158,17 @@ let inferred =
       "let xs = [] in (1 :: xs, \"a\" :: xs)", "int list * string list"
       "let p = (None, []) in let (a, b) = p in (Some 1 = a, Some \"x\" = a, 1 :: b, \"a\" :: b)", "bool * bool * int list * string list"
       "let mk = fun () -> let r = ref [] in r in let a = mk () in a := [1]; let b = mk () in b := [true]; (!a, !b)", "int list * bool list"
+      // 레코드: 필드 이름이 타입을 정함
+      "type p = { x: int; y: int } in { x = 1; y = 2 }", "p"
+      "type p = { x: int; y: int } in fun r -> r.x + r.y", "p -> int"
+      "type p = { x: int; y: int } in fun r -> { r with y = 0 }", "p -> p"
+      "type 'a box = { value: 'a } in fun b -> b.value", "'a box -> 'a"
+      "type 'a box = { value: 'a } in let b = { value = 1 } in let c = { value = \"a\" } in (b, c)", "int box * string box"
+      "type ('k, 'v) entry = { key: 'k; value: 'v } in fun k v -> { key = k; value = v }", "'a -> 'b -> ('a, 'b) entry"
+      "type p = { x: int } in type q = { x: string } in fun r -> r.x", "q -> string" // 뒤의 타입
+      "type p = { x: int } in (fun (r: p) -> r)", "p -> p"
+      "type p = { x: int } in let mk = { x = 1 } in mk", "p"
+      "type 'a box = { value: 'a } in let empty = { value = [] } in (1 :: empty.value, \"a\" :: empty.value)", "int list * string list" // 값이라 generalize
       // = 는 모든 타입 (함수 비교는 실행 중 오류로 남음, OCaml 과 같음)
       "(fun x -> x) = (fun x -> x)", "bool" ]
 
@@ -228,6 +240,18 @@ let tests =
             expectTypeError "sprintf \"%q\" 1" "Unknown format specifier: %q"
             expectTypeError "sprintf \"50%\"" "Missing format specifier after %"
             expectTypeError "$\"%s{1}\"" "Type mismatch: expected string but got int"
+            // 레코드
+            expectTypeError "fun r -> r.x" "Unknown record field: x"
+            expectTypeError "type p = { x: int; y: int } in { x = 1 }" "Missing record field: y"
+            expectTypeError "type p = { x: int; y: int; z: int } in { y = 1 }" "Missing record field: x, z"
+            expectTypeError "type p = { x: int } in { x = 1; y = 2 }" "The record field y does not belong to type p"
+            expectTypeError "type p = { x: int } in type q = { y: int } in { x = 1; y = 2 }" "The record field y does not belong to type p"
+            expectTypeError "type p = { x: int } in type q = { y: int } in fun (a: p) -> { a with y = 1 }" "Type mismatch: expected q but got p"
+            expectTypeError "type p = { x: int; y: string } in { x = 1; y = 2 }" "Type mismatch: expected string but got int"
+            expectTypeError "type p = { x: int } in (1).x" "Type mismatch: expected p but got int"
+            expectTypeError "type p = { x: int } in { x = 1 } < { x = 2 }" "Type mismatch: expected int or string but got p"
+            expectTypeError "type p = { x: 'a } in 1" "Unbound type variable: 'a"
+            expectTypeError "type p = { x: foo } in 1" "Unknown type: foo"
             // 가변 참조와 반복문
             expectTypeError "!5" "Type mismatch: expected 'a ref but got int"
             expectTypeError "let r = ref 0 in r := \"a\"" "Type mismatch: expected int but got string"

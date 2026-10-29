@@ -61,7 +61,10 @@ type private State =
 type private Context =
     { Vars: Map<string, Type>
       /// 타입 이름 → (고유 이름, 타입 인자 수)
-      Types: Map<string, string * int> }
+      Types: Map<string, string * int>
+      /// 필드 이름 → (레코드 타입, 선언한 순서의 필드와 타입). 타입 매개변수는 ∀ 변수라서 쓸 때마다 함께 instantiate.
+      /// 같은 필드 이름의 레코드 타입을 다시 선언하면 뒤의 것 (OCaml 과 같음)
+      Fields: Map<string, Type * (string * Type) list> }
 
 let private tInt = TyCon ("int", [])
 let private tBool = TyCon ("bool", [])
@@ -277,6 +280,7 @@ let rec private isNonExpansive expr =
     | Cons (h, t) -> isNonExpansive h && isNonExpansive t
     // 생성자에 값을 준 것 (Some [], Node (l, x, r)). 생성자는 칸을 만들 뿐 내용을 바꿀 수 없음
     | App (Ctor _, arg) -> isNonExpansive arg
+    | Record fields -> fields |> List.forall (snd >> isNonExpansive)
     | Let (_, value, body) -> isNonExpansive value && isNonExpansive body
     | LetRec (_, _, _, inExpr) | LetRecs (_, inExpr) -> isNonExpansive inExpr
     | _ -> false
@@ -358,7 +362,7 @@ let private initialContext (st: State) =
         |> fun vars -> Format.kinds |> Seq.fold (fun acc kind -> Map.add kind (formatMarker kind) acc) vars
     let types =
         Map.ofList [ "int", ("int", 0); "bool", ("bool", 0); "string", ("string", 0); "unit", ("unit", 0); "list", ("list", 1); "option", ("option", 1); "exn", ("exn", 0); "ref", ("ref", 1) ]
-    { Vars = vars; Types = types }
+    { Vars = vars; Types = types; Fields = Map.empty }
 
 // ---- 추론 ----
 
@@ -450,6 +454,21 @@ and private inferPatternNode (st: State) (ctx: Context) pattern : Type * (string
             | TyFun _, None -> typeError (sprintf "Constructor %s requires an argument" name)
             | result, None -> result, []
             | _, Some _ -> typeError (sprintf "Constructor %s takes no argument" name)
+
+/// 필드 이름으로 찾은 레코드 타입과 필드 타입들 (타입 매개변수를 새 변수로 instantiate)
+let private recordType (st: State) (ctx: Context) (field: string) =
+    match Map.tryFind field ctx.Fields with
+    | Some (t, fieldTypes) ->
+        match instantiate st (TyTuple (t :: List.map snd fieldTypes)) with
+        | TyTuple (t :: types) -> t, List.zip (List.map fst fieldTypes) types
+        | _ -> failwith "unreachable"
+    | None -> typeError (sprintf "Unknown record field: %s" field)
+
+/// 레코드 타입 t 의 필드 field 의 타입. 다른 레코드 타입의 필드면 오류
+let private fieldOf (t: Type) (fieldTypes: (string * Type) list) (field: string) =
+    match List.tryFind (fun (f, _) -> f = field) fieldTypes with
+    | Some (_, ft) -> ft
+    | None -> typeError (sprintf "The record field %s does not belong to type %s" field (typeToString t))
 
 /// 식의 타입. 위치가 없는 타입 오류에는 이 식의 위치를 붙임 (가장 안쪽 식이 먼저 붙임)
 let rec private infer (st: State) (ctx: Context) expr : Type =
@@ -631,6 +650,40 @@ and private inferNode (st: State) (ctx: Context) expr : Type =
                 | None -> ctor, result
                 | Some t -> ctor, TyFun (t, result))
         infer st (withVars ctorTypes declCtx) body
+    | RecordDecl (name, typeParams, fields, body) ->
+        match typeParams |> List.countBy id |> List.tryFind (fun (_, n) -> n > 1) with
+        | Some (p, _) -> typeError (sprintf "Duplicate type variable: '%s" p)
+        | None -> ()
+        st.NextId <- st.NextId + 1
+        let unique = sprintf "%s@%d" name st.NextId
+        let paramVars = typeParams |> List.map (fun p -> p, newVarAt st genericLevel None)
+        let declCtx = { ctx with Types = Map.add name (unique, List.length typeParams) ctx.Types }
+        let typeParam name =
+            match List.tryFind (fun (p, _) -> p = name) paramVars with
+            | Some (_, t) -> t
+            | None -> typeError (sprintf "Unbound type variable: '%s" name)
+        let result = TyCon (unique, paramVars |> List.map snd)
+        let fieldTypes = fields |> List.map (fun (f, te) -> f, convertType declCtx typeParam te)
+        let fieldsCtx = fieldTypes |> List.fold (fun acc (f, _) -> Map.add f (result, fieldTypes) acc) declCtx.Fields
+        infer st { declCtx with Fields = fieldsCtx } body
+    // 필드 이름이 레코드 타입을 정함 (OCaml 과 같음). 타입 매개변수는 레코드 식마다 새로
+    | Record fields ->
+        let t, fieldTypes = recordType st ctx (fst fields.Head)
+        for f, e in fields do
+            expect e (fieldOf t fieldTypes f) (infer' e)
+        let missing = fieldTypes |> List.map fst |> List.filter (fun n -> not (List.exists (fun (f, _) -> f = n) fields))
+        if not missing.IsEmpty then typeError (sprintf "Missing record field: %s" (String.concat ", " missing))
+        t
+    | Field (e, field) ->
+        let t, fieldTypes = recordType st ctx field
+        expect e t (infer' e)
+        fieldOf t fieldTypes field
+    | RecordUpdate (e, fields) ->
+        let t, fieldTypes = recordType st ctx (fst fields.Head)
+        expect e t (infer' e)
+        for f, x in fields do
+            expect x (fieldOf t fieldTypes f) (infer' x)
+        t
     | ExceptionDecl (name, argType, body) ->
         // 같은 이름의 예외는 프로그램에 하나: 실행 중에는 예외를 이름으로 구분하므로, 인자 타입이 다른 두 예외가
         // (범위가 겹치지 않더라도 값으로 흘러가서) 섞이면 soundness 가 깨짐. OCaml 은 선언마다 다른 예외

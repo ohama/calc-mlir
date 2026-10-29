@@ -691,6 +691,31 @@ let tests =
             Expect.equal (parse "sprintf \"%d\" 1") (App (App (Var "sprintf", Str "%d"), Number 1)) "sprintf 는 파서에서 보통 함수 호출"
         }
 
+        testList "레코드" [
+            test "선언, 만들기, 필드 읽기, with" {
+                Expect.equal
+                    (parse "type 'a p = { x: int; y: 'a } in { y = 1; x = 2 }")
+                    (RecordDecl ("p", [ "a" ], [ "x", TName ("int", []); "y", TVar "a" ], Record [ "y", Number 1; "x", Number 2 ]))
+                    "식의 필드는 쓴 순서"
+                Expect.equal (parse "{ p with x = 1; y = a + 1 }") (RecordUpdate (Var "p", [ "x", Number 1; "y", Add (Var "a", Number 1) ])) ""
+                Expect.equal (parse "type p = { x: int; }\n;; { x = 1; }") (RecordDecl ("p", [], [ "x", TName ("int", []) ], Record [ "x", Number 1 ])) "끝의 ; 와 최상위 선언"
+            }
+            test "필드 읽기는 함수 호출보다 강하고 왼쪽 결합, ! 보다 강함" {
+                Expect.equal (parse "f p.x") (App (Var "f", Field (Var "p", "x"))) ""
+                Expect.equal (parse "a.b.c") (Field (Field (Var "a", "b"), "c")) ""
+                Expect.equal (parse "!p.r") (App (Var "!", Field (Var "p", "r"))) "OCaml 과 같음"
+                Expect.equal (parse "(f x).y + 1") (Add (Field (App (Var "f", Var "x"), "y"), Number 1)) ""
+                Expect.equal (parse "{ x = 1 }.x") (Field (Record [ "x", Number 1 ], "x")) ""
+                Expect.equal (parse "{ x = a = b }") (Record [ "x", Equal (Var "a", Var "b") ]) "필드 값은 식"
+            }
+            test "오류" {
+                expectParseError "type p = { x: int; x: int } in 1" "Duplicate field: x" 1 10
+                expectParseError "{ x = 1; x = 2 }" "Duplicate field: x" 1 1
+                expectParseError "{ }" "parse error: unexpected '}'" 1 3
+                expectParseError "{ x = 1; y }" "parse error: unexpected '}'" 1 12
+            }
+        ]
+
         testList "가변 참조와 반복문" [
             test "!r 은 함수 호출보다 강하고, := 는 이항 연산자 가운데 가장 약하고 오른쪽 결합" {
                 let deref e = App (Var "!", e)

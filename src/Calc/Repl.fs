@@ -120,7 +120,8 @@ let private processItem (out: TextWriter) (input: string) (state: State) (item: 
                 for name, t in types do
                     out.WriteLine(sprintf "val %s : %s = %s" name t (Eval.formatValue env[name]))
             { Declarations = declarations; Env = env }
-    | TopType (name, typeParams, ctors, _) ->
+    | TopType (name, typeParams, _, _)
+    | TopRecord (name, typeParams, _, _) ->
         typeOf (chain declarations Unit) |> ignore
         let shown =
             match typeParams with
@@ -128,7 +129,12 @@ let private processItem (out: TextWriter) (input: string) (state: State) (item: 
             | [ p ] -> sprintf "'%s %s" p name
             | ps -> sprintf "(%s) %s" (ps |> List.map (sprintf "'%s") |> String.concat ", ") name
         out.WriteLine(sprintf "type %s" shown)
-        { Declarations = declarations; Env = Eval.declareConstructors state.Env name ctors }
+        let env =
+            match item with
+            | TopRecord (_, _, fields, _) -> Eval.declareRecord state.Env name fields
+            | TopType (_, _, ctors, _) -> Eval.declareConstructors state.Env name ctors
+            | _ -> failwith "unreachable"
+        { Declarations = declarations; Env = env }
     // OCaml 처럼 exception E of int. 인자 타입은 생성자의 타입 (int -> exn) 에서 꺼냄
     | TopException (name, argType, _) ->
         let ctorType = typeOf (chain declarations (Ctor name))

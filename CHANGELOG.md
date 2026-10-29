@@ -4,6 +4,18 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.36.0] - 2026-10-29
+
+### 추가
+- 레코드(F#, OCaml과 같은 문법). 인터프리터, 타입 추론, 컴파일러, REPL 모두 지원합니다.
+  - `type point = { x: int; y: int }` (type parameter와 재귀 타입 가능), `{ x = 1; y = 2 }`, `p.x`, `{ p with x = 1 }`
+  - 타입은 필드 이름이 정합니다. 같은 필드 이름의 레코드 타입이 여럿이면 마지막에 선언한 타입입니다(OCaml과 같음).
+  - 필드 값은 쓴 순서대로 계산하고, 결과는 선언한 순서로 `{ x = 1; y = 2 }`처럼 출력합니다. `=`는 필드를 비교합니다.
+  - 오류: `Unknown record field: x`, `Missing record field: y`, `The record field y does not belong to type p`, `Duplicate field: x`
+  - 컴파일러는 레코드를 블록 `[헤더, 필드 이름들, 값...]`(종류 7)으로 만들고, 필드는 번호로 읽습니다.
+  - 레코드 패턴과 `mutable` 필드는 아직 없습니다.
+- 테스트 40개 추가 (총 1041개)
+
 ## [0.35.0] - 2026-10-29
 
 ### 추가

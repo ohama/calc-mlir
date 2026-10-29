@@ -52,6 +52,10 @@ type CExpr =
     | CTuple of CExpr list
     /// 인자가 다 모인 내장 함수 호출 (런타임 함수 calc_builtin_<이름>). 인자는 왼쪽부터 계산
     | CBuiltin of name: string * args: CExpr list
+    /// 레코드 (블록 [헤더, 필드 이름들, 값...]). 필드와 값은 선언한 순서, 값은 이미 계산한 것 (Lower 가 let 으로 묶음)
+    | CRecord of fieldNames: string list * values: CExpr list
+    /// 레코드의 index 번째 필드 (선언한 순서, 0 부터)
+    | CField of CExpr * index: int
     /// 생성자로 만든 값 (블록 [헤더, 생성자 이름, 인자]). 인자 없는 생성자는 전역 상수 블록
     | CData of ctor: string * payload: CExpr option
     /// 위에서부터 패턴과 가드가 모두 맞는 첫 분기. 없으면 Match failure. 패턴은 Ast 그대로
@@ -102,6 +106,8 @@ let rec freeVars (expr: CExpr) : Set<string> =
     | CNil -> Set.empty
     | CCons (h, t) -> Set.union (freeVars h) (freeVars t)
     | CTuple items -> items |> List.map freeVars |> Set.unionMany
+    | CRecord (_, values) -> values |> List.map freeVars |> Set.unionMany
+    | CField (e, _) -> freeVars e
     | CData (_, payload) -> payload |> Option.map freeVars |> Option.defaultValue Set.empty
     | CBuiltin (_, args) -> args |> List.map freeVars |> Set.unionMany
     | CMatch (scrutinee, cases) ->

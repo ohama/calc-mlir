@@ -84,6 +84,7 @@ let rec makeProgram (items: TopItem list) : Expr =
     | TopLetRecs (bindings, pos) :: rest -> located pos (LetRecs(bindings, makeProgram rest))
     | TopLetPattern (pattern, value, pos) :: rest -> located pos (LetPattern(pattern, value, makeProgram rest))
     | TopType (name, typeParams, ctors, pos) :: rest -> located pos (TypeDecl(name, typeParams, ctors, makeProgram rest))
+    | TopRecord (name, typeParams, fields, pos) :: rest -> located pos (RecordDecl(name, typeParams, fields, makeProgram rest))
     | TopException (name, argType, pos) :: rest -> located pos (ExceptionDecl(name, argType, makeProgram rest))
 
 /// [a; b; c]  ==  a :: b :: c :: []
@@ -137,6 +138,12 @@ let checkCtors (pos: FSharp.Text.Lexing.Position) (ctors: (string * TypeExpr opt
     | Some (name, _) -> Errors.syntaxError (sprintf "Duplicate constructor: %s" name) pos
     | None -> ctors
 
+/// 레코드 선언과 레코드 식에서 같은 필드를 두 번 쓰면 오류. pos 는 여는 { 의 위치
+let checkFields (pos: FSharp.Text.Lexing.Position) (fields: (string * 'a) list) =
+    match fields |> List.countBy fst |> List.tryFind (fun (_, n) -> n > 1) with
+    | Some (name, _) -> Errors.syntaxError (sprintf "Duplicate field: %s" name) pos
+    | None -> fields
+
 /// t1 * t2 * t3 는 TTuple [t1; t2; t3]. 괄호로 묶은 (t1 * t2) 는 원소 하나로 남음
 let makeTuple (items: TypeExpr list) =
     match items with
@@ -158,6 +165,7 @@ let makeTuple (items: TypeExpr list) =
 %token COMMA UNDERSCORE
 %token TYPE OF COLON EXCEPTION
 %token WHILE FOR TO DOWNTO DO DONE BANG COLONEQUALS
+%token LBRACE RBRACE DOT
 %token NOBAR BELOWSEMI
 %token PLUS MINUS STAR SLASH PERCENT PIPE COMPOSE LPAREN RPAREN
 %token EOF
@@ -232,6 +240,8 @@ TopDecl:
                                     { TopLetRecs(checkRecBindings (parseState.InputStartPosition 1) ($3 :: $5), parseState.InputStartPosition 1) }
     | TYPE TypeParams TypeName EQUALS OptBar CtorDecls
                                     { TopType($3, $2, checkCtors (parseState.InputStartPosition 6) $6, parseState.InputStartPosition 1) }
+    | TYPE TypeParams TypeName EQUALS LBRACE FieldDecls RBRACE
+                                    { TopRecord($3, $2, checkFields (parseState.InputStartPosition 5) $6, parseState.InputStartPosition 1) }
     | EXCEPTION CtorDecl            { TopException(fst $2, snd $2, parseState.InputStartPosition 1) }
 
 // let 의 왼쪽에 오는 패턴: 튜플, (), _
@@ -255,6 +265,8 @@ Expr:
                                     { at parseState (LetPattern($2, $4, $6)) }
     | TYPE TypeParams TypeName EQUALS OptBar CtorDecls IN SeqExpr
                                     { at parseState (TypeDecl($3, $2, checkCtors (parseState.InputStartPosition 6) $6, $8)) }
+    | TYPE TypeParams TypeName EQUALS LBRACE FieldDecls RBRACE IN SeqExpr
+                                    { at parseState (RecordDecl($3, $2, checkFields (parseState.InputStartPosition 5) $6, $9)) }
     | LET REC IDENT Params OptAnnot EQUALS SeqExpr IN SeqExpr
                                     { let param, body = recFunction $4 (annotate $5 $7) in at parseState (LetRec($3, param, body, $9)) }
     | LET REC RecBinding ANDKW RecBindings IN SeqExpr
@@ -296,7 +308,12 @@ AppExpr:
     | AppExpr Atom                  { at parseState (App($1, $2)) }
     | Atom                          { $1 }
 
+// !r 은 함수 호출보다 강하고 필드 읽기보다 약함: f !r  ==  f (!r),  !p.x  ==  !(p.x) (OCaml 과 같음)
 Atom:
+    | Primary                       { $1 }
+    | BANG Atom                     { at parseState (App(Var "!", $2)) }
+
+Primary:
     | NUMBER                        { at parseState (Number $1) }
     | TRUE                          { at parseState (Bool true) }
     | FALSE                         { at parseState (Bool false) }
@@ -305,8 +322,11 @@ Atom:
     | INTERP                        { let format, holes = $1 in
                                       at parseState (List.fold (fun f e -> App (f, e)) (at parseState (Printf ("sprintf", format))) holes) }
     | IDENT                         { at parseState (Var $1) }
-    // !r 는 함수 호출보다 강함: f !r  ==  f (!r) (OCaml 과 같음)
-    | BANG Atom                     { at parseState (App(Var "!", $2)) }
+    // 필드 읽기는 함수 호출보다 강하고 왼쪽 결합: f p.x  ==  f (p.x),  a.b.c  ==  (a.b).c
+    | Primary DOT IDENT             { at parseState (Field($1, $3)) }
+    | LBRACE RecordFields RBRACE    { at parseState (Record(checkFields (parseState.InputStartPosition 1) $2)) }
+    | LBRACE Primary WITH RecordFields RBRACE
+                                    { at parseState (RecordUpdate($2, checkFields (parseState.InputStartPosition 1) $4)) }
     | CTOR                          { at parseState (Ctor $1) }
     | LPAREN RPAREN                 { Unit }
     | LPAREN Expr RPAREN            { $2 }
@@ -318,6 +338,24 @@ Atom:
                                     { at parseState (Tuple($2 :: $4)) }
     | LBRACKET RBRACKET             { Nil }
     | LBRACKET ListItems RBRACKET   { at parseState (makeList $2) }
+
+// 레코드 식의 필드: x = e; y = e. 마지막 ; 는 생략 가능 (OCaml, F# 와 같음)
+RecordFields:
+    | RecordField                   { [ $1 ] }
+    | RecordField SEMI              { [ $1 ] }
+    | RecordField SEMI RecordFields { $1 :: $3 }
+
+RecordField:
+    | IDENT EQUALS Expr             { ($1, $3) }
+
+// 레코드 선언의 필드: x: int; y: int
+FieldDecls:
+    | FieldDecl                     { [ $1 ] }
+    | FieldDecl SEMI                { [ $1 ] }
+    | FieldDecl SEMI FieldDecls     { $1 :: $3 }
+
+FieldDecl:
+    | IDENT COLON TypeExpr          { ($1, $3) }
 
 ListItems:
     | Expr                          { [ $1 ] }

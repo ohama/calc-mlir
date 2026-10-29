@@ -122,6 +122,14 @@ let tests =
                   "for i = 1 to 5 do incr c done; !c;;", "- : int = 5\n"
                   "1;;", "- : int = 1\n" ]
         }
+        test "레코드 선언과 값" {
+            expectSession
+                [ "type point = { x: int; y: int };;", "type point\n"
+                  "let p = { y = 2; x = 1 };;", "val p : point = { x = 1; y = 2 }\n"
+                  "{ p with x = 5 }.x + p.y;;", "- : int = 7\n"
+                  "type 'a box = { value: 'a };;", "type 'a box\n"
+                  "{ value = [p] };;", "- : point list box = { value = [{ x = 1; y = 2 }] }\n" ]
+        }
         test "입력 하나에 항목 여럿: 차례로 처리" {
             expectSession [ "let a = 1\nlet b = a + 1\n;; a + b;;", "val a : int = 1\nval b : int = 2\n- : int = 3\n" ]
         }

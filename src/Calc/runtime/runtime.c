@@ -83,13 +83,14 @@ void calc_buffer_units(calc_buffer *b, const uint16_t *units, int64_t length) {
     b->length += length;
 }
 
-/* ASCII 문자열 (숫자, 생성자 이름, 구분 기호) */
-static void buffer_ascii(calc_buffer *b, const char *text) {
-    int64_t length = (int64_t)strlen(text);
+/* ASCII 글자 length 개 (숫자, 생성자와 필드 이름, 구분 기호) */
+static void buffer_ascii_n(calc_buffer *b, const char *text, int64_t length) {
     buffer_reserve(b, length);
     for (int64_t i = 0; i < length; i++) b->units[b->length + i] = (uint16_t)(unsigned char)text[i];
     b->length += length;
 }
+
+static void buffer_ascii(calc_buffer *b, const char *text) { buffer_ascii_n(b, text, (int64_t)strlen(text)); }
 
 /* Eval.quote 와 같음: \\ \" \n \t \r 만 이스케이프 */
 void calc_buffer_quoted(calc_buffer *b, const uint16_t *units, int64_t length) {
@@ -146,6 +147,20 @@ void calc_buffer_value(calc_buffer *b, value v) {
     } else if (CALC_IS_KIND(v, CALC_KIND_REF)) {
         buffer_ascii(b, "ref");
         buffer_applied(b, CALC_FIELD(v, 1));
+    } else if (CALC_IS_KIND(v, CALC_KIND_RECORD)) {
+        /* { x = 1; y = 2 } (Eval.formatValue). 필드 이름은 ; 로 이은 C 문자열 */
+        const char *name = (const char *)CALC_FIELD(v, 1);
+        buffer_ascii(b, "{ ");
+        for (int64_t i = 0; i < CALC_SIZE(v) - 1; i++) {
+            const char *end = strchr(name, ';');
+            int64_t length = end ? (int64_t)(end - name) : (int64_t)strlen(name);
+            if (i > 0) buffer_ascii(b, "; ");
+            buffer_ascii_n(b, name, length);
+            buffer_ascii(b, " = ");
+            calc_buffer_value(b, CALC_FIELD(v, 2 + i));
+            name += length + 1;
+        }
+        buffer_ascii(b, " }");
     } else if (CALC_IS_KIND(v, CALC_KIND_TUPLE)) {
         buffer_ascii(b, "(");
         for (int64_t i = 0; i < CALC_SIZE(v); i++) {
@@ -308,6 +323,13 @@ static int equals(value a, value b) {
     /* 내용을 비교 (Eval.valueEquals). 같은 칸인지는 보지 않음 */
     if (CALC_IS_KIND(a, CALC_KIND_REF)) {
         return equals(CALC_FIELD(a, 1), CALC_FIELD(b, 1));
+    }
+    /* 같은 타입의 레코드: 필드를 선언한 순서로 비교 (Eval.valueEquals) */
+    if (CALC_IS_KIND(a, CALC_KIND_RECORD)) {
+        for (int64_t i = 2; i <= CALC_SIZE(a); i++) {
+            if (!equals(CALC_FIELD(a, i), CALC_FIELD(b, i))) return 0;
+        }
+        return 1;
     }
     if (CALC_IS_KIND(a, CALC_KIND_TUPLE)) {
         for (int64_t i = 0; i < CALC_SIZE(a); i++) {

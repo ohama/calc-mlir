@@ -574,6 +574,19 @@ let s = ref 0 in for i = 1 to 10 do s := !s + i done; !s
 - **반복문:** 파서가 `while`, `for`를 `$while`, `$for`라는 `let rec` 함수로 바꿉니다([grammar.md](grammar.md) "mutable reference와 반복문"). 컴파일러가 따로 할 일은 없습니다. 다음 반복은 tail position의 호출이라 `tail` 호출이 되고(12장), 이름에 묶은 함수라 direct call입니다(15장). 그래서 반복 횟수와 상관없이 스택이 자라지 않고, 클로저는 반복문마다 한 번만 만듭니다.
 - **속도:** `for i = 1 to 100000000 do s := !s + i % 7 done`은 0.22초이고, 같은 일을 하는 tail recursion(`let rec go i s = …`)과 같습니다(`-O2`).
 
+## 17. 레코드
+
+```
+type p = { x: int; y: int } in let a = { y = 2; x = 1 } in { a with x = a.y }
+```
+
+- **표현:** 블록 `[헤더, 필드 이름들, 값...]`이고, 헤더는 `7 | ((1 + n) << 8)`입니다(`CALC_KIND_RECORD`). 값은 **선언한 순서**입니다. 필드 이름은 `"x;y"`처럼 `;`로 이은 C 문자열 전역 하나이고, 결과 출력(`{ x = 1; y = 2 }`)에만 씁니다. 생성자 이름과 같은 표(`StringTable.CtorName`)에 둡니다. 필드 이름은 소문자로 시작하고 `;`가 들어가므로 생성자 이름과 겹치지 않습니다.
+- **Lower:** 범위(`Scope.Fields`)가 필드 이름 → 그 레코드 타입의 필드 목록을 기억합니다. `RecordDecl`이 넓히고, 같은 필드 이름의 타입을 다시 선언하면 뒤의 것이 가립니다(타입 추론과 같은 규칙).
+  - `{ y = e1; x = e2 }`: 값을 쓴 순서대로 `$field_y`, `$field_x`에 묶고, 블록에는 선언한 순서로 넣습니다(`CRecord`). 계산 순서가 인터프리터와 같습니다.
+  - `e.x`: 선언한 순서의 번호로 칸을 읽습니다(`CField (e, i)`, 칸 `2 + i`). 실행 중에 이름을 찾지 않습니다.
+  - `{ e with x = v }`: `e`를 `$record`에 묶고, 바꾸는 필드는 새 값, 나머지는 `$record`의 칸으로 새 블록을 만듭니다.
+- **런타임:** `calc_buffer_value`는 이름 문자열을 `;`로 나눠 `{ x = 1; y = 2 }`를 출력하고, `calc_eq`는 값 칸을 차례로 비교합니다. 인터프리터의 `Eval.formatValue`, `Eval.valueEquals`와 같습니다.
+
 ## 관련 문서
 
 - [compiler-design.md](compiler-design.md): 설계 결정(D1–D10), value representation, 단계별 계획

@@ -27,6 +27,7 @@ let chain (declarations: TopItem list) (body: Expr) =
             | TopLetRecs (bindings, _) -> LetRecs (bindings, rest)
             | TopLetPattern (pattern, value, _) -> LetPattern (pattern, value, rest)
             | TopType (name, typeParams, ctors, _) -> TypeDecl (name, typeParams, ctors, rest)
+            | TopRecord (name, typeParams, fields, _) -> RecordDecl (name, typeParams, fields, rest)
             | TopException (name, argType, _) -> ExceptionDecl (name, argType, rest)
             | TopExpr _ -> rest)
         declarations
@@ -37,7 +38,10 @@ let rec private varNames (expr: Expr) : Set<string> =
     match expr with
     | Var name -> Set.singleton name
     | Number _ | Bool _ | Str _ | Unit | Nil | Ctor _ | Printf _ -> Set.empty
-    | Negate e | Not e | Annot (e, _) | Lambda (_, e) | TypeDecl (_, _, _, e) | ExceptionDecl (_, _, e) -> varNames e
+    | Negate e | Not e | Annot (e, _) | Lambda (_, e) | TypeDecl (_, _, _, e) | RecordDecl (_, _, _, e) | ExceptionDecl (_, _, e)
+    | Field (e, _) -> varNames e
+    | Record fields -> fields |> List.map (snd >> varNames) |> Set.unionMany
+    | RecordUpdate (e, fields) -> fields |> List.map (snd >> varNames) |> List.fold Set.union (varNames e)
     | Seq (a, b) | Let (_, a, b) | LetRec (_, _, a, b) | LetPattern (_, a, b) | App (a, b)
     | Add (a, b) | Subtract (a, b) | Multiply (a, b) | Divide (a, b) | Modulo (a, b)
     | Equal (a, b) | NotEqual (a, b) | Less (a, b) | Greater (a, b) | LessEqual (a, b) | GreaterEqual (a, b)

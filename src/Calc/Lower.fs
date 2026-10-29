@@ -7,13 +7,15 @@ open Core
 /// 이름으로 알려진 함수: 인자 Arity 개를 모두 받는 최상위 함수 Direct. 그 이름의 값(바깥 클로저)을 클로저로 받음
 type private Known = { Direct: string; Arity: int }
 
-/// 지금 범위: 보이는 변수와, 그 가운데 알려진 함수. 이름을 다시 묶으면 알려진 함수에서 빠짐
+/// 지금 범위: 보이는 변수와, 그 가운데 알려진 함수. 이름을 다시 묶으면 알려진 함수에서 빠짐.
+/// Fields 는 필드 이름 → 그 레코드 타입의 필드들 (선언한 순서). 같은 필드 이름의 타입을 다시 선언하면 뒤의 것
 type private Scope =
     { Vars: Set<string>
-      Known: Map<string, Known> }
+      Known: Map<string, Known>
+      Fields: Map<string, string list> }
 
-let private emptyScope = { Vars = Set.empty; Known = Map.empty }
-let private bind (name: string) (scope: Scope) = { Vars = Set.add name scope.Vars; Known = Map.remove name scope.Known }
+let private emptyScope = { Vars = Set.empty; Known = Map.empty; Fields = Map.empty }
+let private bind (name: string) (scope: Scope) = { scope with Vars = Set.add name scope.Vars; Known = Map.remove name scope.Known }
 let private bindAll (names: seq<string>) (scope: Scope) = Seq.fold (fun acc name -> bind name acc) scope names
 let private know (name: string) (known: Known) (scope: Scope) = { bind name scope with Known = Map.add name known scope.Known }
 
@@ -201,6 +203,26 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Scope) (
         let ctors = declared |> List.fold (fun acc (name, argType) -> Map.add name (Option.isSome argType) acc) ctors
         lower state ctors scope body
     | Nil -> CNil
+    | RecordDecl (_, _, fields, body) ->
+        let names = List.map fst fields
+        lower state ctors { scope with Fields = names |> List.fold (fun acc f -> Map.add f names acc) scope.Fields } body
+    // 값을 쓴 순서대로 $field_<이름> 에 묶고, 블록에는 선언한 순서로 넣음 (인터프리터와 같은 계산 순서)
+    | Record fields ->
+        let names = scope.Fields[fst fields.Head]
+        let block = CRecord (names, names |> List.map (fun n -> CVar ("$field_" + n)))
+        List.foldBack (fun (f, e) acc -> CLet ("$field_" + f, lower state ctors scope e, acc)) fields block
+    | Field (e, field) ->
+        let names = scope.Fields[field]
+        CField (lower state ctors scope e, List.findIndex ((=) field) names)
+    // { e with f = x }: e 를 $record 에 묶고, 바꾸지 않는 필드는 $record 에서 꺼냄
+    | RecordUpdate (e, fields) ->
+        let names = scope.Fields[fst fields.Head]
+        let value n =
+            if List.exists (fun (f, _) -> f = n) fields then CVar ("$field_" + n)
+            else CField (CVar "$record", List.findIndex ((=) n) names)
+        let block = CRecord (names, List.map value names)
+        CLet ("$record", lower state ctors scope e,
+              List.foldBack (fun (f, x) acc -> CLet ("$field_" + f, lower state ctors scope x, acc)) fields block)
     | Cons (h, t) -> CCons (lower state ctors scope h, lower state ctors scope t)
     | Tuple items -> CTuple (List.map (lower state ctors scope) items)
     | Match (scrutinee, cases) ->

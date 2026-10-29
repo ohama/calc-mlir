@@ -95,6 +95,10 @@ rule tokenize = parse
     | ":="          { COLONEQUALS }
     | ':'           { COLON }
     | '|'           { BAR }
+    // 레코드
+    | '{'           { LBRACE }
+    | '}'           { RBRACE }
+    | '.'           { DOT }
     | '['           { LBRACKET }
     | ']'           { RBRACKET }
     | ";;"          { SEMISEMI }

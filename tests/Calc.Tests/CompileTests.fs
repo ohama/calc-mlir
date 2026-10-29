@@ -376,6 +376,16 @@ let private runCases =
           "let r = ref (fun x -> x) in r := (fun x -> x * 2); map !r [1; 2]", ("[2; 4]\n", "", 0), "내용이 함수"
           "map ref [1; 2]", ("[ref 1; ref 2]\n", "", 0), "ref 를 값으로 (클로저)"
         ]
+      "레코드",
+        [
+          "type p = { x: int; y: int } in { y = 2; x = 1 }", ("{ x = 1; y = 2 }\n", "", 0), "선언한 순서로 출력"
+          "type p = { name: string; tags: string list } in let a = { name = \"a\"; tags = [\"t\"] } in println a; toString { a with name = \"b\" }", ("{ name = \"a\"; tags = [\"t\"] }\n\"{ name = \\\"b\\\"; tags = [\\\"t\\\"] }\"\n", "", 0), "println, toString"
+          "type p = { x: int } in Some { x = -1 }", ("Some { x = -1 }\n", "", 0), "생성자 인자의 레코드는 괄호 없음"
+          "type p = { x: int; y: int } in let f t v = print t; v in { y = f 1 1; x = f 2 2 }", ("12{ x = 2; y = 1 }\n", "", 0), "값은 쓴 순서대로 계산"
+          "type p = { x: int; y: int } in let a = { x = 1; y = 2 } in let f t v = print t; v in { (print 0; a) with y = f 1 3 }", ("01{ x = 1; y = 3 }\n", "", 0), "with: 앞의 식 먼저"
+          "type p = { x: int; y: int } in ({ x = 1; y = 2 } = { y = 2; x = 1 }, { x = 1; y = 2 } = { x = 1; y = 3 })", ("(true, false)\n", "", 0), "= 는 필드를 비교"
+          "type p = { x: int } in printfn \"%A|%s\" { x = 1 } \"s\"", ("{ x = 1 }|s\n", "", 0), "%A"
+        ]
       "Match failure",
         [
           "match [1] with | [] -> 0", ("", "Error: Match failure: [1]\n", 1), ""
