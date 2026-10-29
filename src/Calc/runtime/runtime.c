@@ -95,6 +95,16 @@ value calc_data_payload(value v) {
     return (value)block;
 }
 
+value calc_array_get(value a, int64_t i) {
+    if (CALC_KIND(a) == CALC_KIND_BOOL_ARRAY) return calc_bool(CALC_BOOL_BYTES(a)[i]);
+    return CALC_FIELD(a, 1 + i);
+}
+
+void calc_array_set(value a, int64_t i, value v) {
+    if (CALC_KIND(a) == CALC_KIND_BOOL_ARRAY) CALC_BOOL_BYTES(a)[i] = (uint8_t)CALC_BOOL_VAL(v);
+    else CALC_FIELD(a, 1 + i) = v;
+}
+
 value calc_cons(value head, value tail) {
     value *block = calc_alloc(2 * sizeof(value));
     block[0] = head;
@@ -202,11 +212,11 @@ void calc_buffer_value(calc_buffer *b, value v) {
     } else if (CALC_IS_KIND(v, CALC_KIND_REF)) {
         buffer_ascii(b, "ref");
         buffer_applied(b, CALC_FIELD(v, 1));
-    } else if (CALC_IS_KIND(v, CALC_KIND_ARRAY)) {
+    } else if (CALC_IS_ARRAY(v)) {
         buffer_ascii(b, "[|");
         for (int64_t i = 0; i < CALC_SIZE(v); i++) {
             if (i > 0) buffer_ascii(b, "; ");
-            calc_buffer_value(b, CALC_FIELD(v, 1 + i));
+            calc_buffer_value(b, calc_array_get(v, i));
         }
         buffer_ascii(b, "|]");
     } else if (CALC_IS_KIND(v, CALC_KIND_RECORD)) {
@@ -392,10 +402,11 @@ static int equals(value a, value b) {
         return equals(CALC_FIELD(a, 1), CALC_FIELD(b, 1));
     }
     /* 배열: 길이가 같고 원소를 차례로 비교 (Eval.valueEquals) */
-    if (CALC_IS_KIND(a, CALC_KIND_ARRAY)) {
+    /* 빈 배열은 종류가 다를 수 있음 (Array.ofList [] 와 Array.create 0 true) */
+    if (CALC_IS_ARRAY(a)) {
         if (CALC_SIZE(a) != CALC_SIZE(b)) return 0;
-        for (int64_t i = 1; i <= CALC_SIZE(a); i++) {
-            if (!equals(CALC_FIELD(a, i), CALC_FIELD(b, i))) return 0;
+        for (int64_t i = 0; i < CALC_SIZE(a); i++) {
+            if (!equals(calc_array_get(a, i), calc_array_get(b, i))) return 0;
         }
         return 1;
     }

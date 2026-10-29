@@ -22,6 +22,9 @@ let kindData = 5L
 let kindRef = 6L
 let kindRecord = 7L
 
+/// bool 배열 = [헤더, 원소마다 바이트 하나(0 또는 1)...]. 원소가 bool 이면 런타임의 Array.create, Array.ofList 가 만듦
+let kindBoolArray = 9L
+
 /// [] 는 즉시값 5
 let nilValue = 5L
 
@@ -329,20 +332,37 @@ and private emitBlockWith (fb: FunctionBuilder) (header: string) (values: string
     fb.Emit(sprintf "%s = llvm.ptrtoint %s : !llvm.ptr to i64" r block)
     r
 
-/// 배열 a 의 i 번째 원소의 주소. 범위 밖이면 calc_error_index (인터프리터와 같은 문장)
-let private emitElementAddress (fb: FunctionBuilder) (a: string) (i: string) =
+/// 배열 a 의 i 번째 원소에 접근할 준비: 범위 밖이면 calc_error_index (인터프리터와 같은 문장).
+/// (블록 포인터, 원소 번호 i64, bool 배열인가 i1). 헤더는 만든 뒤 바뀌지 않으므로 따로 TBAA 태그 (반복 밖으로 뺄 수 있음)
+let private emitArrayIndex (fb: FunctionBuilder) (a: string) (i: string) =
     let index = fb.Fresh()
     fb.Emit(sprintf "%s = arith.extsi %s : i32 to i64" index (untagInt fb i))
-    let size = emitOp fb "arith.shrui" (emitField fb a 0) (emitConst fb "i64" 8L) "i64"
+    let block = fb.Fresh()
+    fb.Emit(sprintf "%s = llvm.inttoptr %s : i64 to !llvm.ptr" block a)
+    let header = fb.Fresh()
+    fb.Emit(sprintf "%s = llvm.load %s {tbaa = [#calc_tbaa_header]} : !llvm.ptr -> i64" header block)
+    let size = emitOp fb "arith.shrui" header (emitConst fb "i64" 8L) "i64"
     // 음수는 부호 없는 수로 보면 size 보다 큼
     let outside = fb.Fresh()
     fb.Emit(sprintf "%s = arith.cmpi uge, %s, %s : i64" outside index size)
     emitErrorIf fb outside "calc_error_index"
-    let block = fb.Fresh()
-    fb.Emit(sprintf "%s = llvm.inttoptr %s : i64 to !llvm.ptr" block a)
+    let kind = emitOp fb "arith.andi" header (emitConst fb "i64" 0xffL) "i64"
+    let isBytes = fb.Fresh()
+    fb.Emit(sprintf "%s = arith.cmpi eq, %s, %s : i64" isBytes kind (emitConst fb "i64" kindBoolArray))
+    block, index, isBytes
+
+/// 보통 배열의 원소 주소: 칸 1 + index
+let private emitWordAddress (fb: FunctionBuilder) (block: string) (index: string) =
     let slot = emitOp fb "arith.addi" index (emitConst fb "i64" 1L) "i64"
     let r = fb.Fresh()
     fb.Emit(sprintf "%s = llvm.getelementptr %s[%s] : (!llvm.ptr, i64) -> !llvm.ptr, i64" r block slot)
+    r
+
+/// bool 배열의 원소 주소: 헤더(8바이트) 뒤 index 번째 바이트
+let private emitByteAddress (fb: FunctionBuilder) (block: string) (index: string) =
+    let offset = emitOp fb "arith.addi" index (emitConst fb "i64" 8L) "i64"
+    let r = fb.Fresh()
+    fb.Emit(sprintf "%s = llvm.getelementptr %s[%s] : (!llvm.ptr, i64) -> !llvm.ptr, i8" r block offset)
     r
 
 /// 값 v 가 튜플 블록인가 (하위 3비트가 0 이고 헤더의 종류가 튜플)
@@ -586,18 +606,37 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
         fb.Emit(sprintf "%s = llvm.load %s {tbaa = [#calc_tbaa_ref]} : !llvm.ptr -> i64" v (emitSlot fb block 1))
         v
     // 배열: 범위를 확인하고 바로 읽고 씀 ([헤더, 원소...], 원소 수는 헤더의 단어 수). 인자는 왼쪽부터
+    // bool 배열(헤더의 종류 9)이면 바이트 하나: 읽을 때 (b << 3) | 3, 쓸 때 (v >> 3) & 1
     | CBuiltin (".[]", [ a; i ]) ->
         let av = emitExpr fb env a
         let iv = emitExpr fb env i
-        let r = fb.Fresh()
-        fb.Emit(sprintf "%s = llvm.load %s {tbaa = [#calc_tbaa_array]} : !llvm.ptr -> i64" r (emitElementAddress fb av iv))
-        r
+        let block, index, isBytes = emitArrayIndex fb av iv
+        emitIf fb isBytes
+            (fun () ->
+                let b = fb.Fresh()
+                fb.Emit(sprintf "%s = llvm.load %s {tbaa = [#calc_tbaa_array]} : !llvm.ptr -> i8" b (emitByteAddress fb block index))
+                let wide = fb.Fresh()
+                fb.Emit(sprintf "%s = arith.extui %s : i8 to i64" wide b)
+                emitOp fb "arith.ori" (emitOp fb "arith.shli" wide (emitConst fb "i64" 3L) "i64") (emitConst fb "i64" 3L) "i64")
+            (fun () ->
+                let r = fb.Fresh()
+                fb.Emit(sprintf "%s = llvm.load %s {tbaa = [#calc_tbaa_array]} : !llvm.ptr -> i64" r (emitWordAddress fb block index))
+                r)
     | CBuiltin (".[]<-", [ a; i; v ]) ->
         let av = emitExpr fb env a
         let iv = emitExpr fb env i
         let vv = emitExpr fb env v
-        fb.Emit(sprintf "llvm.store %s, %s {tbaa = [#calc_tbaa_array]} : i64, !llvm.ptr" vv (emitElementAddress fb av iv))
-        emitConst fb "i64" unitValue
+        let block, index, isBytes = emitArrayIndex fb av iv
+        emitIf fb isBytes
+            (fun () ->
+                let bit = emitOp fb "arith.andi" (emitOp fb "arith.shrui" vv (emitConst fb "i64" 3L) "i64") (emitConst fb "i64" 1L) "i64"
+                let b = fb.Fresh()
+                fb.Emit(sprintf "%s = arith.trunci %s : i64 to i8" b bit)
+                fb.Emit(sprintf "llvm.store %s, %s {tbaa = [#calc_tbaa_array]} : i8, !llvm.ptr" b (emitByteAddress fb block index))
+                emitConst fb "i64" unitValue)
+            (fun () ->
+                fb.Emit(sprintf "llvm.store %s, %s {tbaa = [#calc_tbaa_array]} : i64, !llvm.ptr" vv (emitWordAddress fb block index))
+                emitConst fb "i64" unitValue)
     | CBuiltin (":=", [ r; v ]) ->
         let rv = emitExpr fb env r
         let vv = emitExpr fb env v
@@ -960,6 +999,9 @@ let private declarations =
       "#calc_tbaa_captured = #llvm.tbaa_tag<base_type = #calc_tbaa_captured_type, access_type = #calc_tbaa_captured_type, offset = 0>"
       "#calc_tbaa_ref = #llvm.tbaa_tag<base_type = #calc_tbaa_ref_type, access_type = #calc_tbaa_ref_type, offset = 0>"
       "#calc_tbaa_array = #llvm.tbaa_tag<base_type = #calc_tbaa_array_type, access_type = #calc_tbaa_array_type, offset = 0>"
+      // 배열 헤더: 런타임이 만든 뒤 바뀌지 않음. 원소에 쓰는 반복 안에서도 길이와 종류를 다시 읽지 않게 함
+      "#calc_tbaa_header_type = #llvm.tbaa_type_desc<id = \"header\", members = {<#calc_tbaa_root, 0>}>"
+      "#calc_tbaa_header = #llvm.tbaa_tag<base_type = #calc_tbaa_header_type, access_type = #calc_tbaa_header_type, offset = 0>"
       "llvm.func @calc_init()"
       "llvm.func @calc_alloc(i64) -> !llvm.ptr"
       "llvm.func @calc_print_result(i64)"

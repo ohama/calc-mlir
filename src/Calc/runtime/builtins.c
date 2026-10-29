@@ -274,24 +274,32 @@ value calc_builtin_println(value v) {
 
 value calc_builtin_raise(value exn) { calc_raise(exn); }
 
-/* ---- 배열: [헤더, 원소...] (Eval.callBuiltin 과 같은 오류 문장) ---- */
+/* ---- 배열: [헤더, 원소...] 또는 bool 배열 [헤더, 바이트...] (Eval.callBuiltin 과 같은 오류 문장) ---- */
 
-static value new_array(int64_t length) {
-    int64_t *block = calc_alloc(8 * (1 + (length > 0 ? length : 0)));
+/* 원소 example 이 bool 이면 bool 배열 (바이트 하나씩, 안에 포인터가 없어 GC 가 훑지 않음) */
+static value new_array(int64_t length, value example) {
+    if (length < 0) length = 0;
+    if (length > 0 && CALC_IS_BOOL(example)) {
+        int64_t *block = GC_MALLOC_ATOMIC(8 + (size_t)length);
+        if (block == NULL) calc_error("out of memory");
+        block[0] = CALC_KIND_BOOL_ARRAY | (length << 8);
+        return (value)block;
+    }
+    int64_t *block = calc_alloc(8 * (1 + length));
     block[0] = CALC_KIND_ARRAY | (length << 8);
     return (value)block;
 }
 
 value calc_builtin_Array_ofList(value xs) {
-    value a = new_array(calc_list_length(xs));
-    int64_t i = 1;
-    for (value p = xs; p != CALC_NIL; p = TAIL(p)) CALC_FIELD(a, i++) = HEAD(p);
+    value a = new_array(calc_list_length(xs), xs == CALC_NIL ? CALC_UNIT : HEAD(xs));
+    int64_t i = 0;
+    for (value p = xs; p != CALC_NIL; p = TAIL(p)) calc_array_set(a, i++, HEAD(p));
     return a;
 }
 
 value calc_builtin_Array_toList(value a) {
     value list = CALC_NIL;
-    for (int64_t i = CALC_SIZE(a); i >= 1; i--) list = calc_cons(CALC_FIELD(a, i), list);
+    for (int64_t i = CALC_SIZE(a) - 1; i >= 0; i--) list = calc_cons(calc_array_get(a, i), list);
     return list;
 }
 
@@ -299,21 +307,22 @@ value calc_builtin_Array_length(value a) { return calc_int((int32_t)CALC_SIZE(a)
 
 value calc_builtin_Array_create(value n, value v) {
     if (INT(n) < 0) calc_errorf("Array.create: the length must be non-negative (got %d)", INT(n));
-    value a = new_array(INT(n));
-    for (int64_t i = 1; i <= INT(n); i++) CALC_FIELD(a, i) = v;
+    value a = new_array(INT(n), v);
+    if (CALC_KIND(a) == CALC_KIND_BOOL_ARRAY) memset(CALC_BOOL_BYTES(a), CALC_BOOL_VAL(v), (size_t)INT(n));
+    else for (int64_t i = 1; i <= INT(n); i++) CALC_FIELD(a, i) = v;
     return a;
 }
 
 /* 범위 밖은 .NET 의 IndexOutOfRangeException 과 같은 문장 */
-static int64_t slot(value a, value i) {
+static int64_t checked(value a, value i) {
     int32_t index = INT(i);
     if (index < 0 || index >= CALC_SIZE(a)) calc_error("Index was outside the bounds of the array.");
-    return 1 + index;
+    return index;
 }
 
-value calc_builtin_array_get(value a, value i) { return CALC_FIELD(a, slot(a, i)); }
+value calc_builtin_array_get(value a, value i) { return calc_array_get(a, checked(a, i)); }
 
 value calc_builtin_array_set(value a, value i, value v) {
-    CALC_FIELD(a, slot(a, i)) = v;
+    calc_array_set(a, checked(a, i), v);
     return CALC_UNIT;
 }

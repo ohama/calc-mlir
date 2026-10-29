@@ -403,6 +403,17 @@ let private runCases =
           "exception Stop of int in let r = ref 0 in (try while true do (r := !r + 1; if !r = 5 then raise (Stop !r) else ()) done with Stop k -> println k)", ("5\n", "", 0), "반복 안에서 raise"
           "let i = ref 0 in while !i < 1000000 do i := !i + 1 done; println !i", ("1000000\n", "", 0), "긴 반복 (스택이 자라지 않음)"
         ]
+      "bool 배열 (원소마다 바이트 하나)",
+        [
+          "let a = Array.create 5 false in a.[1] <- true; a.[4] <- true; println (a, a.[0], a.[1], Array.length a, Array.toList a)", ("([|false; true; false; false; true|], false, true, 5, [false; true; false; false; true])\n", "", 0), "Array.create 로 만든 bool 배열: 읽기, 쓰기, 길이, 리스트로"
+          "let a = [| true; false; true |] in let b = Array.ofList [true; false; true] in println (a = b, a = [| true; true; true |], Array.create 0 true = Array.ofList [], Array.create 0 true)", ("(true, false, true, [||])\n", "", 0), "리터럴과 ofList, = (빈 배열은 종류가 달라도 같음)"
+          "let a = Array.init 6 (fun i -> i % 3 = 0) in let b = Array.map (fun x -> not x) a in println (a, b, Array.copy b, Array.fold (fun n x -> if x then n + 1 else n) 0 a)", ("([|true; false; false; true; false; false|], [|false; true; true; false; true; true|], [|false; true; true; false; true; true|], 2)\n", "", 0), "prelude 의 Array 함수"
+          "let a = Array.create 3 true in let s = ref 0 in Array.iter (fun x -> if x then s := !s + 1 else ()) a; let f (x: bool array) i = x.[i] in println (!s, f a 2, [a; a])", ("(3, true, [[|true; true; true|]; [|true; true; true|]])\n", "", 0), "iter, 함수 안의 접근, 리스트 안의 배열"
+          "let a = Array.create 3 true in println a.[3]", ("", "Error: Index was outside the bounds of the array.\n", 1), "bool 배열의 범위 밖 읽기"
+          "let a = Array.create 3 false in a.[-1] <- true", ("", "Error: Index was outside the bounds of the array.\n", 1), "bool 배열의 음수 번호 쓰기"
+          "let a = Array.create 4 (Some true) in a.[0] <- None; println (a, Array.create 2 [true], Array.create 2 (true, 1))", ("([|None; Some true; Some true; Some true|], [|[true]; [true]|], [|(true, 1); (true, 1)|])\n", "", 0), "bool 이 아닌 원소는 보통 배열"
+          "let a = Array.create 300000 true in let junk = map (fun x -> (x, x)) (range 1 300000) in a.[299999] <- false; println (a.[0], a.[299999], length junk)", ("(true, false, 300000)\n", "", 0), "GC 가 훑지 않는 bool 배열이 수거 뒤에도 그대로"
+        ]
       "생성자 값 (이름 칸 없는 블록, 인자 없는 생성자는 즉시값)",
         [
           "type t = A | B of int | C of int * int in println (A = B 1, B 1 = A, B 1 = B 1, A = A, B 1 = B 2, C (1, 2) = C (1, 2), C (1, 2) = A)", ("(false, false, true, true, false, true, false)\n", "", 0), "= : 즉시값과 블록, 헤더 비교"
@@ -680,6 +691,14 @@ let tests =
                 Expect.stringContains mlir (sprintf "%d : i64" (Codegen.directClosureHeader 0 2)) "fun a b 의 클로저 헤더에 인자 수"
                 Expect.stringContains mlir "llvm.mlir.addressof @lambda_1_direct" "클로저 마지막 칸에 direct 함수"
                 Expect.stringContains mlir ": !llvm.ptr, (!llvm.ptr, i64, i64) -> i64" "인자 둘로 간접 호출"
+            }
+            // 배열 접근은 헤더의 종류를 보고 바이트(bool 배열) 또는 단어로 읽고 씀. 헤더 읽기는 따로 TBAA 태그
+            test "배열 접근은 bool 배열의 바이트 경로가 있음" {
+                let mlir = Codegen.emitProgram (Program.parse "let a = Array.create 3 true in a.[1] <- false; a.[1]")
+                Expect.stringContains mlir (sprintf "arith.constant %d : i64" Codegen.kindBoolArray) "종류 비교"
+                Expect.stringContains mlir "{tbaa = [#calc_tbaa_array]} : !llvm.ptr -> i8" "바이트 읽기"
+                Expect.stringContains mlir "{tbaa = [#calc_tbaa_array]} : i8, !llvm.ptr" "바이트 쓰기"
+                Expect.stringContains mlir "{tbaa = [#calc_tbaa_header]} : !llvm.ptr -> i64" "헤더 읽기"
             }
             test "어떤 값과도 일치하는 분기 뒤는 생성하지 않음" {
                 // + 는 int 인지 보는 scf.if 를 만들므로 - 로 확인

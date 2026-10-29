@@ -37,6 +37,9 @@ typedef int64_t value;
 #define CALC_KIND_REF 6     /* [헤더, 내용]. r := v 가 내용을 바꿈 */
 #define CALC_KIND_RECORD 7  /* [헤더, 필드 이름들("x;y", const char *), 값...]. 값은 선언한 순서 */
 #define CALC_KIND_ARRAY 8   /* [헤더, 원소...]. 원소 수 = 헤더의 단어 수. a.[i] <- v 가 원소를 바꿈 */
+#define CALC_KIND_BOOL_ARRAY 9 /* bool 배열: [헤더, 원소마다 바이트 하나(0 또는 1)...]. 원소 수 = 헤더의 단어 수 자리.
+                                  포인터가 없어 GC 가 훑지 않음 (GC_MALLOC_ATOMIC). 원소가 bool 이면 Array.create,
+                                  Array.ofList 가 이것을 만듦 (타입 검사를 통과했으므로 원소 하나가 bool 이면 모두 bool) */
 #define CALC_HEADER(v) (((int64_t *)(v))[0])
 #define CALC_KIND(v) (CALC_HEADER(v) & 0xff)
 #define CALC_IS_KIND(v, kind) (CALC_IS_PTR(v) && CALC_KIND(v) == (kind))
@@ -50,6 +53,8 @@ typedef struct {
 #define CALC_STRING(v) ((calc_string *)(v))
 #define CALC_FIELD(v, i) (((value *)(v))[(i)])
 #define CALC_SIZE(v) (CALC_HEADER(v) >> 8)
+#define CALC_IS_ARRAY(v) (CALC_IS_KIND(v, CALC_KIND_ARRAY) || CALC_IS_KIND(v, CALC_KIND_BOOL_ARRAY))
+#define CALC_BOOL_BYTES(v) ((uint8_t *)&CALC_FIELD(v, 1))
 
 /* 생성자 번호 = 생성자 이름(C 문자열) 전역의 주소 - calc_name_none 의 주소. 생성한 코드와 런타임이 한 실행 파일에
    링크되므로 32비트에 들어감. 이름은 번호로 찾고, 같은 생성자인지는 번호로 비교 (이름 전역은 프로그램마다 하나) */
@@ -109,6 +114,9 @@ calc_string *calc_new_string(int64_t length); /* 내용은 부르는 쪽이 채�
 value calc_string_of(const uint16_t *units, int64_t length);
 value calc_cons(value head, value tail);
 value calc_make_data(value bits, value tuple);
+/* 배열의 i 번째 원소 (0 부터, 범위는 부르는 쪽이 확인). 두 종류의 배열을 모두 다룸 */
+value calc_array_get(value a, int64_t i);
+void calc_array_set(value a, int64_t i, value v);
 value calc_data_payload(value v);
 int64_t calc_list_length(value list);
 

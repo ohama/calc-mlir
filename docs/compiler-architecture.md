@@ -617,6 +617,11 @@ type p = { x: int; y: int } in let a = { y = 2; x = 1 } in { a with x = a.y }
 ## 18. 배열
 
 - **표현:** 블록 `[헤더, 원소...]`이고, 헤더는 `8 | (n << 8)`입니다(`CALC_KIND_ARRAY`). 길이는 헤더의 단어 수입니다.
+- **bool 배열 (0.60.0부터):** 원소가 bool이면 `[헤더 9 | (n << 8), 바이트 n개]`입니다(`CALC_KIND_BOOL_ARRAY`). 원소마다 바이트 하나(0 또는 1)라서 8바이트 원소보다 메모리가 1/8입니다.
+  - **만드는 곳:** 런타임의 `Array.create`와 `Array.ofList`가 원소 값을 보고 정합니다. 타입 검사를 통과했으므로 원소 하나가 bool이면 모두 bool입니다. 리터럴과 prelude의 `init`, `map`, `copy`는 `Array.ofList`를 거칩니다. 빈 배열은 어느 종류여도 됩니다(`=`는 길이와 원소로 비교).
+  - **GC:** 안에 포인터가 없으므로 `GC_MALLOC_ATOMIC`으로 할당합니다. GC가 내용을 훑지 않습니다.
+  - **접근:** 생성 코드는 헤더의 종류를 보고 바이트(`i8` load/store, bool 값 `(b << 3) | 3`과 바꿈) 또는 단어로 읽고 씁니다. 헤더 읽기에는 따로 TBAA 태그(`#calc_tbaa_header`)를 붙입니다. 헤더는 런타임이 만든 뒤 바뀌지 않습니다. 런타임 함수는 `calc_array_get`/`calc_array_set`으로 두 종류를 다룹니다.
+  - **효과:** 체 1억이 0.65초에서 0.41초, 최대 메모리가 804MB에서 103MB가 되었습니다. int 배열의 반복은 종류 검사가 더해졌지만 그대로입니다(0.83초).
 - **내장 함수:** 리터럴 `[| … |]`, `a.[i]`, `a.[i] <- v`는 파서가 사용자가 쓸 수 없는 이름의 내장 함수(`[||]`, `.[]`, `.[]<-`) 호출로 만듭니다. 그래서 Lower와 Codegen은 보통 내장 함수처럼 다룹니다.
   - 이 이름은 C 이름이 될 수 없으므로 Codegen의 `builtinSymbol`이 런타임 함수 이름으로 바꿉니다. `Array.length`처럼 점이 있는 이름은 `calc_builtin_Array_length`가 됩니다.
   - 리터럴과 `Array.ofList`는 같은 C 함수(`calc_builtin_Array_ofList`)라서 선언은 한 번만 냅니다.
