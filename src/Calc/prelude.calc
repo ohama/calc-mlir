@@ -47,9 +47,21 @@ let rec fold f acc xs =
     | [] -> acc
     | x :: rest -> fold f (f acc x) rest
 
-let reverse xs = fold (fun acc x -> x :: acc) [] xs
+// reverse, append, map, filter 는 fold 에 함수를 넘기지 않고 직접 재귀: 원소마다 함수 값을 부르지 않음
+let reverse xs =
+    let rec go xs acc =
+        match xs with
+        | [] -> acc
+        | x :: rest -> go rest (x :: acc)
+    go xs []
 
-let append xs ys = fold (fun acc x -> x :: acc) ys (reverse xs)
+// xs 를 거꾸로 한 뒤 하나씩 ys 앞에 붙임
+let append xs ys =
+    let rec go xs acc =
+        match xs with
+        | [] -> acc
+        | x :: rest -> go rest (x :: acc)
+    go (reverse xs) ys
 
 let range (a: int) (b: int) : int list =
     let rec go i acc = if i < a then acc else go (i - 1) (i :: acc)
@@ -59,9 +71,19 @@ let range (a: int) (b: int) : int list =
 let sum (xs: int list) : int = fold (fun acc x -> acc + x) 0 xs
 
 // f 는 앞 원소부터 호출 (출력 순서가 F# List.map 과 같음)
-let map f xs = reverse (fold (fun acc x -> f x :: acc) [] xs)
+let map f xs =
+    let rec go xs acc =
+        match xs with
+        | [] -> reverse acc
+        | x :: rest -> go rest (f x :: acc)
+    go xs []
 
-let filter f xs = reverse (fold (fun acc x -> if f x then x :: acc else acc) [] xs)
+let filter f xs =
+    let rec go xs acc =
+        match xs with
+        | [] -> reverse acc
+        | x :: rest -> go rest (if f x then x :: acc else acc)
+    go xs []
 
 // 결과가 정해지면 나머지 원소에는 f 를 호출하지 않음
 let rec exists f xs =

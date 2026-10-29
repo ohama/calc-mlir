@@ -472,22 +472,97 @@ let private asList (code: Code) fr =
     | VList items -> items
     | v -> typeError "list" v
 
+/// 연산자의 피연산자: 숫자 상수, 지금 함수의 칸, 그 밖의 식. 앞의 둘은 클로저를 부르지 않고 읽음
+type private Operand =
+    | OConst of int
+    | OLocal of int
+    | OCode of Code
+
+let private operandCode (o: Operand) : Code =
+    match o with
+    | OConst n ->
+        let v = VInt n
+        fun _ -> v
+    | OLocal s -> fun fr -> slotOf fr s
+    | OCode c -> c
+
 /// < > <= >= 는 int 끼리 또는 string 끼리 (문자 코드 순서) 비교. int 끼리는 compareValues 를 거치지 않음
-let inline private orderTest (a: Code) (b: Code) ([<InlineIfLambda>] op: int -> int -> bool) ([<InlineIfLambda>] test: int -> bool) : Frame -> bool =
-    fun fr ->
-        match a fr with
-        | VInt x ->
-            match b fr with
-            | VInt y -> op x y
-            | v -> typeError "int" v
-        | VString _ as x -> test (compareValues x (b fr))
+let inline private orderTest (a: Operand) (b: Operand) ([<InlineIfLambda>] op: int -> int -> bool) ([<InlineIfLambda>] test: int -> bool) : Frame -> bool =
+    let inline slow (x: Value) (y: Value) =
+        match x with
+        | VString _ -> test (compareValues x y)
         | v -> typeError "int or string" v
+    match a, b with
+    | OLocal s, OConst k ->
+        fun fr ->
+            match slotOf fr s with
+            | VInt x -> op x k
+            | x -> slow x (VInt k)
+    | OLocal s, OLocal t ->
+        fun fr ->
+            match slotOf fr s with
+            | VInt x -> (match slotOf fr t with VInt y -> op x y | v -> typeError "int" v)
+            | x -> slow x (slotOf fr t)
+    | OCode a, OConst k ->
+        fun fr ->
+            match a fr with
+            | VInt x -> op x k
+            | x -> slow x (VInt k)
+    | _ ->
+        let a, b = operandCode a, operandCode b
+        fun fr ->
+            match a fr with
+            | VInt x ->
+                match b fr with
+                | VInt y -> op x y
+                | v -> typeError "int" v
+            | x -> slow x (b fr)
 
 /// - * / % : int 끼리
-let inline private arith (a: Code) (b: Code) ([<InlineIfLambda>] op: int -> int -> int) : Code =
-    fun fr ->
-        let x = asInt a fr
-        ofInt (op x (asInt b fr))
+let inline private arith (a: Operand) (b: Operand) ([<InlineIfLambda>] op: int -> int -> int) : Code =
+    match a, b with
+    | OLocal s, OConst k ->
+        fun fr ->
+            match slotOf fr s with
+            | VInt x -> ofInt (op x k)
+            | v -> typeError "int" v
+    | OLocal s, OLocal t ->
+        fun fr ->
+            match slotOf fr s with
+            | VInt x -> (match slotOf fr t with VInt y -> ofInt (op x y) | v -> typeError "int" v)
+            | v -> typeError "int" v
+    | OCode a, OConst k ->
+        fun fr ->
+            match a fr with
+            | VInt x -> ofInt (op x k)
+            | v -> typeError "int" v
+    | _ ->
+        let a, b = operandCode a, operandCode b
+        fun fr ->
+            let x = asInt a fr
+            ofInt (op x (asInt b fr))
+
+/// = 와 <> : int 끼리는 바로, 나머지는 valueEquals
+let inline private equalTest (a: Operand) (b: Operand) ([<InlineIfLambda>] wrap: bool -> bool) : Frame -> bool =
+    match a, b with
+    | OLocal s, OConst k ->
+        let kv = VInt k
+        fun fr ->
+            match slotOf fr s with
+            | VInt x -> wrap (x = k)
+            | x -> wrap (valueEquals x kv)
+    | OCode a, OConst k ->
+        let kv = VInt k
+        fun fr ->
+            match a fr with
+            | VInt x -> wrap (x = k)
+            | x -> wrap (valueEquals x kv)
+    | _ ->
+        let a, b = operandCode a, operandCode b
+        fun fr ->
+            match a fr with
+            | VInt x -> (match b fr with VInt y -> wrap (x = y) | v -> typeError "int" v)
+            | x -> wrap (valueEquals x (b fr))
 
 let rec private patternNames pattern =
     match pattern with
@@ -700,10 +775,10 @@ and private compile (scope: Scope) (expr: Expr) : Code =
             | VInt x -> ofInt (x + asInt b fr)
             | VString x -> VString (x + asString b fr)
             | v -> typeError "int or string" v
-    | Subtract (a, b) -> arith (c a) (c b) (fun x y -> x - y)
-    | Multiply (a, b) -> arith (c a) (c b) (fun x y -> x * y)
-    | Divide (a, b) -> arith (c a) (c b) (fun x y -> x / y)
-    | Modulo (a, b) -> arith (c a) (c b) (fun x y -> x % y)
+    | Subtract (a, b) -> arith (operand scope a) (operand scope b) (fun x y -> x - y)
+    | Multiply (a, b) -> arith (operand scope a) (operand scope b) (fun x y -> x * y)
+    | Divide (a, b) -> arith (operand scope a) (operand scope b) (fun x y -> x / y)
+    | Modulo (a, b) -> arith (operand scope a) (operand scope b) (fun x y -> x % y)
     | Negate e ->
         let e = c e
         fun fr -> VInt -(asInt e fr)
@@ -847,26 +922,26 @@ and private saturatedBuiltin (scope: Scope) (head: Expr) (args: Code[]) : Code o
             | v -> typeError "array" v)
     | Some name, _ -> Some (fun fr -> callBuiltin name [ for a in args -> a fr ])
 
+/// 숫자 상수와 지금 함수의 변수는 OConst, OLocal (바깥 함수의 변수는 parentOf 를 거치므로 OCode)
+and private operand (scope: Scope) (expr: Expr) : Operand =
+    match expr with
+    | Number n -> OConst n
+    | Var name ->
+        match Map.tryFind name scope.Vars with
+        | Some (depth, slot) when depth = scope.Depth -> OLocal slot
+        | _ -> OCode (compile scope expr)
+    | _ -> OCode (compile scope expr)
+
 /// 조건과 비교, 논리 연산: 중간 결과로 VBool 을 만들지 않고 bool 을 돌려줌 (if 의 조건은 이것만 씀)
 and private test (scope: Scope) (expr: Expr) : Frame -> bool =
     let c = compile scope
     match expr with
-    | Less (a, b) -> orderTest (c a) (c b) (fun x y -> x < y) (fun n -> n < 0)
-    | Greater (a, b) -> orderTest (c a) (c b) (fun x y -> x > y) (fun n -> n > 0)
-    | LessEqual (a, b) -> orderTest (c a) (c b) (fun x y -> x <= y) (fun n -> n <= 0)
-    | GreaterEqual (a, b) -> orderTest (c a) (c b) (fun x y -> x >= y) (fun n -> n >= 0)
-    | Equal (a, b) ->
-        let a, b = c a, c b
-        fun fr ->
-            match a fr with
-            | VInt x -> (match b fr with VInt y -> x = y | v -> typeError "int" v)
-            | x -> valueEquals x (b fr)
-    | NotEqual (a, b) ->
-        let a, b = c a, c b
-        fun fr ->
-            match a fr with
-            | VInt x -> (match b fr with VInt y -> x <> y | v -> typeError "int" v)
-            | x -> not (valueEquals x (b fr))
+    | Less (a, b) -> orderTest (operand scope a) (operand scope b) (fun x y -> x < y) (fun n -> n < 0)
+    | Greater (a, b) -> orderTest (operand scope a) (operand scope b) (fun x y -> x > y) (fun n -> n > 0)
+    | LessEqual (a, b) -> orderTest (operand scope a) (operand scope b) (fun x y -> x <= y) (fun n -> n <= 0)
+    | GreaterEqual (a, b) -> orderTest (operand scope a) (operand scope b) (fun x y -> x >= y) (fun n -> n >= 0)
+    | Equal (a, b) -> equalTest (operand scope a) (operand scope b) id
+    | NotEqual (a, b) -> equalTest (operand scope a) (operand scope b) not
     // && 와 || 는 단락 평가: 왼쪽으로 결과가 정해지면 오른쪽은 평가하지 않음
     | And (a, b) ->
         let a, b = test scope a, test scope b

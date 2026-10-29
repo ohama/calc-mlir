@@ -137,6 +137,10 @@ let runFile (typecheck: bool) (input: string) =
 
 [<EntryPoint>]
 let main argv =
+    // 가장 흔한 calc prog.calc 는 Argu 를 거치지 않음: Argu 의 초기화(reflection)가 약 50ms 로 빈 프로그램 실행 시간의 절반
+    match argv with
+    | [| path |] when not (path.StartsWith "-") -> runFile true (System.IO.File.ReadAllText path)
+    | _ ->
     let parser = ArgumentParser.Create<CliArgs>(programName = "calc")
     try
         let results = parser.ParseCommandLine(argv)

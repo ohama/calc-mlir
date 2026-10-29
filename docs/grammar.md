@@ -1051,12 +1051,17 @@ let rec fold f acc xs =
     | [] -> acc
     | x :: rest -> fold f (f acc x) rest
 
-let reverse xs = fold (fun acc x -> x :: acc) [] xs
-let map f xs = reverse (fold (fun acc x -> f x :: acc) [] xs)
 let sum (xs: int list) : int = fold (fun acc x -> acc + x) 0 xs
+
+let map f xs =
+    let rec go xs acc =
+        match xs with
+        | [] -> reverse acc
+        | x :: rest -> go rest (f x :: acc)
+    go xs []
 ```
 
-- **붙이는 방법:** 프로그램을 파싱한 뒤, 프로그램이 쓰는 prelude 정의만 `let … in` 사슬로 앞에 붙입니다(`Prelude.wrap`). `map`을 쓰면 `map`이 쓰는 `fold`와 `reverse`도 붙습니다. 쓰지 않는 정의는 타입 추론, 평가, 컴파일 비용만 늘리므로 붙이지 않습니다. REPL은 처음부터 모두 붙입니다.
+- **붙이는 방법:** 프로그램을 파싱한 뒤, 프로그램이 쓰는 prelude 정의만 `let … in` 사슬로 앞에 붙입니다(`Prelude.wrap`). `map`을 쓰면 `map`이 쓰는 `reverse`도 붙습니다. 쓰지 않는 정의는 타입 추론, 평가, 컴파일 비용만 늘리므로 붙이지 않습니다. REPL은 처음부터 모두 붙입니다.
 - **가리기:** 프로그램에서 같은 이름을 정의하면 그쪽이 가립니다. prelude 안의 정의는 바뀌지 않습니다. `let reverse xs = xs in map f ys`의 `map`은 prelude의 `reverse`를 씁니다.
 - **긴 리스트:** 모두 tail recursion이라 `sum (range 1 1000000)`도 스택이 자라지 않습니다. `map`과 `filter`는 거꾸로 모은 뒤 `reverse`합니다. 함수는 앞 원소부터 호출합니다.
 - **타입:** prelude의 타입은 추론한 것입니다. `sum`처럼 `+`의 타입을 정해야 하는 곳에는 타입 표기를 씁니다. 타입은 예전의 내장 함수와 같습니다.

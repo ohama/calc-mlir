@@ -15,7 +15,7 @@ let tests =
     testList "Prelude" [
         test "쓰는 정의만 붙임 (다른 정의가 쓰는 정의도)" {
             Expect.equal (Prelude.wrap (Program.parse "1")) (Number 1) "prelude 를 쓰지 않으면 그대로"
-            Expect.equal (attached (Program.load "map f xs")) [ "fold"; "reverse"; "map" ] "map 은 fold 와 reverse 를 씀"
+            Expect.equal (attached (Program.load "map f xs")) [ "reverse"; "map" ] "map 은 reverse 를 씀"
             Expect.equal (attached (Program.load "sum (range 1 3)")) [ "fold"; "range"; "sum" ] "prelude 안의 순서"
         }
 
@@ -64,5 +64,32 @@ let tests =
 
         test "긴 리스트도 스택이 자라지 않음 (인터프리터의 tail call)" {
             Expect.equal (EvalTests.calc "length (range 1 1000000)") (Eval.VInt 1000000) ""
+            Expect.equal (EvalTests.calc "let xs = range 1 300000 in length (append (map (fun x -> x + 1) xs) (filter (fun x -> x % 2 = 0) (reverse xs)))") (Eval.VInt 450000) ""
         }
+
+        test "reverse, append, map, filter" {
+            Expect.equal (EvalTests.calc "(reverse [1; 2; 3], append [1; 2] [3], append [] [1], map (fun x -> x * 10) [1; 2], filter (fun x -> x > 1) [3; 1; 2])")
+                (Eval.VTuple [ Eval.VList [ Eval.VInt 3; Eval.VInt 2; Eval.VInt 1 ]; Eval.VList [ Eval.VInt 1; Eval.VInt 2; Eval.VInt 3 ]; Eval.VList [ Eval.VInt 1 ]
+                               Eval.VList [ Eval.VInt 10; Eval.VInt 20 ]; Eval.VList [ Eval.VInt 3; Eval.VInt 2 ] ]) ""
+        }
+
+        // calc prog.calc 는 Argu 를 거치지 않음 (Program.main). Console.Out 을 바꾸므로 다른 테스트와 겹치지 않게 차례로
+        testSequenced (test "calc prog.calc 와 calc --no-typecheck prog.calc 의 출력이 같음" {
+            let path = System.IO.Path.GetTempFileName()
+            System.IO.File.WriteAllText(path, "println (1 + 2)\n[1; 2]")
+            let run (argv: string[]) =
+                let saved = System.Console.Out
+                use writer = new System.IO.StringWriter()
+                System.Console.SetOut writer
+                try
+                    let code = Program.main argv
+                    code, writer.ToString().Replace("\r\n", "\n")
+                finally
+                    System.Console.SetOut saved
+            try
+                Expect.equal (run [| path |]) (0, "3\n[1; 2]\n") ""
+                Expect.equal (run [| "--no-typecheck"; path |]) (0, "3\n[1; 2]\n") ""
+            finally
+                System.IO.File.Delete path
+        })
     ]

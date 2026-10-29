@@ -441,15 +441,14 @@ let f = substr "hello" in (f 1 3, map length ["a"; "bb"], toInt "7")
 `map`, `fold`, `range`, `head`처럼 Calc로 쓸 수 있는 함수 20개는 C 런타임에 없습니다. `src/Calc/prelude.calc`의 Calc 코드를 프로그램 앞에 붙여서, 사용자 함수와 똑같이 컴파일합니다.
 
 ```
-Ast.Expr ──▶ Prelude.wrap ──▶ let rec fold f acc xs = …  in
-                              let reverse xs = …        in
+Ast.Expr ──▶ Prelude.wrap ──▶ let reverse xs = …        in
                               let map f xs = …          in
                               <프로그램>
 ```
 
-- **쓰는 정의만:** `Prelude.wrap`은 프로그램에 나오는 이름에서 시작해, 붙일 정의가 쓰는 이름을 따라 필요한 정의를 고릅니다. 위 10장의 예제는 `fold`, `reverse`, `map`만 붙습니다. 생성한 MLIR의 함수는 `@lambda_0`부터 `@lambda_13`까지 14개입니다(`fold` 3개, `reverse` 3개, `map` 4개, `length` 값 1개, `substr` 값 3개).
+- **쓰는 정의만:** `Prelude.wrap`은 프로그램에 나오는 이름에서 시작해, 붙일 정의가 쓰는 이름을 따라 필요한 정의를 고릅니다. 위 10장의 예제는 `reverse`, `map`만 붙습니다(`map`이 `reverse`를 씀). 생성한 MLIR의 함수는 `@lambda_0`부터 `@lambda_10`까지 11개입니다(알려진 함수의 `_direct` 함수는 빼고 셈).
 - **같은 정의:** 인터프리터도 같은 `Prelude.wrap`을 거칩니다. 차등 테스트가 같은 정의의 두 실행을 비교합니다.
-- **비용:** 내장 함수였을 때는 C 루프였지만, 지금은 원소마다 클로저를 부릅니다. 100만 개 리스트에 `range`, `map`, `filter`, `sum`, `exists`를 쓰는 프로그램이 0.04초에서 0.23초가 되었습니다. 0.34.0의 알려진 함수 direct call(15장)로 0.12초가 되었습니다.
+- **비용:** 내장 함수였을 때는 C 루프였지만, 지금은 원소마다 Calc 함수를 부릅니다. 100만 개 리스트에 `range`, `map`, `filter`, `sum`, `exists`를 쓰는 프로그램이 0.04초에서 0.23초가 되었습니다. 0.34.0의 알려진 함수 direct call(15장)로 0.12초가 되었습니다. 0.44.0 다음에는 `reverse`, `append`, `map`, `filter`를 `fold`에 함수를 넘기지 않는 직접 재귀로 바꿔서, 원소마다 `calc_apply`로 부르던 간접 호출이 없어졌습니다(`benchmarks/msort.calc` 0.29초 → 0.20초).
 - **`upper`, `lower`, `trim`:** C 표준 라이브러리 대신 .NET에서 만든 표(`unicode.h`)를 씁니다. `ß`와 `İ`처럼 invariant 변환이 그대로 두는 문자까지 인터프리터와 같습니다.
 
 ## 12. tail call

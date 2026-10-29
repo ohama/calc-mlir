@@ -532,6 +532,20 @@ let tests =
             expectError "if true < false then 1 else 0" "Type error: expected int or string but got bool"
             expectError "if 1 then 1 else 0" "Type error: expected bool but got int"
             expectError "if not 1 then 1 else 0" "Type error: expected bool but got int"
+            // 피연산자가 숫자 상수나 지금 함수의 변수일 때 (Eval.operand)
+            test "상수와 지금 함수의 변수를 피연산자로" {
+                Expect.equal (calc "let f a b = (a - b, a * b, a / 3, a % b, a - 1, 5 - a, a < b, a >= 3, a = 7, a <> b, b = 2) in f 7 2")
+                    (VTuple [ VInt 5; VInt 14; VInt 2; VInt 1; VInt 6; VInt -2; VBool false; VBool true; VBool true; VBool true; VBool true ]) ""
+                Expect.equal (calc "let f s t = (s < t, s >= \"b\", s = \"a\") in f \"a\" \"b\"") (VTuple [ VBool true; VBool false; VBool true ]) "string"
+                Expect.equal (calc "let f xs = xs = [] in (f [], f [1])") (VTuple [ VBool true; VBool false ]) "int 가 아닌 = 는 valueEquals"
+                Expect.throwsT<System.DivideByZeroException> (fun () -> calc "let f x = x / 0 in f 1" |> ignore) ""
+            }
+            expectError "let f x = x - 1 in f true" "Type error: expected int but got bool"
+            expectError "let f x y = x * y in f 2 true" "Type error: expected int but got bool"
+            expectError "let f x = x < 1 in f \"a\"" "Type error: expected string but got int"
+            expectError "let f x y = x < y in f 1 \"a\"" "Type error: expected int but got string"
+            expectError "let f x = x < 1 in f true" "Type error: expected int or string but got bool"
+            expectError "let f x = x = 0 in f true" "Type error: expected bool but got int"
             test "세 단계 넘게 바깥 함수의 칸" {
                 Expect.equal (calc "let a = 1 in let f b = let g c = let h d = let k e = a + b + c + d + e in k in h in g in f 2 3 4 5") (VInt 15) ""
             }
