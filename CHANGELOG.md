@@ -4,6 +4,18 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.41.0] - 2026-10-29
+
+### 추가
+- 배열(F#과 같은 문법). 인터프리터, 타입 추론, 컴파일러, REPL 모두 지원합니다.
+  - `[| 1; 2 |]`, `[||]`, `a.[i]`, `a.[i] <- v`. 타입은 `'a array`이고, 출력은 `[|1; 2|]`입니다. `=`는 원소를 비교합니다.
+  - 내장 함수 `Array.length`, `Array.create`, `Array.ofList`, `Array.toList`, prelude의 `module Array`에 `Array.init`, `Array.map`, `Array.iter`, `Array.fold`, `Array.copy`
+  - 범위 밖은 `Index was outside the bounds of the array.`로 끝납니다(인터프리터와 컴파일러가 같은 문장).
+  - 컴파일러는 배열을 블록 `[헤더, 원소...]`(종류 8)로 만듭니다.
+  - 새 토큰 `[|`, `|]`, `<-`. `x<-1`은 이제 `x <- 1`입니다(`x < -1`로 띄어 씀).
+- prelude에서도 모듈을 쓸 수 있습니다(파싱한 뒤 `Modules.resolve`로 펼침).
+- 테스트 31개 추가 (총 1166개)
+
 ## [0.40.0] - 2026-10-29
 
 ### 추가

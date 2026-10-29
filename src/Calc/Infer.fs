@@ -77,6 +77,7 @@ let private tUnit = TyCon ("unit", [])
 let private listOf t = TyCon ("list", [ t ])
 let private optionOf t = TyCon ("option", [ t ])
 let private refOf t = TyCon ("ref", [ t ])
+let private arrayOf t = TyCon ("array", [ t ])
 /// 예외 값의 타입. exception 선언마다 생성자가 늘어나는 열린 타입이라 빠진 분기 검사는 int 처럼 _ 가 필요함
 let private tExn = TyCon ("exn", [])
 
@@ -359,13 +360,21 @@ let private initialContext (st: State) =
             "ref", a ^-> refOf a
             "!", refOf a ^-> a
             ":=", refOf a ^-> a ^-> tUnit
+            // 배열 (파서가 [| … |], a.[i], a.[i] <- v 를 이 이름의 호출로 만듦)
+            "[||]", listOf a ^-> arrayOf a
+            ".[]", arrayOf a ^-> tInt ^-> a
+            ".[]<-", arrayOf a ^-> tInt ^-> a ^-> tUnit
+            "Array.length", arrayOf a ^-> tInt
+            "Array.create", tInt ^-> a ^-> arrayOf a
+            "Array.ofList", listOf a ^-> arrayOf a
+            "Array.toList", arrayOf a ^-> listOf a
             // map, fold, head, failwith 같은 함수는 prelude.calc 에서 추론한 타입
         ]
         // 포맷: 타입이 포맷 문자열 리터럴에 따라 정해지므로 보통 타입이 없음 (표시만, App 에서 Format 으로 다룸).
         // 위 리스트 안에 for 를 쓰면 앞 항목이 버려지므로(FS0020) 따로 더함
         |> fun vars -> Format.kinds |> Seq.fold (fun acc kind -> Map.add kind (formatMarker kind) acc) vars
     let types =
-        Map.ofList [ "int", ("int", 0); "bool", ("bool", 0); "string", ("string", 0); "unit", ("unit", 0); "list", ("list", 1); "option", ("option", 1); "exn", ("exn", 0); "ref", ("ref", 1) ]
+        Map.ofList [ "int", ("int", 0); "bool", ("bool", 0); "string", ("string", 0); "unit", ("unit", 0); "list", ("list", 1); "option", ("option", 1); "exn", ("exn", 0); "ref", ("ref", 1); "array", ("array", 1) ]
     { Vars = vars; Types = types; Fields = Map.empty }
 
 // ---- 추론 ----

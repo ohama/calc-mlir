@@ -48,6 +48,14 @@ let recordHeader (count: int) = kindRecord ||| (int64 (1 + count) <<< 8)
 /// 런타임 함수 없이 Codegen 이 바로 만드는 내장 함수 (가변 참조)
 let private inlineBuiltins = set [ "ref"; "!"; ":=" ]
 
+/// 내장 함수의 C 런타임 함수 이름 (builtins.c). 이름에 C 에서 쓸 수 없는 글자가 있는 것(배열)은 따로 정함
+let private builtinSymbol (name: string) =
+    match name with
+    | "[||]" | "Array.ofList" -> "calc_builtin_Array_ofList" // 배열 리터럴은 리스트로 만든 배열
+    | ".[]" -> "calc_builtin_array_get"
+    | ".[]<-" -> "calc_builtin_array_set"
+    | _ -> "calc_builtin_" + name.Replace(".", "_")
+
 /// 문자열 블록 = [헤더, 길이, UTF-16 코드 단위...]. 뒤따르는 단어 수는 길이 칸 + 코드 단위를 담는 단어
 let stringHeader (length: int) = kindString ||| (int64 (1 + (2 * length + 7) / 8) <<< 8)
 
@@ -405,7 +413,7 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
         emitConst fb "i64" unitValue
     | CBuiltin (name, args) ->
         let values = args |> List.map (emitExpr fb env)
-        emitCall fb ("calc_builtin_" + name) values "i64"
+        emitCall fb (builtinSymbol name) values "i64"
     // 필드 이름 문자열은 생성자 이름과 같은 표에 둠 (필드 이름은 소문자로 시작하고 ; 가 들어가므로 생성자와 겹치지 않음)
     | CRecord (names, values) ->
         let namesAddress = emitGlobalAddress fb (fb.Strings.CtorName (String.concat ";" names))
@@ -650,9 +658,13 @@ let private declarations =
       "}"
       // 내장 함수: runtime/builtins.c
       // sprintf, printf, printfn 은 Lower 가 Calc 코드로 펼치고, ref, !, := 는 Codegen 이 바로 만드므로 런타임 함수가 없음
-      for KeyValue (name, arity) in Eval.builtinArity do
-          if not (Format.kinds.Contains name || inlineBuiltins.Contains name) then
-              sprintf "llvm.func @calc_builtin_%s(%s) -> i64" name (List.replicate arity "i64" |> String.concat ", ")
+      // 같은 C 함수를 쓰는 내장 함수([||] 와 Array.ofList)는 한 번만 선언
+      for symbol, arity in
+          Eval.builtinArity
+          |> Seq.filter (fun (KeyValue (name, _)) -> not (Format.kinds.Contains name || inlineBuiltins.Contains name))
+          |> Seq.map (fun (KeyValue (name, arity)) -> builtinSymbol name, arity)
+          |> Seq.distinct do
+          sprintf "llvm.func @%s(%s) -> i64" symbol (List.replicate arity "i64" |> String.concat ", ")
       // option 의 이름과 None 값은 런타임에 하나 (runtime.h)
       "llvm.mlir.global external constant @calc_name_some() {addr_space = 0 : i32} : !llvm.array<5 x i8>"
       "llvm.mlir.global external constant @calc_name_none() {addr_space = 0 : i32} : !llvm.array<5 x i8>"

@@ -383,6 +383,18 @@ let cases =
       "type p = { name: string; tags: string list } in [{ name = \"a\"; tags = [] }; { name = \"b\"; tags = [\"t\"] }]", VList [ VRecord ("p", [ "name", VString "a"; "tags", VList [] ]); VRecord ("p", [ "name", VString "b"; "tags", VList [ VString "t" ] ]) ]
       "type p = { x: int } in Some { x = -1 }", some (VRecord ("p", [ "x", VInt -1 ]))
       "type p = { x: int; y: int; } in { x = 1; y = 2; }.y", VInt 2
+      // 배열
+      "let a = [| 3; 1; 2 |] in a.[0] <- 10; (a, Array.length a, a.[1] + a.[2])", VTuple [ VArray [| VInt 10; VInt 1; VInt 2 |]; VInt 3; VInt 3 ]
+      "Array.init 5 (fun i -> i * i)", VArray [| VInt 0; VInt 1; VInt 4; VInt 9; VInt 16 |]
+      "let t = ref 0 in Array.iter (fun x -> t := !t + x) [| 1; 2; 3 |]; !t", VInt 6
+      "(Array.map (fun x -> x + 1) [| 1; 2 |], Array.fold (fun acc x -> acc + x) 0 [| 1; 2; 3 |], Array.toList [| \"a\" |])", VTuple [ VArray [| VInt 2; VInt 3 |]; VInt 6; VList [ VString "a" ] ]
+      "let a = [| 1; 2 |] in let b = Array.copy a in b.[0] <- 0; (a, b, a = b, [| 1 |] = [| 1 |])", VTuple [ VArray [| VInt 1; VInt 2 |]; VArray [| VInt 0; VInt 2 |]; VBool false; VBool true ]
+      "let a = [| 1 |] in let b = a in b.[0] <- 5; a.[0]", VInt 5 // 같은 배열
+      "let g = Array.create 3 0 in for i = 0 to 2 do g.[i] <- i * 10 done; Array.toList g", VList [ VInt 0; VInt 10; VInt 20 ]
+      "let a = Array.ofList [[1]; []] in a.[1] <- [2; 3]; a", VArray [| VList [ VInt 1 ]; VList [ VInt 2; VInt 3 ] |]
+      "(Array.length [||], Array.init 0 (fun i -> i))", VTuple [ VInt 0; VArray [||] ]
+      "let m = Array.init 2 (fun i -> Array.create 2 i) in m.[1].[0] <- 9; m", VArray [| VArray [| VInt 0; VInt 0 |]; VArray [| VInt 9; VInt 1 |] |]
+      "let fib n = let a = Array.create (n + 1) 0 in a.[1] <- 1; for i = 2 to n do a.[i] <- a.[i - 1] + a.[i - 2] done; a.[n] in fib 30", VInt 832040
       // 레코드 패턴
       "type p = { x: int; y: int } in let f r = match r with { x = 0; y = 0 } -> \"origin\" | { x = 0 } -> \"y axis\" | { x = a; y = b } when a = b -> \"diagonal\" | _ -> \"other\" in map f [{ x = 0; y = 0 }; { x = 0; y = 5 }; { x = 3; y = 3 }; { x = 1; y = 2 }]", VList [ VString "origin"; VString "y axis"; VString "diagonal"; VString "other" ]
       "type p = { x: int; y: int } in let { x = a; y = b } = { y = 4; x = 3 } in a * 10 + b", VInt 34

@@ -93,3 +93,14 @@ let defaultValue d opt =
     match opt with
     | Some v -> v
     | None -> d
+
+// 배열 (F# Array 모듈과 같은 이름). length, create, ofList, toList 와 a.[i], a.[i] <- v 는 내장 함수.
+// 안의 map, fold 는 위의 리스트 함수 (모듈의 같은 이름은 그 정의 뒤부터 보임)
+module Array =
+    let init (n: int) f = Array.ofList (map f (range 0 (n - 1)))
+    let copy a = Array.ofList (Array.toList a)
+    let iter f a =
+        for i = 0 to Array.length a - 1 do
+            f a.[i]
+    let fold f acc a = fold f acc (Array.toList a)
+    let map f a = Array.ofList (map f (Array.toList a))

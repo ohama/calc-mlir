@@ -775,6 +775,23 @@ let tests =
             }
         ]
 
+        testList "배열" [
+            test "리터럴, a.[i], a.[i] <- v" {
+                let get a i = App (App (Var ".[]", a), i)
+                Expect.equal (parse "[| 1; 2 |]") (App (Var "[||]", Cons (Number 1, Cons (Number 2, Nil)))) ""
+                Expect.equal (parse "[||]") (App (Var "[||]", Nil)) ""
+                Expect.equal (parse "f a.[i + 1]") (App (Var "f", get (Var "a") (Add (Var "i", Number 1)))) "a.[i] 는 함수 호출보다 강함"
+                Expect.equal (parse "a.[0].[1]") (get (get (Var "a") (Number 0)) (Number 1)) "왼쪽 결합"
+                Expect.equal (parse "a.[i] <- a.[i] + 1") (App (App (App (Var ".[]<-", Var "a"), Var "i"), Add (get (Var "a") (Var "i"), Number 1))) "<- 는 := 와 같은 자리"
+                Expect.equal (parse "a.[0] <- 1; a.[1] <- 2") (Seq (App (App (App (Var ".[]<-", Var "a"), Number 0), Number 1), App (App (App (Var ".[]<-", Var "a"), Number 1), Number 2))) ""
+                Expect.equal (parse "x < -1") (Less (Var "x", Negate (Number 1))) "공백이 있으면 < 와 -"
+            }
+            test "오류" {
+                expectParseError "x <- 1" "The left side of <- must be an array element a.[i]" 1 1
+                expectParseError "[| 1; |]" "parse error: unexpected '|]'" 1 7
+            }
+        ]
+
         testList "가변 참조와 반복문" [
             test "!r 은 함수 호출보다 강하고, := 는 이항 연산자 가운데 가장 약하고 오른쪽 결합" {
                 let deref e = App (Var "!", e)

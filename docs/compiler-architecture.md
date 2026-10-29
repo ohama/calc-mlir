@@ -588,6 +588,16 @@ type p = { x: int; y: int } in let a = { y = 2; x = 1 } in { a with x = a.y }
 - **패턴:** `Lower`가 레코드 패턴을 선언한 순서의 모든 필드로 채웁니다(쓰지 않은 필드는 `_`, `fillRecordFields`). Codegen은 i번째 하위 패턴을 칸 `2 + i`에서 읽어 검사하고 묶습니다. 생성자가 하나라 확인할 태그가 없으므로, 하위 패턴이 모두 irrefutable이면 검사 코드가 없습니다.
 - **런타임:** `calc_buffer_value`는 이름 문자열을 `;`로 나눠 `{ x = 1; y = 2 }`를 출력하고, `calc_eq`는 값 칸을 차례로 비교합니다. 인터프리터의 `Eval.formatValue`, `Eval.valueEquals`와 같습니다.
 
+## 18. 배열
+
+- **표현:** 블록 `[헤더, 원소...]`이고, 헤더는 `8 | (n << 8)`입니다(`CALC_KIND_ARRAY`). 길이는 헤더의 단어 수입니다.
+- **내장 함수:** 리터럴 `[| … |]`, `a.[i]`, `a.[i] <- v`는 파서가 사용자가 쓸 수 없는 이름의 내장 함수(`[||]`, `.[]`, `.[]<-`) 호출로 만듭니다. 그래서 Lower와 Codegen은 보통 내장 함수처럼 다룹니다.
+  - 이 이름은 C 이름이 될 수 없으므로 Codegen의 `builtinSymbol`이 런타임 함수 이름으로 바꿉니다. `Array.length`처럼 점이 있는 이름은 `calc_builtin_Array_length`가 됩니다.
+  - 리터럴과 `Array.ofList`는 같은 C 함수(`calc_builtin_Array_ofList`)라서 선언은 한 번만 냅니다.
+- **범위 검사:** `calc_builtin_array_get`/`set`이 검사하고, 범위 밖이면 인터프리터와 같은 문장(`Index was outside the bounds of the array.`)으로 끝냅니다.
+- **prelude:** `Array.init`, `map`, `iter`, `fold`, `copy`는 prelude의 `module Array`에 Calc 코드로 있습니다. prelude도 파싱한 뒤 `Modules.resolve`로 펼치므로 `Array.init` 같은 이름의 선언이 됩니다. 프로그램의 `Array.init`은 선언하지 않은 모듈의 이름이라 바뀌지 않고, `Prelude.wrap`이 이름으로 찾아 붙입니다.
+- **GC:** Boehm GC는 세대별이 아니므로 원소를 바꿀 때 write barrier가 필요 없습니다(mutable reference와 같음).
+
 ## 관련 문서
 
 - [compiler-design.md](compiler-design.md): 설계 결정(D1–D10), value representation, 단계별 계획

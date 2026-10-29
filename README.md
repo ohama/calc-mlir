@@ -45,6 +45,7 @@ Result: 10
 | 레코드 | `type point = { x: int; y: int }`, `{ x = 1; y = 2 }`, `p.x`, `{ p with x = 1 }`, `match p with { x = 0 } -> …` |
 | 모듈 | `module Stack = struct type 'a t = … let push x s = … end`, `Stack.push`, `open Stack` |
 | indentation 문법 (F# light syntax) | 들여쓴 블록이 `in`, `;`, `;;`, `done`, `struct … end`를 대신함. 0열의 새 줄은 새 항목 |
+| 배열 | `[\| 1; 2 \|]`, `a.[i]`, `a.[i] <- v`, `Array.length`, `Array.init`, `Array.map` |
 | mutable reference, 반복문 | `let r = ref 0 in r := !r + 1`, `incr r`, `for i = 1 to 10 do … done`, `while !n > 0 do … done` |
 
 - 우선순위 (낮은 것부터): `;` < `let`/`if`/`fun`/`match` < `:=` < `||` < `&&` < 비교, `|>`, `>>` < `::` < `+ -` < `* / %` < 단항 `-`, `not` < 함수 호출 < `!` < `.` (필드)
@@ -86,7 +87,7 @@ dotnet run --project src/Calc
 ```
 
 ```
-calc 0.40.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
+calc 0.41.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
 # let add a b = a + b;;
 val add : int -> int -> int = <fun>
 # add 1 2;;

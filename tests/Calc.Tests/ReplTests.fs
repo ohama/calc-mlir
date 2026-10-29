@@ -138,6 +138,12 @@ let tests =
                   "f 20;;", "- : int = 41\n"
                   "let a = 1\nlet b = a + 1\nb;;", "val a : int = 1\nval b : int = 2\n- : int = 2\n" ]
         }
+        test "배열: 값은 [|…|], 원소를 바꾸면 다음 입력에서도 보임" {
+            expectSession
+                [ "let a = [| 1; 2 |];;", "val a : int array = [|1; 2|]\n"
+                  "a.[0] <- 5;;", "- : unit = ()\n"
+                  "a;;", "- : int array = [|5; 2|]\n" ]
+        }
         test "레코드 선언과 값" {
             expectSession
                 [ "type point = { x: int; y: int };;", "type point\n"

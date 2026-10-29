@@ -72,6 +72,7 @@ let tests =
             same "let xs =\n    [ 1\n      2\n      3 ]" "let xs = [ 1; 2; 3 ]"
             same "type p = {\n    x: int\n    y: int }\nlet a =\n    { x = 1\n      y = 2 }" "type p = { x: int; y: int } let a = { x = 1; y = 2 }"
             same "(a\n b)" "(a; b)"
+            same "let a =\n    [| 1\n       2 |]\na.[0] <- 3" "let a = [| 1; 2 |];; a.[0] <- 3"
             same "(1,\n 2)" "(1, 2)"
         ]
 

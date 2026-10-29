@@ -25,6 +25,8 @@ type Value =
     | VUnit
     /// ref v: 내용을 바꿀 수 있는 칸 하나 (!r 로 읽고 r := v 로 씀)
     | VRef of Value ref
+    /// [| 1; 2 |]: 원소를 바꿀 수 있는 고정 길이 배열 (a.[i] <- v)
+    | VArray of Value[]
     /// { x = 1; y = 2 }. fields 는 선언한 순서
     | VRecord of typeName: string * fields: (string * Value) list
     /// 레코드 타입의 선언 (환경에만 있는 값): 환경의 "." + 필드 이름이 이 값. 필드 이름으로 타입과 필드 순서를 찾음
@@ -51,6 +53,7 @@ let rec formatValue value =
     | VData (_, ctor, None) -> ctor
     | VData (_, ctor, Some payload) -> applied ctor payload
     | VRef cell -> applied "ref" cell.Value
+    | VArray items -> "[|" + (items |> Array.map formatValue |> String.concat "; ") + "|]"
     | VRecord (_, fields) -> "{ " + (fields |> List.map (fun (f, v) -> f + " = " + formatValue v) |> String.concat "; ") + " }"
     | VRecordType (typeName, _) -> "<type " + typeName + ">"
 
@@ -81,6 +84,7 @@ let typeName value =
     | VTuple _ -> "tuple"
     | VData (typeName, _, _) -> typeName
     | VRef _ -> "ref"
+    | VArray _ -> "array"
     | VRecord (typeName, _) | VRecordType (typeName, _) -> typeName
 
 /// 오류 메시지용: 튜플은 원소 수까지
@@ -110,6 +114,8 @@ let rec valueEquals a b =
             | _ -> true)
     // 내용을 비교 (OCaml, F# 와 같음). 같은 칸인지는 보지 않음
     | VRef x, VRef y -> valueEquals x.Value y.Value
+    // 원소를 차례로 비교 (F#, OCaml 과 같음). 같은 배열인지는 보지 않음
+    | VArray xs, VArray ys -> xs.Length = ys.Length && Array.forall2 valueEquals xs ys
     // 같은 타입끼리: 필드를 선언한 순서로 비교
     | VRecord (t1, xs), VRecord (t2, ys) when t1 = t2 -> List.forall2 (fun (_, x) (_, y) -> valueEquals x y) xs ys
     | VInt _, v -> typeError "int" v
@@ -119,6 +125,7 @@ let rec valueEquals a b =
     | VTuple _, v -> typeError "tuple" v
     | VData (t, _, _), v -> typeError t v
     | VRef _, v -> typeError "ref" v
+    | VArray _, v -> typeError "array" v
     | VRecord (t, _), v -> typeError t v
     | v, _ -> typeError "int, bool, string, list, tuple or data" v
 
@@ -225,6 +232,14 @@ let builtinArity =
         "ref", 1
         "!", 1
         ":=", 2
+        // 배열: [| … |] 는 [||] 에 리스트, a.[i] 는 .[], a.[i] <- v 는 .[]<- (파서가 만듦). init, map 같은 함수는 prelude
+        "[||]", 1
+        ".[]", 2
+        ".[]<-", 3
+        "Array.length", 1
+        "Array.create", 2
+        "Array.ofList", 1
+        "Array.toList", 1
         // 포맷: 첫 인자(포맷 문자열)가 나머지 인자를 정함 (Format.expand 로 만든 함수를 돌려줌)
         "sprintf", 1
         "printf", 1
@@ -309,6 +324,24 @@ let callBuiltin name args =
         cell.Value <- v
         VUnit
     | ":=", [ v; _ ] -> typeError "ref" v
+    | ("[||]" | "Array.ofList"), [ xs ] -> VArray (Array.ofList (list' xs))
+    | "Array.toList", [ VArray items ] -> VList (List.ofArray items)
+    | "Array.length", [ VArray items ] -> VInt items.Length
+    | "Array.create", [ n; v ] ->
+        let n = int' n
+        if n < 0 then failwithf "Array.create: the length must be non-negative (got %d)" n
+        VArray (Array.create n v)
+    // 범위 밖은 .NET 의 IndexOutOfRangeException 과 같은 문장 (0으로 나누기처럼 try 로 받을 수 없는 실행 중 오류)
+    | ".[]", [ VArray items; i ] ->
+        let i = int' i
+        if i < 0 || i >= items.Length then failwith "Index was outside the bounds of the array."
+        items[i]
+    | ".[]<-", [ VArray items; i; v ] ->
+        let i = int' i
+        if i < 0 || i >= items.Length then failwith "Index was outside the bounds of the array."
+        items[i] <- v
+        VUnit
+    | ("Array.toList" | "Array.length" | ".[]" | ".[]<-"), v :: _ -> typeError "array" v
     | "print", [ v ] ->
         output().Write(display v)
         VUnit

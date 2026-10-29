@@ -147,6 +147,13 @@ void calc_buffer_value(calc_buffer *b, value v) {
     } else if (CALC_IS_KIND(v, CALC_KIND_REF)) {
         buffer_ascii(b, "ref");
         buffer_applied(b, CALC_FIELD(v, 1));
+    } else if (CALC_IS_KIND(v, CALC_KIND_ARRAY)) {
+        buffer_ascii(b, "[|");
+        for (int64_t i = 0; i < CALC_SIZE(v); i++) {
+            if (i > 0) buffer_ascii(b, "; ");
+            calc_buffer_value(b, CALC_FIELD(v, 1 + i));
+        }
+        buffer_ascii(b, "|]");
     } else if (CALC_IS_KIND(v, CALC_KIND_RECORD)) {
         /* { x = 1; y = 2 } (Eval.formatValue). 필드 이름은 ; 로 이은 C 문자열 */
         const char *name = (const char *)CALC_FIELD(v, 1);
@@ -323,6 +330,14 @@ static int equals(value a, value b) {
     /* 내용을 비교 (Eval.valueEquals). 같은 칸인지는 보지 않음 */
     if (CALC_IS_KIND(a, CALC_KIND_REF)) {
         return equals(CALC_FIELD(a, 1), CALC_FIELD(b, 1));
+    }
+    /* 배열: 길이가 같고 원소를 차례로 비교 (Eval.valueEquals) */
+    if (CALC_IS_KIND(a, CALC_KIND_ARRAY)) {
+        if (CALC_SIZE(a) != CALC_SIZE(b)) return 0;
+        for (int64_t i = 1; i <= CALC_SIZE(a); i++) {
+            if (!equals(CALC_FIELD(a, i), CALC_FIELD(b, i))) return 0;
+        }
+        return 1;
     }
     /* 같은 타입의 레코드: 필드를 선언한 순서로 비교 (Eval.valueEquals) */
     if (CALC_IS_KIND(a, CALC_KIND_RECORD)) {

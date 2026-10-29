@@ -108,6 +108,10 @@ rule tokenize = parse
     | '{'           { LBRACE }
     | '}'           { RBRACE }
     | '.'           { DOT }
+    // 배열 [| … |], a.[i] <- v
+    | "[|"          { LBRACKBAR }
+    | "|]"          { BARRBRACK }
+    | "<-"          { LARROW }
     | '['           { LBRACKET }
     | ']'           { RBRACKET }
     | ";;"          { SEMISEMI }

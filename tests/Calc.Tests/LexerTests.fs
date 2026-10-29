@@ -61,6 +61,10 @@ let tests =
             Expect.equal (tokens "M . f") [ CTOR "M"; DOT; IDENT "f"; EOF ] ""
             Expect.equal (tokens "module struct end open") [ MODULE; STRUCT; END; OPEN; EOF ] ""
         }
+        test "배열 토큰: [| |] <- (가장 긴 일치)" {
+            Expect.equal (tokens "[|1|] a.[0] <- [||]") [ LBRACKBAR; NUMBER 1; BARRBRACK; IDENT "a"; DOT; LBRACKET; NUMBER 0; RBRACKET; LARROW; LBRACKBAR; BARRBRACK; EOF ] ""
+            Expect.equal (tokens "[| a || b |]") [ LBRACKBAR; IDENT "a"; OR; IDENT "b"; BARRBRACK; EOF ] ""
+        }
         test "타입 선언 토큰" {
             Expect.equal
                 (tokens "type 'a t = A of 'a")

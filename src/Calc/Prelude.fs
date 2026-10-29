@@ -12,8 +12,9 @@ let source =
     use reader = new StreamReader(stream)
     reader.ReadToEnd()
 
-/// prelude 의 선언들. 한 번만 파싱하고 모든 프로그램이 같은 노드를 씀 (AST 는 바뀌지 않음)
-let private parsed = lazy (Frontend.parseItems source)
+/// prelude 의 선언들. 한 번만 파싱하고 모든 프로그램이 같은 노드를 씀 (AST 는 바뀌지 않음).
+/// module Array 같은 모듈은 Array.init 같은 이름의 선언으로 펼침 (프로그램이 Array.init 으로 씀)
+let private parsed = lazy (Modules.resolveProgram (Frontend.parseItems source))
 
 let items () = parsed.Value
 

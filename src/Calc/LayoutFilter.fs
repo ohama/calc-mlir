@@ -61,21 +61,21 @@ type private Pending =
 let private canEnd t =
     match t with
     | IDENT _ | QIDENT _ | CTOR _ | QCTOR _ | NUMBER _ | STRING _ | INTERP _ | TRUE | FALSE
-    | RPAREN | RBRACKET | RBRACE | DONE | END -> true
+    | RPAREN | RBRACKET | RBRACE | BARRBRACK | DONE | END -> true
     | _ -> false
 
 /// 식이나 선언을 시작할 수 있는 토큰
 let private canStart t =
     match t with
     | IDENT _ | QIDENT _ | CTOR _ | QCTOR _ | NUMBER _ | STRING _ | INTERP _ | TRUE | FALSE
-    | LPAREN | LBRACKET | LBRACE | LET | IF | MATCH | FUN | FUNCTION | TRY | WHILE | FOR | NOT | BANG
+    | LPAREN | LBRACKET | LBRACE | LBRACKBAR | LET | IF | MATCH | FUN | FUNCTION | TRY | WHILE | FOR | NOT | BANG
     | TYPE | EXCEPTION | MODULE | OPEN -> true
     | _ -> false
 
 let private isInfix t =
     match t with
     | PLUS | MINUS | STAR | SLASH | PERCENT | EQUALS | NOTEQUAL | LESS | GREATER | LESSEQUAL | GREATEREQUAL
-    | AND | OR | PIPE | COMPOSE | CONS | COLONEQUALS -> true
+    | AND | OR | PIPE | COMPOSE | CONS | COLONEQUALS | LARROW -> true
     | _ -> false
 
 /// 이 토큰으로 시작하는 줄은 앞 줄을 이음 (구분자를 넣지 않음)
@@ -83,14 +83,14 @@ let private continues t =
     isInfix t
     || (match t with
         | BAR | THEN | ELSE | WITH | ARROW | IN | ANDKW | DO | TO | DOWNTO | OF | COMMA | SEMI | SEMISEMI
-        | RPAREN | RBRACKET | RBRACE | DONE | END | COLON | WHEN | DOT | EOF -> true
+        | RPAREN | RBRACKET | RBRACE | BARRBRACK | DONE | END | COLON | WHEN | DOT | EOF -> true
         | _ -> false)
 
 /// 짝이 되는 context 를 찾아 닫는 토큰. 새 줄에 있어도 offside 규칙을 먼저 쓰지 않음
 /// (else 가 if 의 열에 있어도 then 블록과 짝이 맞아야 하므로)
 let private closesByItself t =
     match t with
-    | IN | RPAREN | RBRACKET | RBRACE | ELSE | WITH | DONE | END | SEMISEMI | EOF -> true
+    | IN | RPAREN | RBRACKET | RBRACE | BARRBRACK | ELSE | WITH | DONE | END | SEMISEMI | EOF -> true
     | _ -> false
 
 let private isDeclKeyword t =
@@ -189,7 +189,7 @@ let create (input: string) (tokenize: LexBuffer<char> -> token) : LexBuffer<char
                 popAbove i tok
                 stack.Pop() |> ignore
             | None -> ()
-        | RPAREN | RBRACKET | RBRACE as t ->
+        | RPAREN | RBRACKET | RBRACE | BARRBRACK as t ->
             let isParen (c: Ctx) = match c.Kind with KParen _ -> true | _ -> false
             match find (kindIs ((=) (KParen t))) (fun c -> isParen c || c.Kind = KTop || (match c.Kind with KModule _ -> true | _ -> false)) with
             | Some i ->
@@ -284,11 +284,12 @@ let create (input: string) (tokenize: LexBuffer<char> -> token) : LexBuffer<char
         | ELSE -> pending <- Some (OpenBlock Else)
         | WHILE | FOR -> stack.Push(newCtx KLoop col tok.Start)
         | DO when top.Kind = KLoop -> pending <- Some (OpenBlock Do)
-        | LPAREN | LBRACKET | LBRACE ->
+        | LPAREN | LBRACKET | LBRACE | LBRACKBAR ->
             let closer =
                 match tok.Token with
                 | LPAREN -> RPAREN
                 | LBRACKET -> RBRACKET
+                | LBRACKBAR -> BARRBRACK
                 | _ -> RBRACE
             let c = newCtx (KParen closer) col tok.Start
             stack.Push c

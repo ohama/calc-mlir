@@ -39,6 +39,7 @@ Calc 언어의 어휘 구조, 구문, 의미를 정리한 문서입니다. 구�
 | `COLON` | `:` (타입 표기) | |
 | `COLONEQUALS` `BANG` | `:=` `!` (mutable reference) | |
 | `LBRACE` `RBRACE` `DOT` | `{` `}` `.` (레코드) | |
+| `LBRACKBAR` `BARRBRACK` `LARROW` | `[\|` `\|]` `<-` (배열). 가장 긴 일치라서 `x<-1`은 `x <- 1`이고, `x < -1`로 띄어 씁니다 | |
 | `QIDENT` `QCTOR` | `(CTOR ".")+ IDENT`, `(CTOR ".")+ CTOR`. 모듈 이름으로 한정한 이름. 점 앞뒤에 공백이 없어야 함 | `M.f`, `M.N.g`, `M.t`, `M.Some` |
 | `BAR` | `\|` | |
 | `EOF` | 입력의 끝 | |
@@ -146,6 +147,8 @@ primary = NUMBER
         | IDENT
         | QIDENT | QCTOR                                 (* M.f, M.C *)
         | primary "." IDENT                              (* 필드 읽기 *)
+        | primary "." "[" seq "]"                        (* 배열 원소 읽기 *)
+        | "[|" [ expr { ";" expr } ] "|]"                (* 배열 *)
         | "{" fields "}"                                 (* 레코드 *)
         | "{" primary "with" fields "}"                  (* 필드 몇 개를 바꾼 새 레코드 *)
         | CTOR                                           (* 생성자 *)
@@ -196,7 +199,8 @@ binop   = "+" | "-" | "*" | "/" | "%"
         | "=" | "<>" | "<" | ">" | "<=" | ">="
         | "::"
         | "&&" | "||"
-        | ":=" ;                                         (* mutable reference 쓰기 *)
+        | ":="                                           (* mutable reference 쓰기 *)
+        | "<-" ;                                         (* 배열 원소 쓰기. 왼쪽은 a.[i] *)
 ```
 
 `expr binop expr` 부분은 그대로 두면 모호합니다. 아래의 우선순위와 associativity로 모호함을 해소합니다. 함수 호출은 우선순위 선언 대신 `app`/`atom` 계층으로 표현했습니다. `Parser.fsy`도 같은 방식으로 작성되어 있으며 shift/reduce 충돌이 없습니다.
@@ -209,7 +213,7 @@ binop   = "+" | "-" | "*" | "/" | "%"
 |---|---|---|---|
 | 0 (가장 낮음) | `;` (순서 실행) | 오른쪽 | `%nonassoc BELOWSEMI`, `%nonassoc SEMI` (`seq = expr [";" seq]` 규칙) |
 | 1 | `let ... in`, `if ... then ... else`, `fun ... ->`, `match` 분기 `->` | — | `%nonassoc IN ELSE ARROW` |
-| 2 | `:=` | **오른쪽** | `%right COLONEQUALS` |
+| 2 | `:=`, `<-` | **오른쪽** | `%right COLONEQUALS LARROW` |
 | 3 | `\|\|` | 왼쪽 | `%left OR` |
 | 4 | `&&` | 왼쪽 | `%left AND` |
 | 5 | `=` `<>` `<` `>` `<=` `>=`, `\|>`, `>>` | 왼쪽 | `%left EQUALS NOTEQUAL ... PIPE COMPOSE` |
@@ -249,6 +253,8 @@ F#과 같은 순서입니다. 함수 호출은 `!`와 `.`를 뺀 어떤 연산�
 | `f !r` | `f (!r)` |
 | `!f x` | `(!f) x` |
 | `a := b := c` | `a := (b := c)` |
+| `a.[i] <- a.[i] + 1` | `a.[i] <- (a.[i] + 1)` |
+| `f a.[i]` | `f (a.[i])` |
 | `f p.x` | `f (p.x)` |
 | `!p.r` | `!(p.r)` |
 | `a.b.c` | `(a.b).c` |
@@ -596,6 +602,34 @@ let s = Stack.push 1 Stack.empty
   - 바꾼 노드에는 원래 노드의 위치를 옮겨서 오류와 경고가 원래 자리를 가리킵니다.
 - **아직 없는 것:** 시그니처(`sig … end`, `module M : S`), functor, `let module M = … in`, `include`, 파일마다 모듈.
 
+### 배열
+
+고정 길이이고 원소를 바꿀 수 있는 배열입니다. F#과 같은 문법입니다.
+
+```
+let a = [| 3; 1; 2 |]
+a.[0] <- 10
+println (a, Array.length a, a.[1] + a.[2])      (* ([|10; 1; 2|], 3, 3) *)
+
+let squares = Array.init 5 (fun i -> i * i)     (* [|0; 1; 4; 9; 16|] *)
+let grid = Array.create 3 0
+for i = 0 to 2 do
+    grid.[i] <- i * 10
+```
+
+- **리터럴:** `[| e1; e2 |]`, 빈 배열 `[||]`. 여러 줄로 쓰면 줄바꿈이 원소 구분자입니다(indentation 문법).
+- **원소:** `a.[i]`는 i번째 원소(0부터), `a.[i] <- v`는 원소를 바꾸고 `()`입니다. `.[`는 함수 호출보다 강하게 묶이고(`f a.[i]`), `<-`는 `:=`와 같은 자리입니다. `<-`의 왼쪽은 `a.[i]`만 됩니다(`The left side of <- must be an array element a.[i]`).
+- **범위 밖:** `Index was outside the bounds of the array.`로 끝납니다(.NET과 같은 문장). 0으로 나누기처럼 `try`로 받을 수 없는 실행 중 오류입니다.
+- **같은 배열:** `let b = a in b.[0] <- 5`는 `a`도 바꿉니다. 복사는 `Array.copy`입니다.
+- **`=`:** 길이가 같고 원소가 차례로 같으면 `true`입니다(F#, OCaml과 같음). `<`와 `sort`에는 쓸 수 없습니다.
+- **출력:** `[|1; 2|]`(F#과 같음)
+- **타입:** `'a array`. value restriction이 있으므로 `let a = [||]`의 원소 타입은 처음 쓴 곳이 정합니다.
+- **함수:** F#의 `Array` 모듈과 같은 이름입니다.
+  - 내장 함수: `Array.length`, `Array.create n v`, `Array.ofList`, `Array.toList`
+  - prelude의 `module Array`: `Array.init n f`, `Array.map`, `Array.iter`, `Array.fold`, `Array.copy`
+- **아직 없는 것:** 배열 패턴(`[| a; b |]`), `open Array`(prelude의 모듈은 프로그램의 `open`이 모름), 슬라이스(`a.[1..2]`), F# 6의 `a[i]`
+- **오류 메시지:** 리터럴 원소의 타입이 다르면 리스트처럼 보입니다(`[| 1; "a" |]`는 `expected int list but got string list`). 리터럴은 내장 함수 `[||]`에 리스트를 준 것이기 때문입니다.
+
 ### mutable reference와 반복문
 
 OCaml, F#과 같은 mutable reference와 반복문입니다.
@@ -707,6 +741,7 @@ defaultValue 0 (tryFind (fun x -> x > 10) xs)
 | `exception E of t in e` | `ExceptionDecl ("E", Some t, e)` |
 | `$"a{x}"` | `App (Printf ("sprintf", "a%A"), Var "x")` (`sprintf "…"`는 파서에서 보통 `App`) |
 | `!r` / `r := v` | `App (Var "!", r)` / `App (App (Var ":=", r), v)` (사용자가 쓸 수 없는 이름의 내장 함수) |
+| `[\| a; b \|]` / `a.[i]` / `a.[i] <- v` | `App (Var "[\|\|]", [a; b])` / `App (App (Var ".[]", a), i)` / `App (App (App (Var ".[]<-", a), i), v)` (내장 함수) |
 | `type 'a p = { x: int; y: 'a } in e` | `RecordDecl ("p", ["a"], [ ("x", TName ("int", [])); ("y", TVar "a") ], e)` |
 | `{ y = 1; x = 2 }` | `Record [ ("y", Number 1); ("x", Number 2) ]` (쓴 순서) |
 | `e.x` | `Field (e, "x")` |
@@ -748,6 +783,7 @@ type Value =
     | VConstructor of typeName * ctor * fields            // 인자 있는 생성자 자체 (Some, Rect)
     | VUnit                                               // ()
     | VRef of Value ref                                   // ref v (:= 가 내용을 바꿈)
+    | VArray of Value[]                                   // [| 1; 2 |] (a.[i] <- v 가 원소를 바꿈)
     | VRecord of typeName * fields                        // { x = 1; y = 2 } (선언한 순서)
 ```
 
@@ -761,6 +797,7 @@ type Value =
 - 튜플은 `(1, "a", [true])`처럼 출력됩니다.
 - 생성자 값은 `None`, `Some 1`, `Node (Leaf, 1, Leaf)`처럼 출력됩니다. 다시 입력해도 같은 값이 되도록 인자가 있는 생성자 값과 음수는 괄호로 감쌉니다(`Some (Some 1)`, `Some (-1)`).
 - mutable reference는 `ref 1`, `ref (Some 1)`, `ref (ref 1)`처럼 생성자와 같은 규칙으로 출력됩니다.
+- 배열은 `[|1; 2|]`처럼 출력됩니다.
 - 레코드는 `{ x = 1; y = "a" }`처럼 선언한 순서로 출력됩니다. 생성자의 인자여도 괄호를 붙이지 않습니다(`Some { x = 1 }`).
 
 타입 오류 메시지에서 문자열의 타입 이름은 `string`, 함수는 `function`, 리스트는 `list`, 튜플은 `tuple`입니다. 생성자 값의 타입 이름은 선언한 타입 이름입니다(`option`, `shape`).
@@ -861,9 +898,10 @@ type Value =
 함수는 두 종류로 구현되어 있지만, 쓰는 쪽에서는 구분되지 않습니다.
 
 - **포맷 함수(3개):** `sprintf`, `printf`, `printfn`. 포맷 문자열 리터럴이 함수의 타입을 정합니다. 아래 "문자열 포맷"을 참고하세요.
-- **prelude(Calc로 쓴 함수, 22개):** `failwith`, `fst`, `snd`, `ignore`, `isEmpty`, `head`, `tail`, `nth`, `fold`, `reverse`, `append`, `range`, `sum`, `map`, `filter`, `exists`, `forall`, `incr`, `decr`, `tryHead`, `tryFind`, `defaultValue`. 아래 "prelude"를 참고하세요.
+- **prelude(Calc로 쓴 함수, 27개):** `failwith`, `fst`, `snd`, `ignore`, `isEmpty`, `head`, `tail`, `nth`, `fold`, `reverse`, `append`, `range`, `sum`, `map`, `filter`, `exists`, `forall`, `incr`, `decr`, `tryHead`, `tryFind`, `defaultValue`, `Array.init`, `Array.copy`, `Array.iter`, `Array.fold`, `Array.map`. 아래 "prelude"를 참고하세요.
 - **내장 함수(F#과 C로 구현, 18개):** 나머지. 문자열 함수, `toString`, `toInt`, 여러 타입을 받는 `length`, `sort`, 출력 함수, `raise`입니다.
 - **mutable reference(3개):** `ref`, `!`, `:=`. 인터프리터는 F#으로, 컴파일러는 C 런타임 함수 없이 블록 하나를 읽고 쓰는 코드로 만듭니다. `!`와 `:=`는 연산자로만 씁니다.
+- **배열(7개):** `[||]`(리터럴), `.[]`, `.[]<-`, `Array.length`, `Array.create`, `Array.ofList`, `Array.toList`. 앞의 세 개는 문법(`[| … |]`, `a.[i]`, `a.[i] <- v`)으로만 씁니다.
 
 #### 문자열
 
@@ -967,6 +1005,19 @@ type Value =
 - **가리기:** `let sprintf x = …`처럼 같은 이름을 정의하면 보통 함수입니다.
 - **F#과 다른 점:** `%A`는 문자열에 따옴표를 붙이지 않습니다(F#은 `"a"`). 폭, 정렬, `%f` 같은 지정자는 아직 없습니다.
 
+#### 배열
+
+| 함수 | 타입 | 예 | 결과 |
+|---|---|---|---|
+| `Array.length a` | array → int | `Array.length [\| 1; 2 \|]` | `2` |
+| `Array.create n v` | int → 값 → array | `Array.create 2 0` | `[\|0; 0\|]` (`n`이 음수면 오류) |
+| `Array.init n f` | int → 함수 → array | `Array.init 3 (fun i -> i * i)` | `[\|0; 1; 4\|]` |
+| `Array.ofList xs`, `Array.toList a` | list → array, array → list | `Array.toList [\| 1 \|]` | `[1]` |
+| `Array.map f a` | 함수 → array → array | `Array.map (fun x -> x + 1) [\| 1 \|]` | `[\|2\|]` |
+| `Array.iter f a` | 함수 → array → unit | `Array.iter println a` | 원소마다 `f` |
+| `Array.fold f acc a` | 함수 → 초기값 → array → 값 | `Array.fold (fun s x -> s + x) 0 a` | 합 |
+| `Array.copy a` | array → array | `Array.copy a` | 새 배열 |
+
 #### mutable reference
 
 | 함수 | 타입 | 예 | 결과 |
@@ -988,7 +1039,7 @@ type Value =
 
 #### prelude (Calc로 쓴 표준 라이브러리)
 
-위 표의 함수 중 22개는 [`src/Calc/prelude.calc`](../src/Calc/prelude.calc)에 Calc 코드로 있습니다. 인터프리터, 타입 추론, 컴파일러가 모두 이 정의 하나를 씁니다.
+위 표의 함수 중 27개는 [`src/Calc/prelude.calc`](../src/Calc/prelude.calc)에 Calc 코드로 있습니다. 인터프리터, 타입 추론, 컴파일러가 모두 이 정의 하나를 씁니다.
 
 ```
 let rec fold f acc xs =
@@ -1075,6 +1126,7 @@ Error: parse error: unexpected '+' (line 1, column 5)
 | `t1 -> t2` | `fun x -> x + 1`: `int -> int` |
 | `t option` | `Some 1`: `int option` |
 | `t ref` | `ref 1`: `int ref` |
+| `t array` | `[\| 1 \|]`: `int array` |
 | 레코드 타입 | `{ x = 1; y = 2 }`: `point` |
 | `exn` | `Not_found`, `Failure "x"`: `exn` |
 | 사용자 타입 | `Node (Leaf, 1, Leaf)`: `int tree` |
@@ -1133,6 +1185,10 @@ Error: parse error: unexpected '+' (line 1, column 5)
 | `defaultValue` | `'a -> 'a option -> 'a` |
 | `Some`, `None` | `'a -> 'a option`, `'a option` |
 | `ref`, `!`, `:=` | `'a -> 'a ref`, `'a ref -> 'a`, `'a ref -> 'a -> unit` |
+| `a.[i]`, `a.[i] <- v` | `'a array -> int -> 'a`, `'a array -> int -> 'a -> unit` |
+| `Array.length`, `Array.create`, `Array.init` | `'a array -> int`, `int -> 'a -> 'a array`, `int -> (int -> 'a) -> 'a array` |
+| `Array.ofList`, `Array.toList`, `Array.copy` | `'a list -> 'a array`, `'a array -> 'a list`, `'a array -> 'a array` |
+| `Array.map`, `Array.iter`, `Array.fold` | `('a -> 'b) -> 'a array -> 'b array`, `('a -> unit) -> 'a array -> unit`, `('b -> 'a -> 'b) -> 'b -> 'a array -> 'b` |
 | `incr`, `decr` | `int ref -> unit` |
 | `raise`, `failwith` | `exn -> 'a`, `string -> 'a` |
 | `sprintf`, `printf`, `printfn` | 포맷 문자열이 정함 (`sprintf "%d %s"`: `int -> string -> string`) |

@@ -381,6 +381,14 @@ let private runCases =
           "let area x =\n    let pi = 3\n    pi * x\n\nlet rec loop i acc =\n    if i = 0 then acc\n    else\n        let next = acc + i\n        loop (i - 1) next\n\nprintln (map area [ 1\n                    2 ])\nloop 1000000 0", ("[3; 6]\n1784293664\n", "", 0), "블록, 같은 열의 let, 줄바꿈 원소, tail call"
           "module M =\n    let x = 1\n    let f y = y + x\nlet n = ref 0\nwhile !n < 3 do\n    incr n\nM.f !n", ("4\n", "", 0), "모듈, done 없는 while"
         ]
+      "배열",
+        [
+          "let a = [| 3; 1; 2 |] in a.[0] <- 10; println a; println (Array.length a); [| [|\"x\"|] |]", ("[|10; 1; 2|]\n3\n[|[|\"x\"|]|]\n", "", 0), "출력"
+          "let a = [| 1; 2 |] in a.[2]", ("", "Error: Index was outside the bounds of the array.\n", 1), "범위 밖 (인터프리터와 같은 문장)"
+          "let a = [| 1 |] in a.[-1] <- 0", ("", "Error: Index was outside the bounds of the array.\n", 1), "음수"
+          "Array.create (-1) 0", ("", "Error: Array.create: the length must be non-negative (got -1)\n", 1), ""
+          "let a = Array.create 100000 1 in let s = ref 0 in for i = 0 to 99999 do s := !s + a.[i] done; !s", ("100000\n", "", 0), "큰 배열"
+        ]
       "모듈",
         [
           "module M = struct type t = A | B of int let f x = match x with A -> 0 | B n -> n end;; (M.f (M.B 3), M.A, [M.B 1])", ("(3, M.A, [M.B 1])\n", "", 0), "생성자 이름은 M.A"

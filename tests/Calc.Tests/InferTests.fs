@@ -33,6 +33,7 @@ let rec valueMatches value t =
     | VData (typeName, _, _), TyCon (name, _) -> name.StartsWith(typeName + "@")
     | VTuple vs, TyTuple ts -> List.length vs = List.length ts && List.forall2 valueMatches vs ts
     | VRef cell, TyCon ("ref", [ e ]) -> valueMatches cell.Value e
+    | VArray items, TyCon ("array", [ e ]) -> items |> Array.forall (fun v -> valueMatches v e)
     | VRecord (typeName, _), TyCon (name, _) -> name.StartsWith(typeName + "@")
     | (VClosure _ | VRecClosure _ | VRecGroup _ | VBuiltin _ | VConstructor _), TyFun _ -> true
     | _ -> false
@@ -158,6 +159,16 @@ let inferred =
       "let xs = [] in (1 :: xs, \"a\" :: xs)", "int list * string list"
       "let p = (None, []) in let (a, b) = p in (Some 1 = a, Some \"x\" = a, 1 :: b, \"a\" :: b)", "bool * bool * int list * string list"
       "let mk = fun () -> let r = ref [] in r in let a = mk () in a := [1]; let b = mk () in b := [true]; (!a, !b)", "int list * bool list"
+      // 배열
+      "[| 1; 2 |]", "int array"
+      "[||]", "'a array"
+      "fun a -> a.[0]", "'a array -> 'a"
+      "fun a v -> a.[0] <- v", "'a array -> 'a -> unit"
+      "Array.length", "'a array -> int"
+      "Array.init", "int -> (int -> 'a) -> 'a array"
+      "Array.map", "('a -> 'b) -> 'a array -> 'b array"
+      "(Array.create 2 [] : int list array)", "int list array"
+      "let a = [||] in a.[0] <- 1; a", "int array" // value restriction: [||] 는 generalize 하지 않음
       // 레코드 패턴
       "type p = { x: int; y: string } in fun r -> match r with { x = a } -> a", "p -> int"
       "type 'a box = { value: 'a } in fun b -> match b with { value = v } -> v", "'a box -> 'a"
@@ -248,6 +259,12 @@ let tests =
             expectTypeError "sprintf \"%q\" 1" "Unknown format specifier: %q"
             expectTypeError "sprintf \"50%\"" "Missing format specifier after %"
             expectTypeError "$\"%s{1}\"" "Type mismatch: expected string but got int"
+            // 배열
+            expectTypeError "let a = [| 1 |] in a.[0] <- \"x\"" "Type mismatch: expected int but got string"
+            expectTypeError "[| 1 |].[\"a\"]" "Type mismatch: expected int but got string"
+            expectTypeError "Array.length [1]" "Type mismatch: expected 'a array but got int list"
+            expectTypeError "[| 1 |] < [| 2 |]" "Type mismatch: expected int or string but got int array"
+            expectTypeError "let a = [||] in a.[0] <- 1; a.[0] <- \"x\"" "Type mismatch: expected int but got string"
             // 레코드 패턴
             expectTypeError "type p = { x: int } in fun r -> match r with { x = \"a\" } -> 1" "Type mismatch: expected int but got string"
             expectTypeError "type p = { x: int } in fun r -> match r with { z = 1 } -> 1" "Unknown record field: z"
@@ -291,6 +308,9 @@ let tests =
                     match name with
                     | "!" -> "fun r -> !r"
                     | ":=" -> "fun r v -> r := v"
+                    | "[||]" -> "fun x -> [| x |]"
+                    | ".[]" -> "fun a i -> a.[i]"
+                    | ".[]<-" -> "fun a i v -> a.[i] <- v"
                     | _ when Format.kinds.Contains name -> name + " \"\""
                     | _ -> name
                 Expect.isNotEmpty (typeOf input) name

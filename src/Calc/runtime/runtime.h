@@ -27,6 +27,7 @@ typedef int64_t value;
 #define CALC_KIND_DATA 5    /* [헤더, 생성자 이름(const char *), 인자(단어 수가 2일 때)]. 인자 없는 생성자는 전역 상수 블록 */
 #define CALC_KIND_REF 6     /* [헤더, 내용]. r := v 가 내용을 바꿈 */
 #define CALC_KIND_RECORD 7  /* [헤더, 필드 이름들("x;y", const char *), 값...]. 값은 선언한 순서 */
+#define CALC_KIND_ARRAY 8   /* [헤더, 원소...]. 원소 수 = 헤더의 단어 수. a.[i] <- v 가 원소를 바꿈 */
 #define CALC_HEADER(v) (((int64_t *)(v))[0])
 #define CALC_KIND(v) (CALC_HEADER(v) & 0xff)
 #define CALC_IS_KIND(v, kind) (CALC_IS_PTR(v) && CALC_KIND(v) == (kind))
@@ -124,5 +125,12 @@ value calc_builtin_sort(value xs);
 value calc_builtin_print(value v);
 value calc_builtin_println(value v);
 value calc_builtin_raise(value exn);
+/* 배열: [| … |] 와 Array.ofList, a.[i], a.[i] <- v, Array.length, Array.create, Array.toList */
+value calc_builtin_Array_ofList(value xs);
+value calc_builtin_Array_toList(value a);
+value calc_builtin_Array_length(value a);
+value calc_builtin_Array_create(value n, value v);
+value calc_builtin_array_get(value a, value i);
+value calc_builtin_array_set(value a, value i, value v);
 
 #endif

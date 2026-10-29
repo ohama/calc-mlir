@@ -1,4 +1,4 @@
-/* 내장 함수 18개 (map, fold, head 같은 함수는 Calc 로 쓴 prelude.calc). 인자 순서, 결과, 오류 메시지는 Eval.callBuiltin 과 같음.
+/* 내장 함수 (map, fold, head 같은 함수는 Calc 로 쓴 prelude.calc). 인자 순서, 결과, 오류 메시지는 Eval.callBuiltin 과 같음.
    문자열 위치와 길이는 UTF-16 코드 단위 (.NET string 과 같음). 타입 검사를 통과했으므로 인자의 종류는 검사하지 않음 */
 #include "runtime.h"
 #include "unicode.h"
@@ -242,3 +242,47 @@ value calc_builtin_println(value v) {
 /* ---- 예외 ---- */
 
 value calc_builtin_raise(value exn) { calc_raise(exn); }
+
+/* ---- 배열: [헤더, 원소...] (Eval.callBuiltin 과 같은 오류 문장) ---- */
+
+static value new_array(int64_t length) {
+    int64_t *block = calc_alloc(8 * (1 + (length > 0 ? length : 0)));
+    block[0] = CALC_KIND_ARRAY | (length << 8);
+    return (value)block;
+}
+
+value calc_builtin_Array_ofList(value xs) {
+    value a = new_array(calc_list_length(xs));
+    int64_t i = 1;
+    for (value p = xs; p != CALC_NIL; p = TAIL(p)) CALC_FIELD(a, i++) = HEAD(p);
+    return a;
+}
+
+value calc_builtin_Array_toList(value a) {
+    value list = CALC_NIL;
+    for (int64_t i = CALC_SIZE(a); i >= 1; i--) list = calc_cons(CALC_FIELD(a, i), list);
+    return list;
+}
+
+value calc_builtin_Array_length(value a) { return calc_int((int32_t)CALC_SIZE(a)); }
+
+value calc_builtin_Array_create(value n, value v) {
+    if (INT(n) < 0) calc_errorf("Array.create: the length must be non-negative (got %d)", INT(n));
+    value a = new_array(INT(n));
+    for (int64_t i = 1; i <= INT(n); i++) CALC_FIELD(a, i) = v;
+    return a;
+}
+
+/* 범위 밖은 .NET 의 IndexOutOfRangeException 과 같은 문장 */
+static int64_t slot(value a, value i) {
+    int32_t index = INT(i);
+    if (index < 0 || index >= CALC_SIZE(a)) calc_error("Index was outside the bounds of the array.");
+    return 1 + index;
+}
+
+value calc_builtin_array_get(value a, value i) { return CALC_FIELD(a, slot(a, i)); }
+
+value calc_builtin_array_set(value a, value i, value v) {
+    CALC_FIELD(a, slot(a, i)) = v;
+    return CALC_UNIT;
+}
