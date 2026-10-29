@@ -56,7 +56,11 @@ type private State =
       NamedVars: List<string * Type * (int * int) option>
       /// 예외 생성자 → 인자 타입. 프로그램 전체에서 이름이 하나 (실행 중에는 예외를 이름으로 구분하므로).
       /// 빠진 분기 검사가 exn 패턴의 하위 타입을 찾을 때도 씀 (exn 은 생성자 목록이 열려 있음)
-      Exceptions: Dictionary<string, Type option> }
+      Exceptions: Dictionary<string, Type option>
+      /// 레코드 타입의 고유 이름 → (타입 매개변수 변수, 선언한 순서의 필드와 타입). 빠진 분기 검사가 씀
+      RecordTypes: Dictionary<string, TypeVar list * (string * Type) list>
+      /// 레코드 패턴 노드 → 그 레코드 타입의 필드 (선언한 순서). 빠진 분기 검사가 패턴을 행렬로 바꿀 때 씀
+      RecordPatterns: Dictionary<obj, string list> }
 
 type private Context =
     { Vars: Map<string, Type>
@@ -410,6 +414,21 @@ let private withTypeVarScope (st: State) (opens: bool) (action: unit -> 'a) : 'a
         finally
             st.TypeVarScopes <- saved
 
+/// 필드 이름으로 찾은 레코드 타입과 필드 타입들 (타입 매개변수를 새 변수로 instantiate)
+let private recordType (st: State) (ctx: Context) (field: string) =
+    match Map.tryFind field ctx.Fields with
+    | Some (t, fieldTypes) ->
+        match instantiate st (TyTuple (t :: List.map snd fieldTypes)) with
+        | TyTuple (t :: types) -> t, List.zip (List.map fst fieldTypes) types
+        | _ -> failwith "unreachable"
+    | None -> typeError (sprintf "Unknown record field: %s" field)
+
+/// 레코드 타입 t 의 필드 field 의 타입. 다른 레코드 타입의 필드면 오류
+let private fieldOf (t: Type) (fieldTypes: (string * Type) list) (field: string) =
+    match List.tryFind (fun (f, _) -> f = field) fieldTypes with
+    | Some (_, ft) -> ft
+    | None -> typeError (sprintf "The record field %s does not belong to type %s" field (typeToString t))
+
 /// 패턴의 타입과, 패턴이 묶는 이름들 (단형)
 let rec private inferPattern (st: State) (ctx: Context) pattern : Type * (string * Type) list =
     locate pattern (fun () -> inferPatternNode st ctx pattern)
@@ -442,6 +461,17 @@ and private inferPatternNode (st: State) (ctx: Context) pattern : Type * (string
     | PTuple items ->
         let results = items |> List.map (inferPattern st ctx)
         TyTuple (results |> List.map fst), results |> List.collect snd
+    // 필드 이름이 레코드 타입을 정함 (레코드 식과 같음). 쓰지 않은 필드는 무엇이든 맞음
+    | PRecord fields ->
+        let t, fieldTypes = recordType st ctx (fst fields.Head)
+        st.RecordPatterns[box pattern] <- List.map fst fieldTypes
+        let binds =
+            fields
+            |> List.collect (fun (f, p) ->
+                let tp, binds = inferPattern st ctx p
+                locate p (fun () -> unifyAt (fieldOf t fieldTypes f) tp)
+                binds)
+        t, binds
     | PCtor (name, arg) ->
         match Map.tryFind name ctx.Vars with
         | None -> typeError (sprintf "Unknown constructor: %s" name)
@@ -454,21 +484,6 @@ and private inferPatternNode (st: State) (ctx: Context) pattern : Type * (string
             | TyFun _, None -> typeError (sprintf "Constructor %s requires an argument" name)
             | result, None -> result, []
             | _, Some _ -> typeError (sprintf "Constructor %s takes no argument" name)
-
-/// 필드 이름으로 찾은 레코드 타입과 필드 타입들 (타입 매개변수를 새 변수로 instantiate)
-let private recordType (st: State) (ctx: Context) (field: string) =
-    match Map.tryFind field ctx.Fields with
-    | Some (t, fieldTypes) ->
-        match instantiate st (TyTuple (t :: List.map snd fieldTypes)) with
-        | TyTuple (t :: types) -> t, List.zip (List.map fst fieldTypes) types
-        | _ -> failwith "unreachable"
-    | None -> typeError (sprintf "Unknown record field: %s" field)
-
-/// 레코드 타입 t 의 필드 field 의 타입. 다른 레코드 타입의 필드면 오류
-let private fieldOf (t: Type) (fieldTypes: (string * Type) list) (field: string) =
-    match List.tryFind (fun (f, _) -> f = field) fieldTypes with
-    | Some (_, ft) -> ft
-    | None -> typeError (sprintf "The record field %s does not belong to type %s" field (typeToString t))
 
 /// 식의 타입. 위치가 없는 타입 오류에는 이 식의 위치를 붙임 (가장 안쪽 식이 먼저 붙임)
 let rec private infer (st: State) (ctx: Context) expr : Type =
@@ -664,6 +679,7 @@ and private inferNode (st: State) (ctx: Context) expr : Type =
             | None -> typeError (sprintf "Unbound type variable: '%s" name)
         let result = TyCon (unique, paramVars |> List.map snd)
         let fieldTypes = fields |> List.map (fun (f, te) -> f, convertType declCtx typeParam te)
+        st.RecordTypes[unique] <- (paramVars |> List.map (fun (_, t) -> match t with TyVar v -> v | _ -> failwith "unreachable"), fieldTypes)
         let fieldsCtx = fieldTypes |> List.fold (fun acc (f, _) -> Map.add f (result, fieldTypes) acc) declCtx.Fields
         infer st { declCtx with Fields = fieldsCtx } body
     // 필드 이름이 레코드 타입을 정함 (OCaml 과 같음). 타입 매개변수는 레코드 식마다 새로
@@ -734,7 +750,8 @@ type private Pat =
     | Con of string * Pat list
     | Or of Pat * Pat
 
-let rec private toPat pattern =
+let rec private toPat (st: State) pattern =
+    let toPat = toPat st
     match pattern with
     | PVar _
     | PWildcard -> Any
@@ -748,6 +765,22 @@ let rec private toPat pattern =
     | PCtor (name, Some p) -> Con (name, [ toPat p ])
     | PUnit -> Con ("()", [])
     | POr (a, b) -> Or (toPat a, toPat b)
+    // 생성자가 하나("record:x;y")인 타입: 선언한 순서의 모든 필드, 쓰지 않은 필드는 _
+    | PRecord fields ->
+        let names = st.RecordPatterns[box pattern]
+        let sub n = fields |> List.tryFind (fun (f, _) -> f = n) |> Option.map (snd >> toPat) |> Option.defaultValue Any
+        Con ("record:" + String.concat ";" names, List.map sub names)
+
+/// 선언의 타입 매개변수 변수를 실제 타입 인자로 바꿈
+let private substitute (paramVars: TypeVar list) (args: Type list) =
+    let substitution = List.zip (paramVars |> List.map (fun v -> v.Id)) args |> Map.ofList
+    let rec subst t =
+        match prune t with
+        | TyVar v -> substitution |> Map.tryFind v.Id |> Option.defaultValue t
+        | TyCon (n, xs) -> TyCon (n, List.map subst xs)
+        | TyFun (a, b) -> TyFun (subst a, subst b)
+        | TyTuple xs -> TyTuple (List.map subst xs)
+    subst
 
 /// 타입의 생성자 전부 (이름, 하위 타입). 값이 무한히 많은 타입(int, string)과 정해지지 않은 타입은 None
 let private signature (st: State) (t: Type) : (string * Type list) list option =
@@ -759,14 +792,12 @@ let private signature (st: State) (t: Type) : (string * Type list) list option =
     | TyTuple items -> Some [ "tuple", items ]
     | TyCon (name, args) when st.DataTypes.ContainsKey name ->
         let paramVars, ctors = st.DataTypes[name]
-        let substitution = List.zip (paramVars |> List.map (fun v -> v.Id)) args |> Map.ofList
-        let rec subst t =
-            match prune t with
-            | TyVar v -> substitution |> Map.tryFind v.Id |> Option.defaultValue t
-            | TyCon (n, xs) -> TyCon (n, List.map subst xs)
-            | TyFun (a, b) -> TyFun (subst a, subst b)
-            | TyTuple xs -> TyTuple (List.map subst xs)
+        let subst = substitute paramVars args
         Some (ctors |> List.map (fun (ctor, arg) -> ctor, arg |> Option.map subst |> Option.toList))
+    | TyCon (name, args) when st.RecordTypes.ContainsKey name ->
+        let paramVars, fields = st.RecordTypes[name]
+        let subst = substitute paramVars args
+        Some [ "record:" + (fields |> List.map fst |> String.concat ";"), fields |> List.map (snd >> subst) ]
     | _ -> None
 
 /// 행렬 rows(각 행은 열마다 패턴)이 덮지 못하는 값의 예. 모두 덮으면 None
@@ -874,6 +905,9 @@ let rec private patToString (prec: int) (p: Pat) =
         | Some xs -> "[" + (xs |> List.map (patToString 0) |> String.concat "; ") + "]"
         | None -> paren (prec > 0) (patToString 1 h + " :: " + patToString 0 t)
     | Con ("tuple", items) -> "(" + (items |> List.map (patToString 0) |> String.concat ", ") + ")"
+    | Con (name, items) when name.StartsWith "record:" ->
+        let names = name.Substring(7).Split(';')
+        "{ " + (Array.zip names (Array.ofList items) |> Array.map (fun (n, p) -> n + " = " + patToString 0 p) |> String.concat "; ") + " }"
     | Con (name, []) when name.StartsWith "int:" -> name.Substring 4
     | Con (name, []) when name.StartsWith "str:" -> "\"" + name.Substring 4 + "\""
     | Con (name, []) -> name
@@ -886,11 +920,11 @@ let private checkMatches (st: State) : Warning list =
           // 쓰이지 않는 분기: 앞의 (가드 없는) 분기들이 이미 모두 덮음 (OCaml Warning 11, F# FS0026)
           let mutable before = []
           for p, guarded, casePosition in cases do
-              if not (useful st before [ toPat p ] [ t ]) then
+              if not (useful st before [ toPat st p ] [ t ]) then
                   yield { Message = "this match case is unused"; Position = casePosition |> Option.orElse position }
-              if not guarded then before <- before @ [ [ toPat p ] ]
+              if not guarded then before <- before @ [ [ toPat st p ] ]
           // 가드가 있는 분기는 실패할 수 있으므로 덮는 데 셈하지 않음 (OCaml, F# 와 같음)
-          let rows = cases |> List.filter (fun (_, guarded, _) -> not guarded) |> List.map (fun (p, _, _) -> [ toPat p ])
+          let rows = cases |> List.filter (fun (_, guarded, _) -> not guarded) |> List.map (fun (p, _, _) -> [ toPat st p ])
           // try 는 맞는 분기가 없으면 다시 raise 하므로 빠진 분기가 정상 (OCaml 도 경고하지 않음)
           match (if kind = "try" then None else missing st rows [ t ]) with
           | Some [ example ] ->
@@ -907,6 +941,8 @@ let typecheckWithWarnings (expr: Expr) : Type * Warning list =
         { Level = 0
           NextId = 0
           DataTypes = Dictionary()
+          RecordTypes = Dictionary()
+          RecordPatterns = Dictionary(HashIdentity.Reference)
           Matches = List()
           Discarded = List()
           TypeVarScopes = [ 0, Dictionary() ]

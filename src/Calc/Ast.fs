@@ -31,6 +31,8 @@ type Pattern =
     | PUnit
     /// p1 | p2: 왼쪽부터 처음 일치하는 쪽. 두 쪽이 묶는 이름은 같아야 함
     | POr of Pattern * Pattern
+    /// { x = p1; y = p2 }: 쓴 필드만 검사 (빠진 필드는 _). Lower 가 선언한 순서의 모든 필드로 채움
+    | PRecord of fields: (string * Pattern) list
 
 type Expr =
     | Number of int

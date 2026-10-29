@@ -290,6 +290,7 @@ let rec private irrefutable (pattern: Ast.Pattern) =
     match pattern with
     | Ast.PVar _ | Ast.PWildcard | Ast.PUnit -> true
     | Ast.PTuple items -> List.forall irrefutable items
+    | Ast.PRecord fields -> fields |> List.forall (snd >> irrefutable)
     | Ast.POr (a, _) -> irrefutable a
     | _ -> false
 
@@ -521,6 +522,8 @@ and private emitTest (fb: FunctionBuilder) (pattern: Ast.Pattern) (v: string) : 
         else emitIfOf fb "i1" isCons (fun () -> fields [ h, 1; t, 2 ]) (fun () -> emitConst fb "i1" 0L)
     // 타입 검사를 통과했으므로 원소 수는 항상 같음
     | Ast.PTuple items -> fields (items |> List.mapi (fun i p -> p, 1 + i))
+    // Lower 가 선언한 순서의 모든 필드로 채웠으므로 i 번째가 칸 2 + i (0, 1 은 헤더와 필드 이름)
+    | Ast.PRecord items -> fields (items |> List.mapi (fun i (_, p) -> p, 2 + i))
     // 왼쪽이 맞으면 true, 아니면 오른쪽
     | Ast.POr (a, b) ->
         let c = emitTest fb a v
@@ -542,6 +545,7 @@ and private emitBind (fb: FunctionBuilder) (pattern: Ast.Pattern) (v: string) (e
     | Ast.PVar name -> Map.add name v env
     | Ast.PCons (h, t) -> List.fold field env [ h, 1; t, 2 ]
     | Ast.PTuple items -> List.fold field env (items |> List.mapi (fun i p -> p, 1 + i))
+    | Ast.PRecord items -> List.fold field env (items |> List.mapi (fun i (_, p) -> p, 2 + i))
     | Ast.PCtor (_, Some p) -> field env (p, 2)
     // 맞은 쪽(왼쪽부터)에서 이름마다 값을 꺼냄: 이름 수만큼 값을 내는 scf.if
     | Ast.POr (a, b) ->

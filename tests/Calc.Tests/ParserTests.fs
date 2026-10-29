@@ -749,6 +749,16 @@ let tests =
                 Expect.equal (parse "{ p with x = 1; y = a + 1 }") (RecordUpdate (Var "p", [ "x", Number 1; "y", Add (Var "a", Number 1) ])) ""
                 Expect.equal (parse "type p = { x: int; }\n;; { x = 1; }") (RecordDecl ("p", [], [ "x", TName ("int", []) ], Record [ "x", Number 1 ])) "끝의 ; 와 최상위 선언"
             }
+            test "레코드 패턴: 쓴 필드만, let 의 왼쪽에도" {
+                Expect.equal
+                    (parse "match r with { x = 0; y = a } -> a | { x = _ } -> 0")
+                    (Match (Var "r", [ PRecord [ "x", PInt 0; "y", PVar "a" ], None, Var "a"; PRecord [ "x", PWildcard ], None, Number 0 ]))
+                    ""
+                Expect.equal (parse "let { x = a; } = r in a") (LetPattern (PRecord [ "x", PVar "a" ], Var "r", Var "a")) "끝의 ;"
+                Expect.equal (parse "match o with Some { v = x } :: _ -> x") (Match (Var "o", [ PCons (PCtor ("Some", Some (PRecord [ "v", PVar "x" ])), PWildcard), None, Var "x" ])) "생성자 인자"
+                expectParseError "match r with { x = a; x = b } -> 1" "Duplicate field: x" 1 14
+                expectParseError "match r with { x = a; y = a } -> 1" "Duplicate variable in pattern: a" 1 14
+            }
             test "필드 읽기는 함수 호출보다 강하고 왼쪽 결합, ! 보다 강함" {
                 Expect.equal (parse "f p.x") (App (Var "f", Field (Var "p", "x"))) ""
                 Expect.equal (parse "a.b.c") (Field (Field (Var "a", "b"), "c")) ""

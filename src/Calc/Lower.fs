@@ -88,6 +88,19 @@ let rec private lambdaChain (expr: Expr) =
     | Annot (e, _) -> lambdaChain e
     | _ -> [], expr
 
+/// 레코드 패턴을 선언한 순서의 모든 필드로 (쓰지 않은 필드는 _). Codegen 이 i 번째 필드를 칸 2 + i 에서 읽음
+let rec private fillRecordFields (scope: Scope) (pattern: Pattern) : Pattern =
+    let fill = fillRecordFields scope
+    match pattern with
+    | PRecord fields ->
+        let names = scope.Fields[fst fields.Head]
+        PRecord (names |> List.map (fun n -> n, fields |> List.tryFind (fun (f, _) -> f = n) |> Option.map (snd >> fill) |> Option.defaultValue PWildcard))
+    | PCons (h, t) -> PCons (fill h, fill t)
+    | PTuple items -> PTuple (List.map fill items)
+    | PCtor (name, Some p) -> PCtor (name, Some (fill p))
+    | POr (a, b) -> POr (fill a, fill b)
+    | PVar _ | PWildcard | PInt _ | PBool _ | PString _ | PNil | PUnit | PCtor (_, None) -> pattern
+
 /// ctors 는 지금 범위의 생성자 이름 → 인자가 있는지. type 선언이 범위를 넓힘 (안쪽 선언이 같은 이름을 가림).
 /// scope 는 지금 범위의 변수. 범위에 없는 이름은 내장 함수 (let 으로 가린 내장 함수는 보통 변수)
 let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Scope) (expr: Expr) : CExpr =
@@ -195,7 +208,7 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Scope) (
         let handlerScope = bind "$exn" scope
         let lowerCase (pattern, guard, handler) =
             let scope = bindAll (patternVars pattern) handlerScope
-            pattern, Option.map (lower state ctors scope) guard, lower state ctors scope handler
+            fillRecordFields scope pattern, Option.map (lower state ctors scope) guard, lower state ctors scope handler
         let reraise = PWildcard, None, CBuiltin ("raise", [ CVar "$exn" ])
         let handler = CMatch (CVar "$exn", List.map lowerCase cases @ [ reraise ])
         CTry (state.AddFunction("$unit", None, lower state ctors scope body), state.AddFunction("$exn", None, handler))
@@ -227,12 +240,12 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Scope) (
     | Tuple items -> CTuple (List.map (lower state ctors scope) items)
     | Match (scrutinee, cases) ->
         let lowerCase (pattern, guard, body) =
-            let scope = bindAll (patternVars pattern) scope
-            pattern, Option.map (lower state ctors scope) guard, lower state ctors scope body
+            let inner = bindAll (patternVars pattern) scope
+            fillRecordFields scope pattern, Option.map (lower state ctors inner) guard, lower state ctors inner body
         CMatch (lower state ctors scope scrutinee, List.map lowerCase cases)
     // let (a, b) = e in body 는 분기 하나짜리 match (일치하지 않으면 같은 Match failure)
     | LetPattern (pattern, value, body) ->
-        CMatch (lower state ctors scope value, [ pattern, None, lower state ctors (bindAll (patternVars pattern) scope) body ])
+        CMatch (lower state ctors scope value, [ fillRecordFields scope pattern, None, lower state ctors (bindAll (patternVars pattern) scope) body ])
 
 let lowerProgram (expr: Expr) : CProgram =
     let state = State()

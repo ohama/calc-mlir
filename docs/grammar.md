@@ -171,10 +171,12 @@ atomPat = IDENT | "_" | CTOR
         | NUMBER | "-" NUMBER | STRING | "true" | "false"
         | "[" "]" | "(" ")"
         | "[" pattern { ";" pattern } "]"                (* 리스트 패턴 *)
+        | recordPat
         | "(" pattern ")"
         | tuplePat ;
 tuplePat = "(" pattern "," pattern { "," pattern } ")" ;
-letPat  = tuplePat | "(" ")" | "_" ;
+recordPat = "{" IDENT "=" pattern { ";" IDENT "=" pattern } [ ";" ] "}" ;   (* 쓴 필드만 검사 *)
+letPat  = tuplePat | recordPat | "(" ")" | "_" ;
 
 params  = param { param } ;
 param   = IDENT | "_" | "(" ")"                        (* () 는 unit 인자 *)
@@ -546,7 +548,19 @@ p.x + q.x                              (* 11 *)
 - **타입은 필드 이름이 정함:** `fun r -> r.x`의 `r`은 필드 `x`를 선언한 레코드 타입입니다. 같은 필드 이름을 가진 레코드 타입이 여럿이면 **마지막에 선언한** 타입입니다(OCaml과 같음). 앞의 타입으로 쓰려면 타입 표기도 도와주지 않습니다(`expected q but got p`).
 - **비교와 출력:** `=`는 필드를 차례로 비교합니다. `<`와 `sort`에는 쓸 수 없습니다. 결과는 `{ x = 1; y = 2 }`처럼 선언한 순서로 출력합니다.
 - **필드는 바꿀 수 없음:** 바꿔야 하면 필드에 `ref`를 둡니다(`type t = { r: int ref }`, `a.r := 5`).
-- **아직 없는 것:** 레코드 패턴(`match p with { x = 0 } -> …`, `let { x; y } = p`), 필드 이름만 쓰는 줄임(`{ x; y }`), `mutable` 필드, F#처럼 타입 표기로 같은 이름의 필드를 고르는 것.
+- **패턴:** `{ x = p1; y = p2 }`. 쓴 필드만 검사하고, 쓰지 않은 필드는 무엇이든 맞습니다(F#과 같음). `match`, `function`, `try`, `let`의 왼쪽(`let { x = a; y = b } = p`), 생성자의 인자(`Some { v = x }`)에 씁니다. 타입은 레코드 식처럼 필드 이름이 정합니다.
+
+  ```
+  let describe p =
+      match p with
+      | { x = 0; y = 0 } -> "origin"
+      | { x = 0 } -> "on y axis"
+      | { x = a; y = b } when a = b -> "diagonal"
+      | _ -> "somewhere"
+  ```
+
+  - 빠진 분기 검사는 레코드 타입을 생성자가 하나인 타입으로 봅니다. `match r with { y = true } -> 1`(`y : bool`)는 `{ x = _; y = false }`가 빠졌다고 경고합니다.
+- **아직 없는 것:** 필드 이름만 쓰는 줄임(`{ x; y }`, OCaml의 패턴과 식), `mutable` 필드, F#처럼 타입 표기로 같은 이름의 필드를 고르는 것.
 
 ### 모듈
 
@@ -704,6 +718,7 @@ defaultValue 0 (tryFind (fun x -> x > 10) xs)
 | 패턴 `x` / `_` / `1` / `true` / `"s"` | `PVar "x"` / `PWildcard` / `PInt 1` / `PBool true` / `PString "s"` |
 | 패턴 `[]` / `p1 :: p2` / `[p1; p2]` | `PNil` / `PCons (p1, p2)` / `PCons (p1, PCons (p2, PNil))` |
 | 패턴 `(p1, p2)` | `PTuple [p1; p2]` |
+| 패턴 `{ y = p; x = q }` | `PRecord [ ("y", p); ("x", q) ]` (쓴 순서, 쓴 필드만) |
 | `None` / `Some e` | `Ctor "None"` / `App (Ctor "Some", e)` |
 | 패턴 `None` / `Some p` | `PCtor ("None", None)` / `PCtor ("Some", Some p)` |
 | `type 'a t = A \| B of 'a * int in e` | `TypeDecl ("t", ["a"], [ ("A", None); ("B", Some (TTuple [TVar "a"; TName ("int", [])])) ], e)` |
@@ -1171,7 +1186,7 @@ Warning: this match is not exhaustive. Example of a value not matched: None (lin
 | `match n with \| 0 -> 0 \| 1 -> 1` | `2` |
 | `let (a, 1) = p in a` | `(_, 0)` (`this let pattern is not exhaustive`) |
 
-- **생성자 목록:** `bool`, 리스트, `option`, 튜플, 사용자 타입은 생성자를 모두 압니다. `int`와 `string`은 값이 무한히 많으므로 `_`나 변수가 있어야 덮습니다.
+- **생성자 목록:** `bool`, 리스트, `option`, 튜플, 사용자 타입, 레코드(생성자 하나)는 생성자를 모두 압니다. `int`와 `string`은 값이 무한히 많으므로 `_`나 변수가 있어야 덮습니다.
 - **가드:** 가드가 있는 분기는 실패할 수 있으므로 덮는 데 세지 않습니다(OCaml, F#과 같음).
 - **알고리즘:** Maranget, "Warnings for pattern matching"(2007)의 usefulness 검사입니다. 값의 예도 같은 계산에서 나옵니다(`Infer.typecheckWithWarnings`).
 - **같은 결과:** 경고가 없는 프로그램은 실행 중에 `Match failure`가 나지 않습니다. 평가 예제로 이것을 테스트합니다(`DiagnosticTests`).

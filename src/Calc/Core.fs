@@ -82,6 +82,7 @@ let rec patternVars (pattern: Pattern) : Set<string> =
     | PVar name -> Set.singleton name
     | PCons (h, t) -> Set.union (patternVars h) (patternVars t)
     | PTuple items -> items |> List.map patternVars |> Set.unionMany
+    | PRecord fields -> fields |> List.map (snd >> patternVars) |> Set.unionMany
     | PCtor (_, Some p) -> patternVars p
     | POr (a, _) -> patternVars a
     | PWildcard | PInt _ | PBool _ | PString _ | PNil | PUnit | PCtor (_, None) -> Set.empty

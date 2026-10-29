@@ -585,6 +585,7 @@ type p = { x: int; y: int } in let a = { y = 2; x = 1 } in { a with x = a.y }
   - `{ y = e1; x = e2 }`: 값을 쓴 순서대로 `$field_y`, `$field_x`에 묶고, 블록에는 선언한 순서로 넣습니다(`CRecord`). 계산 순서가 인터프리터와 같습니다.
   - `e.x`: 선언한 순서의 번호로 칸을 읽습니다(`CField (e, i)`, 칸 `2 + i`). 실행 중에 이름을 찾지 않습니다.
   - `{ e with x = v }`: `e`를 `$record`에 묶고, 바꾸는 필드는 새 값, 나머지는 `$record`의 칸으로 새 블록을 만듭니다.
+- **패턴:** `Lower`가 레코드 패턴을 선언한 순서의 모든 필드로 채웁니다(쓰지 않은 필드는 `_`, `fillRecordFields`). Codegen은 i번째 하위 패턴을 칸 `2 + i`에서 읽어 검사하고 묶습니다. 생성자가 하나라 확인할 태그가 없으므로, 하위 패턴이 모두 irrefutable이면 검사 코드가 없습니다.
 - **런타임:** `calc_buffer_value`는 이름 문자열을 `;`로 나눠 `{ x = 1; y = 2 }`를 출력하고, `calc_eq`는 값 칸을 차례로 비교합니다. 인터프리터의 `Eval.formatValue`, `Eval.valueEquals`와 같습니다.
 
 ## 관련 문서

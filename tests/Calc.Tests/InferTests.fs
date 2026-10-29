@@ -158,6 +158,10 @@ let inferred =
       "let xs = [] in (1 :: xs, \"a\" :: xs)", "int list * string list"
       "let p = (None, []) in let (a, b) = p in (Some 1 = a, Some \"x\" = a, 1 :: b, \"a\" :: b)", "bool * bool * int list * string list"
       "let mk = fun () -> let r = ref [] in r in let a = mk () in a := [1]; let b = mk () in b := [true]; (!a, !b)", "int list * bool list"
+      // 레코드 패턴
+      "type p = { x: int; y: string } in fun r -> match r with { x = a } -> a", "p -> int"
+      "type 'a box = { value: 'a } in fun b -> match b with { value = v } -> v", "'a box -> 'a"
+      "type p = { x: int; y: int } in fun r -> let { x = a; y = b } = r in a + b", "p -> int"
       // 모듈
       "module M = struct type 'a t = Leaf | Node of 'a t * 'a end;; M.Node (M.Leaf, 1)", "int M.t"
       "module M = struct type t = A end;; fun (x: M.t) -> x", "M.t -> M.t"
@@ -244,6 +248,11 @@ let tests =
             expectTypeError "sprintf \"%q\" 1" "Unknown format specifier: %q"
             expectTypeError "sprintf \"50%\"" "Missing format specifier after %"
             expectTypeError "$\"%s{1}\"" "Type mismatch: expected string but got int"
+            // 레코드 패턴
+            expectTypeError "type p = { x: int } in fun r -> match r with { x = \"a\" } -> 1" "Type mismatch: expected int but got string"
+            expectTypeError "type p = { x: int } in fun r -> match r with { z = 1 } -> 1" "Unknown record field: z"
+            expectTypeError "type p = { x: int } in type q = { y: int } in fun r -> match r with { x = 1; y = 2 } -> 1" "The record field y does not belong to type p"
+            expectTypeError "type p = { x: int } in match 1 with { x = 1 } -> 1" "Type mismatch: expected int but got p"
             // 모듈
             expectTypeError "module M = struct let f x = x end;; M.g" "Unbound variable: M.g"
             expectTypeError "module M = struct let f x = x end;; f" "Unbound variable: f"

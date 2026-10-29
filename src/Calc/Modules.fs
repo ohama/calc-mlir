@@ -48,6 +48,7 @@ let rec private patternNames pattern =
     | PVar name -> [ name ]
     | PCons (h, t) -> patternNames h @ patternNames t
     | PTuple items -> List.collect patternNames items
+    | PRecord fields -> List.collect (snd >> patternNames) fields
     | PCtor (_, Some p) -> patternNames p
     | POr (a, _) -> patternNames a
     | PWildcard | PInt _ | PBool _ | PString _ | PNil | PUnit | PCtor (_, None) -> []
@@ -68,6 +69,7 @@ let rec private renamePatternWith (var: string -> string) (env: Env) (pattern: P
          | PCtor (name, arg) -> PCtor (resolveIn env.Ctors env name, Option.map r arg)
          | PCons (h, t) -> PCons (r h, r t)
          | PTuple items -> PTuple (List.map r items)
+         | PRecord fields -> PRecord (fields |> List.map (fun (f, p) -> f, r p))
          | POr (a, b) -> POr (r a, r b)
          | PWildcard | PInt _ | PBool _ | PString _ | PNil | PUnit -> pattern)
 

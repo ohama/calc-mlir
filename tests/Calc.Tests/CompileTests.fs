@@ -396,6 +396,8 @@ let private runCases =
           "type p = { x: int; y: int } in let a = { x = 1; y = 2 } in let f t v = print t; v in { (print 0; a) with y = f 1 3 }", ("01{ x = 1; y = 3 }\n", "", 0), "with: 앞의 식 먼저"
           "type p = { x: int; y: int } in ({ x = 1; y = 2 } = { y = 2; x = 1 }, { x = 1; y = 2 } = { x = 1; y = 3 })", ("(true, false)\n", "", 0), "= 는 필드를 비교"
           "type p = { x: int } in printfn \"%A|%s\" { x = 1 } \"s\"", ("{ x = 1 }|s\n", "", 0), "%A"
+          "type p = { x: int; y: int } in match { y = 2; x = 1 } with { y = 3 } -> 0 | { x = a; y = b } -> a * 10 + b", ("12\n", "", 0), "레코드 패턴: 필드는 선언한 순서의 칸"
+          "type p = { x: int; y: bool } in match { x = 1; y = false } with { y = true } -> 1", ("", "Error: Match failure: { x = 1; y = false }\n", 1), "레코드 패턴의 Match failure"
         ]
       "Match failure",
         [

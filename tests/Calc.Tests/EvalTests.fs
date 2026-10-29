@@ -383,6 +383,16 @@ let cases =
       "type p = { name: string; tags: string list } in [{ name = \"a\"; tags = [] }; { name = \"b\"; tags = [\"t\"] }]", VList [ VRecord ("p", [ "name", VString "a"; "tags", VList [] ]); VRecord ("p", [ "name", VString "b"; "tags", VList [ VString "t" ] ]) ]
       "type p = { x: int } in Some { x = -1 }", some (VRecord ("p", [ "x", VInt -1 ]))
       "type p = { x: int; y: int; } in { x = 1; y = 2; }.y", VInt 2
+      // 레코드 패턴
+      "type p = { x: int; y: int } in let f r = match r with { x = 0; y = 0 } -> \"origin\" | { x = 0 } -> \"y axis\" | { x = a; y = b } when a = b -> \"diagonal\" | _ -> \"other\" in map f [{ x = 0; y = 0 }; { x = 0; y = 5 }; { x = 3; y = 3 }; { x = 1; y = 2 }]", VList [ VString "origin"; VString "y axis"; VString "diagonal"; VString "other" ]
+      "type p = { x: int; y: int } in let { x = a; y = b } = { y = 4; x = 3 } in a * 10 + b", VInt 34
+      "type p = { x: int; y: int } in let { y = b } = { x = 1; y = 2 } in b", VInt 2
+      "type 'a box = { value: 'a; label: string } in let unbox b = match b with { value = v } -> v in (unbox { value = [1]; label = \"l\" }, unbox { value = \"s\"; label = \"m\" })", VTuple [ VList [ VInt 1 ]; VString "s" ]
+      "type p = { x: int; y: int } in match Some { x = 1; y = 2 } with Some { x = 1; y = y } -> y | _ -> 0", VInt 2
+      "type p = { name: string; tags: string list } in match { name = \"a\"; tags = [\"t\"; \"u\"] } with { tags = t :: _ } -> t | { tags = [] } -> \"\"", VString "t"
+      "type inner = { v: int } in type outer = { i: inner; n: int } in match { n = 2; i = { v = 7 } } with { i = { v = v }; n = n } -> v * n", VInt 14
+      "type p = { x: int; y: int } in match { x = 1; y = 2 } with { x = 1; y = 3 } | { x = 1; y = 2 } -> true | _ -> false", VBool true
+      "module G = struct type point = { x: int; y: int } end;; match { x = 1; y = 2 } with { y = y } -> y", VInt 2
       // 모듈
       "module M = struct let x = 1 let f y = y + x end;; (M.f 2, M.x)", VTuple [ VInt 3; VInt 1 ]
       "module M = struct let x = 10 end let x = 1;; x + M.x", VInt 11

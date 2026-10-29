@@ -43,6 +43,7 @@ let rec private patternNames pattern =
     | PVar name -> [ name ]
     | PCons (h, t) -> patternNames h @ patternNames t
     | PTuple items -> List.collect patternNames items
+    | PRecord fields -> List.collect (snd >> patternNames) fields
     | PCtor (_, Some p) -> patternNames p
     | POr (a, _) -> patternNames a
     | PWildcard | PInt _ | PBool _ | PString _ | PNil | PUnit | PCtor (_, None) -> []

@@ -4,6 +4,15 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.40.0] - 2026-10-29
+
+### 추가
+- 레코드 패턴 `{ x = p1; y = p2 }` (F#과 같음). 쓴 필드만 검사합니다. `match`, `function`, `try`, `let`의 왼쪽, 생성자의 인자에 씁니다. 인터프리터, 타입 추론, 컴파일러, REPL 모두 지원합니다.
+  - 타입은 필드 이름이 정합니다(레코드 식과 같음). 오류: `Unknown record field: z`, `The record field y does not belong to type p`, `Duplicate field: x`
+  - 빠진 분기 검사와 쓰이지 않는 분기 경고가 레코드를 생성자 하나인 타입으로 다룹니다. 빠진 값의 예는 `{ x = _; y = false }`처럼 보여 줍니다.
+  - 컴파일러는 패턴을 선언한 순서의 모든 필드로 채워(`_`) 칸 번호로 읽습니다.
+- 테스트 17개 추가 (총 1135개)
+
 ## [0.39.0] - 2026-10-29
 
 ### 변경

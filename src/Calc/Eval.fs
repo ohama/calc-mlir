@@ -136,6 +136,16 @@ let rec matchPattern pattern value (env: Env) : Env option =
     | PNil, VList [] -> Some env
     | PCons (ph, pt), VList (h :: t) ->
         matchPattern ph h env |> Option.bind (matchPattern pt (VList t))
+    // 쓴 필드만 검사. 타입 검사를 건너뛰어 없는 필드면 불일치
+    | PRecord fields, VRecord (_, values) ->
+        fields
+        |> List.fold
+            (fun acc (f, p) ->
+                acc |> Option.bind (fun env ->
+                    match List.tryFind (fun (n, _) -> n = f) values with
+                    | Some (_, v) -> matchPattern p v env
+                    | None -> None))
+            (Some env)
     | PTuple ps, VTuple vs when List.length ps = List.length vs ->
         List.fold2 (fun acc p v -> acc |> Option.bind (matchPattern p v)) (Some env) ps vs
     | PCtor (name, argPattern), v ->

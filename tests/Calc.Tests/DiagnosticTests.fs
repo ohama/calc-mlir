@@ -76,6 +76,11 @@ let tests =
             Expect.isEmpty (warnings "match true with true | false -> 1") "or 패턴이 모두 덮음"
             Expect.isEmpty (warnings "type c = R | G | B in fun x -> match x with R | G -> 1 | B -> 2") ""
             Expect.equal (warnings "match 1 with 1 | 2 -> 0") [ notExhaustive "0", Some (1, 1) ] ""
+            // 레코드: 생성자가 하나인 타입 (쓰지 않은 필드는 _)
+            Expect.equal (warnings "type p = { x: int; y: bool } in fun r -> match r with { y = true } -> 1") [ notExhaustive "{ x = _; y = false }", Some (1, 42) ] ""
+            Expect.isEmpty (warnings "type p = { x: int; y: bool } in fun r -> match r with { y = true } -> 1 | { x = _ } -> 2") "레코드 패턴 하나가 모두 덮음"
+            Expect.equal (warnings "type p = { x: int } in fun r -> match r with _ -> 0 | { x = 1 } -> 1") [ "this match case is unused", Some (1, 55) ] "쓰이지 않는 레코드 분기"
+            Expect.equal (warnings "type 'a b = { v: 'a } in fun r -> match r with { v = Some _ } -> 1") [ notExhaustive "{ v = None }", Some (1, 35) ] "type parameter 가 있는 레코드"
             Expect.equal (warnings "let f = function Some x -> x in f") [ notExhaustive "None", Some (1, 9) ] "function 의 위치"
         }
 
