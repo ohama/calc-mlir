@@ -392,6 +392,13 @@ let private runCases =
           "let rec build n acc = if n = 0 then acc else build (n - 1) ((n, [n], Some n) :: acc) in let xs = build 300000 [] in println (length xs, head xs, nth xs 299999)", ("(300000, (1, [1], Some 1), (300000, [300000], Some 300000))\n", "", 0), "작은 블록 여러 크기, 수거가 일어나도 값이 그대로"
           "let t = (1, 2, 3, 4, 5, 6, 7, 8, 9) in let a = Array.create 20 7 in println (t, Array.length a, a.[19], [||] = [||])", ("((1, 2, 3, 4, 5, 6, 7, 8, 9), 20, 7, true)\n", "", 0), "8 단어보다 큰 블록과 빈 배열"
         ]
+      "타입이 int 인 연산",
+        [
+          "let rec fib n = if n < 2 then n else fib (n - 1) + fib (n - 2) in println (fib 20, 2147483647 + 1, -3 < 2, 5 >= 5, 4 <> 4)", ("(6765, -2147483648, true, true, false)\n", "", 0), "int 로 정해진 연산"
+          "let eq x y = x = y in let lt x y = x < y in let lts x y = x < y in println (eq 1 1, eq \"a\" \"b\", eq [1] [1], lt 1 2, lts \"b\" \"a\")", ("(true, false, true, true, false)\n", "", 0), "다형 함수 안의 = 와, 쓰인 곳에서 int 또는 string 으로 정해지는 <"
+          "let max a b = if a > b then a else b in println (max 3 7, max 10 (-1))", ("(7, 10)\n", "", 0), "함수 안의 int 비교"
+          "let join3 a b c = a + b + c in println (join3 \"x\" \"y\" \"z\", \"a\" < \"b\", \"b\" <= \"a\", [1; 2] = [1; 2], (1, \"a\") = (1, \"a\"), Some 1 <> None)", ("(\"xyz\", true, false, true, true, true)\n", "", 0), "string 과 블록은 런타임"
+        ]
       "리스트 칸 (헤더 없는 cons, 주소 | 2)",
         [
           "println ([[]], [[1]; []], [] = [], [1] = [], [1; 2] = [1; 2], [[1]] = [[1]], Some [], ([1], [2]))", ("([[]], [[1]; []], true, false, true, true, Some [], ([1], [2]))\n", "", 0), "빈 리스트, 중첩, =, 다른 값 안의 리스트"
@@ -594,6 +601,24 @@ let tests =
                 Expect.equal Codegen.consTag 2L "cons 는 헤더 없는 [head, tail] 블록의 주소 | 2"
                 Expect.equal (Codegen.tupleHeader 3) 0x304L "종류 4, 원소 3개"
                 Expect.equal Codegen.nilValue 5L "[] 는 즉시값"
+            }
+            // 타입 추론이 피연산자를 int 로 정한 연산은 태그 검사와 런타임 호출 없이 (Infer.intOperations)
+            test "타입이 int 인 연산은 런타임을 부르지 않음" {
+                let typed (input: string) =
+                    let ast = Program.load input
+                    Infer.typecheck ast |> ignore
+                    Codegen.emitProgram ast
+                let fib = typed "let rec fib n = if n < 2 then n else fib (n - 1) + fib (n - 2) in fib 10"
+                for f in [ "calc_compare"; "calc_add"; "calc_eq" ] do
+                    Expect.isFalse (fib.Contains("llvm.call @" + f + "(")) f
+                let mixed = typed "let g (s: string) = s + \"!\" in (1 + 2, 1 = 2, g \"a\", \"a\" < \"b\", true = false)"
+                Expect.isTrue (mixed.Contains "llvm.call @calc_add(") "string 의 + 는 런타임"
+                Expect.isTrue (mixed.Contains "llvm.call @calc_compare(") "string 의 < 는 런타임"
+                Expect.isTrue (mixed.Contains "llvm.call @calc_eq(") "bool 의 = 는 즉시값 경로와 런타임"
+                let poly = typed "let eq x y = x = y in (eq 1 1, eq \"a\" \"b\")"
+                Expect.isTrue (poly.Contains "llvm.call @calc_eq(") "다형 함수 안의 = 는 태그를 보고 고름"
+                // 타입 검사를 하지 않은 식은 지금처럼 태그를 봄
+                Expect.isTrue ((Codegen.emitProgram (Program.parse "let f x y = x < y in f 1 2")).Contains "llvm.call @calc_compare(") ""
             }
             test "어떤 값과도 일치하는 분기 뒤는 생성하지 않음" {
                 // + 는 int 인지 보는 scf.if 를 만들므로 - 로 확인

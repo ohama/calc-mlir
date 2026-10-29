@@ -60,7 +60,9 @@ type private State =
       /// 레코드 타입의 고유 이름 → (타입 매개변수 변수, 선언한 순서의 필드와 타입). 빠진 분기 검사가 씀
       RecordTypes: Dictionary<string, TypeVar list * (string * Type) list>
       /// 레코드 패턴 노드 → 그 레코드 타입의 필드 (선언한 순서). 빠진 분기 검사가 패턴을 행렬로 바꿀 때 씀
-      RecordPatterns: Dictionary<obj, string list> }
+      RecordPatterns: Dictionary<obj, string list>
+      /// +, =, <>, <, >, <=, >= 노드와 피연산자 타입. 추론이 끝난 뒤 int 로 정해진 노드를 intOperations 로 냄
+      Operands: List<obj * Type> }
 
 type private Context =
     { Vars: Map<string, Type>
@@ -596,7 +598,10 @@ and private inferNode (st: State) (ctx: Context) expr : Type =
         let t = infer' thenExpr
         expect elseExpr t (infer' elseExpr)
         t
-    | Add (a, b) -> sameIntOrString a b
+    | Add (a, b) ->
+        let t = sameIntOrString a b
+        st.Operands.Add((box expr, t))
+        t
     | Subtract (a, b)
     | Multiply (a, b)
     | Divide (a, b)
@@ -611,12 +616,13 @@ and private inferNode (st: State) (ctx: Context) expr : Type =
         // OCaml 처럼 모든 타입에 대해 'a -> 'a -> bool. 함수 비교는 실행 중 오류로 남음
         let t = infer' a
         expect b t (infer' b)
+        st.Operands.Add((box expr, t))
         tBool
     | Less (a, b)
     | Greater (a, b)
     | LessEqual (a, b)
     | GreaterEqual (a, b) ->
-        sameIntOrString a b |> ignore
+        st.Operands.Add((box expr, sameIntOrString a b))
         tBool
     | And (a, b)
     | Or (a, b) ->
@@ -947,6 +953,16 @@ let private checkMatches (st: State) : Warning list =
           | _ -> () ]
     |> List.sortBy (fun w -> w.Position)
 
+/// 타입 검사를 통과한 식(루트 노드) → 그 안에서 피연산자가 int 로 정해진 +, =, <>, <, >, <=, >= 노드.
+/// 컴파일러(Lower)가 태그 검사 없는 int 연산을 고르는 데 씀. 오류 위치처럼 노드 참조로 붙여 두고, 식이 사라지면 함께 사라짐
+let private intOperationTable = System.Runtime.CompilerServices.ConditionalWeakTable<Expr, HashSet<obj>>()
+
+/// expr 를 타입 검사했을 때 피연산자가 int 로 정해진 연산 노드 (타입 검사하지 않은 식이면 빈 집합)
+let intOperations (expr: Expr) : HashSet<obj> =
+    match intOperationTable.TryGetValue expr with
+    | true, ints -> ints
+    | _ -> HashSet<obj>(HashIdentity.Reference)
+
 /// 식 전체의 타입과, 모든 값을 덮지 못하는 패턴 매칭의 경고. 타입이 맞지 않으면 TypeError
 let typecheckWithWarnings (expr: Expr) : Type * Warning list =
     let st =
@@ -955,6 +971,7 @@ let typecheckWithWarnings (expr: Expr) : Type * Warning list =
           DataTypes = Dictionary()
           RecordTypes = Dictionary()
           RecordPatterns = Dictionary(HashIdentity.Reference)
+          Operands = List()
           Matches = List()
           Discarded = List()
           TypeVarScopes = [ 0, Dictionary() ]
@@ -962,6 +979,13 @@ let typecheckWithWarnings (expr: Expr) : Type * Warning list =
           Exceptions = Dictionary(dict [ "Failure", Some tString; "Not_found", None ]) }
     let t = infer st (initialContext st) expr
     applyDefaults st t
+    // 피연산자가 int 로 정해진 연산. 다형 함수 안의 = (generalize 한 변수)와 아직 정해지지 않은 int-or-string 은 넣지 않음
+    let ints = HashSet<obj>(HashIdentity.Reference)
+    for node, operand in st.Operands do
+        match prune operand with
+        | TyCon ("int", []) -> ints.Add node |> ignore
+        | _ -> ()
+    intOperationTable.AddOrUpdate(expr, ints)
     let discarded =
         [ for t, position in st.Discarded do
               match prune t with

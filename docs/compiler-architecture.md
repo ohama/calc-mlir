@@ -96,16 +96,9 @@ llvm.func @calc_main() -> i64 {
   ...                                    // let 은 코드 없음: price = %v1, qty = %v2
   %v9 = arith.muli %v5, %v8 : i32        // 태그를 떼고 i32 곱셈
   %v14 = arith.ori %v12, %v13 : i64      // 다시 태그 → total = %v14
-  %v17 = arith.andi %v14, %v16 : i64     // total 의 하위 3비트: int(1) 인가?
-  %v20 = scf.if %v18 -> (i64) {
-    %v21 = arith.cmpi sgt, %v14, %v15 : i64   // int 끼리는 태그를 붙인 채로 비교 (순서가 같음)
-    ...
-  } else {
-    %v25 = llvm.call @calc_compare(%v14, %v15) : (i64, i64) -> i32   // string 은 런타임
-    ...
-  }
+  %v16 = arith.cmpi sgt, %v14, %v15 : i64  // total > 3000: 타입 추론이 int 로 정했으므로 태그를 붙인 채로 바로 비교
   ...
-  %v24 = scf.if %v22 -> (i64) {
+  %v22 = scf.if %v20 -> (i64) {
     ...                                  // total / 10 (0 검사, MinValue / -1 검사 포함)
     scf.yield %v56 : i64
   } else {
@@ -146,15 +139,12 @@ declare i32 @calc_compare(i64, i64)
 ...
 
 define i64 @calc_main() {
-  br i1 true, label %1, label %2                       ; total 이 int 인가: 이미 true 로 접힘
+  br i1 true, label %1, label %6                       ; total > 3000: 이미 true 로 접힘
   ...
-2:
-  %3 = call i32 @calc_compare(i64 28801, i64 24001)   ; string 일 때의 길 (clang 이 지움)
+  br i1 false, label %2, label %3                      ; 0 검사도 false 로 접힘
   ...
-  br i1 false, label %11, label %12                    ; 0 검사도 false 로 접힘
-  ...
-  %17 = phi i64 [ 28801, %15 ], [ 25921, %14 ]         ; 3600 또는 3240
-  ret i64 %17
+  %8 = phi i64 [ 28801, %6 ], [ 25921, %5 ]            ; 3600 또는 3240
+  ret i64 %8
 }
 
 define i32 @main() {                      ; (다)가 C 의 main 심볼이 됨
@@ -184,7 +174,7 @@ mov  w0, #0x6541          ; 25921 = 3240
 ret
 ```
 
-0.48.0까지는 `>`가 언제나 `calc_compare`를 불러서, 런타임 함수라 접을 수 없는 호출(`bl _calc_compare`)과 `csel`이 남았습니다. 지금은 int 비교를 생성 코드에서 하므로 clang이 프로그램 전체를 상수 3240으로 접습니다.
+`>`의 피연산자는 타입 추론이 int로 정했으므로 태그 검사도 런타임 경로도 없습니다(0.54.0부터). 0.48.0까지는 `>`가 언제나 `calc_compare`를 불러서, 런타임 함수라 접을 수 없는 호출(`bl _calc_compare`)과 `csel`이 남았습니다. 지금은 int 비교를 생성 코드에서 하므로 clang이 프로그램 전체를 상수 3240으로 접습니다.
 
 ## 3. entry point `main`
 

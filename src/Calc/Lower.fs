@@ -20,9 +20,12 @@ let private bindAll (names: seq<string>) (scope: Scope) = Seq.fold (fun acc name
 let private know (name: string) (known: Known) (scope: Scope) = { bind name scope with Known = Map.add name known scope.Known }
 
 /// 프로그램 하나를 바꾸는 동안의 상태: 만든 함수와 다음 이름 번호 (테스트가 병렬이라 호출마다 새로)
-type private State() =
+type private State(ints: System.Collections.Generic.HashSet<obj>) =
     let functions = ResizeArray<CFunction>()
     let mutable next = 0
+
+    /// 타입 추론이 피연산자를 int 로 정한 연산 노드인가 (Infer.intOperations)
+    member _.IsInt(node: Expr) = ints.Contains(box node)
 
     member _.FreshName() =
         let name = sprintf "lambda_%d" next
@@ -124,18 +127,18 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Scope) (
         CLet (name, closure, lower state ctors (know name known scope) body)
     | Let (name, value, body) -> CLet (name, lower state ctors scope value, lower state ctors (bind name scope) body)
     | If (c, t, e) -> CIf (lower state ctors scope c, lower state ctors scope t, lower state ctors scope e)
-    | Add (a, b) -> prim PAdd [ a; b ]
+    | Add (a, b) -> prim (if state.IsInt expr then PIntAdd else PAdd) [ a; b ]
     | Subtract (a, b) -> prim PSubtract [ a; b ]
     | Multiply (a, b) -> prim PMultiply [ a; b ]
     | Divide (a, b) -> prim PDivide [ a; b ]
     | Modulo (a, b) -> prim PModulo [ a; b ]
     | Negate e -> prim PNegate [ e ]
-    | Equal (a, b) -> prim PEqual [ a; b ]
-    | NotEqual (a, b) -> CPrim (PNot, [ prim PEqual [ a; b ] ])
-    | Less (a, b) -> prim PLess [ a; b ]
-    | Greater (a, b) -> prim PGreater [ a; b ]
-    | LessEqual (a, b) -> prim PLessEqual [ a; b ]
-    | GreaterEqual (a, b) -> prim PGreaterEqual [ a; b ]
+    | Equal (a, b) -> prim (if state.IsInt expr then PIntEqual else PEqual) [ a; b ]
+    | NotEqual (a, b) -> CPrim (PNot, [ prim (if state.IsInt expr then PIntEqual else PEqual) [ a; b ] ])
+    | Less (a, b) -> prim (if state.IsInt expr then PIntLess else PLess) [ a; b ]
+    | Greater (a, b) -> prim (if state.IsInt expr then PIntGreater else PGreater) [ a; b ]
+    | LessEqual (a, b) -> prim (if state.IsInt expr then PIntLessEqual else PLessEqual) [ a; b ]
+    | GreaterEqual (a, b) -> prim (if state.IsInt expr then PIntGreaterEqual else PGreaterEqual) [ a; b ]
     | Not e -> prim PNot [ e ]
     // 단락 평가: 오른쪽은 if 의 한 분기에서만 계산
     | And (a, b) -> CIf (lower state ctors scope a, lower state ctors scope b, CBool false)
@@ -248,7 +251,7 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Scope) (
         CMatch (lower state ctors scope value, [ fillRecordFields scope pattern, None, lower state ctors (bindAll (patternVars pattern) scope) body ])
 
 let lowerProgram (expr: Expr) : CProgram =
-    let state = State()
+    let state = State(Infer.intOperations expr)
     // 'a option = None | Some of 'a 와 예외 Failure, Not_found 는 선언 없이 쓸 수 있음 (Eval 의 초기 환경과 같음)
     let main = lower state (Map.ofList [ "None", false; "Some", true; "Failure", true; "Not_found", false ]) emptyScope expr
     { Functions = state.Functions; Main = main }

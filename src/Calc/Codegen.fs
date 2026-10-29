@@ -441,6 +441,21 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
                 fb.Emit(sprintf "%s = arith.cmpi eq, %s, %s : i64" eq x y)
                 retagBool fb eq)
             (fun () -> emitCall fb "calc_eq" [ x; y ] "i64")
+    // 타입 추론이 int 로 정한 연산: 태그 검사 없이 (태그를 붙인 채로 비교해도 순서와 같음이 그대로)
+    | CPrim (PIntAdd, [ a; b ]) -> intOp "arith.addi" a b
+    | CPrim ((PIntEqual | PIntLess | PIntGreater | PIntLessEqual | PIntGreaterEqual) as op, [ a; b ]) ->
+        let x = emitExpr fb env a
+        let y = emitExpr fb env b
+        let predicate =
+            match op with
+            | PIntEqual -> "eq"
+            | PIntLess -> "slt"
+            | PIntGreater -> "sgt"
+            | PIntLessEqual -> "sle"
+            | _ -> "sge"
+        let cmp = fb.Fresh()
+        fb.Emit(sprintf "%s = arith.cmpi %s, %s, %s : i64" cmp predicate x y)
+        retagBool fb cmp
     | CPrim (PLess, [ a; b ]) -> compare "slt" a b
     | CPrim (PGreater, [ a; b ]) -> compare "sgt" a b
     | CPrim (PLessEqual, [ a; b ]) -> compare "sle" a b

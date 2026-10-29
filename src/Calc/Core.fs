@@ -21,6 +21,13 @@ type Prim =
     | PLessEqual
     | PGreaterEqual
     | PNot
+    /// 타입 추론이 피연산자를 int 로 정한 +, =, <, >, <=, >= (Codegen 이 태그를 검사하지 않음)
+    | PIntAdd
+    | PIntEqual
+    | PIntLess
+    | PIntGreater
+    | PIntLessEqual
+    | PIntGreaterEqual
 
 type CExpr =
     | CInt of int
