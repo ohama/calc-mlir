@@ -392,6 +392,18 @@ let private runCases =
           "let rec build n acc = if n = 0 then acc else build (n - 1) ((n, [n], Some n) :: acc) in let xs = build 300000 [] in println (length xs, head xs, nth xs 299999)", ("(300000, (1, [1], Some 1), (300000, [300000], Some 300000))\n", "", 0), "작은 블록 여러 크기, 수거가 일어나도 값이 그대로"
           "let t = (1, 2, 3, 4, 5, 6, 7, 8, 9) in let a = Array.create 20 7 in println (t, Array.length a, a.[19], [||] = [||])", ("((1, 2, 3, 4, 5, 6, 7, 8, 9), 20, 7, true)\n", "", 0), "8 단어보다 큰 블록과 빈 배열"
         ]
+      "튜플 match 와 rev_append",
+        [
+          "println (match ((print 1; [1]), (print 2; [])) with ([], _) -> 0 | (_, []) -> 2 | (x :: _, y :: _) -> x + y)", ("122\n", "", 0), "원소는 왼쪽부터 계산한 뒤 맞춤"
+          "let x = 10 in println ((match (1, 2) with (x, 3) -> x | (a, b) when a > b -> 0 | _ -> x) + x)", ("20\n", "", 0), "_ 분기, 가드, 실패한 분기의 x 는 바깥을 가리지 않음"
+          "match (1, 2) with (0, _) -> 0 | (_, 0) -> 1", ("", "Error: Match failure: (1, 2)\n", 1), "맞는 분기가 없을 때만 튜플을 만듦"
+          "println (match (Some 1, [2; 3]) with (Some a, b :: _) -> a + b | _ -> 0)", ("3\n", "", 0), ""
+          "println (match (1, (2, 3)) with (a, (b, c)) -> a + b + c)", ("6\n", "", 0), "안쪽 튜플은 블록"
+          "println (match (1, \"a\", true) with (1, s, false) -> s | (_, s, true) -> s + \"!\" | _ -> \"\")", ("a!\n", "", 0), "원소 셋"
+          "let rec merge xs ys acc = match (xs, ys) with ([], _) -> append (reverse acc) ys | (_, []) -> append (reverse acc) xs | (x :: xr, y :: yr) -> if x <= y then merge xr ys (x :: acc) else merge xs yr (y :: acc) in println (merge [1; 4; 6] [2; 3; 9] [])", ("[1; 2; 3; 4; 6; 9]\n", "", 0), "꼬리 위치의 튜플 match 와 append (reverse ...)"
+          "println (append (reverse [1; 2; 3]) [4], append (reverse []) [1], let f = append in f (reverse [1]) [2])", ("([3; 2; 1; 4], [1], [1; 2])\n", "", 0), "append (reverse xs) ys 는 rev_append 하나"
+          "let r = ref 0 in println (append (reverse (r := 1; [1])) (r := !r + 10; [!r]))", ("[1; 11]\n", "", 0), "rev_append 도 인자를 왼쪽부터"
+        ]
       "생성자 값 (튜플 인자를 편 블록)",
         [
           "type t = A | B of int * string | C of int in println [A; B (1, \"x\"); C 2]", ("[A; B (1, \"x\"); C 2]\n", "", 0), "출력"

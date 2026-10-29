@@ -205,6 +205,12 @@ value calc_builtin_toInt(value s) {
 
 static int compare_for_sort(const void *a, const void *b) { return calc_compare(*(const value *)a, *(const value *)b); }
 
+/* append (reverse xs) ys (Codegen 이 이 모양을 알아보고 부름): xs 의 원소를 하나씩 ys 앞에 붙임. 칸 n 개 */
+value calc_rev_append(value xs, value ys) {
+    for (; xs != CALC_NIL; xs = TAIL(xs)) ys = calc_cons(HEAD(xs), ys);
+    return ys;
+}
+
 value calc_builtin_reverse(value xs) {
     value r = CALC_NIL;
     for (; xs != CALC_NIL; xs = TAIL(xs)) r = calc_cons(HEAD(xs), r);

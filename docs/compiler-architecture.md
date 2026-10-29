@@ -392,6 +392,8 @@ match [7] with | x :: _ when x > 5 -> x | _ -> 0
 - **분기 하나:** "조건(`i1`)을 만드는 `scf.if`"와 "본문 또는 나머지를 고르는 `scf.if`" 두 개가 됩니다. 나머지 분기는 한 번만 생성됩니다.
 - **실패:** 마지막 분기까지 실패하면 `calc_match_failure(v)`가 `Error: Match failure: <값>`을 출력하고 종료 코드 1로 끝냅니다.
 - **`let (a, b) = e in body`:** 분기 하나짜리 `match`로 바뀝니다. 튜플 분해는 실패할 수 없으므로 검사 코드 없이 필드만 읽습니다.
+- **`match (a, b) with (p, q) -> …` (0.51.0부터):** 분기가 모두 원소 수가 같은 튜플 패턴이나 `_`면 튜플 블록을 만들지 않습니다. 원소를 왼쪽부터 계산한 뒤 원소마다 패턴을 맞춥니다. 맞는 분기가 없을 때만 튜플을 만들어 `calc_match_failure`에 줍니다. merge sort의 `match (xs, ys) with`가 단계마다 하던 할당이 없어졌습니다.
+- **`append (reverse xs) ys` (0.51.0부터):** Codegen이 이 모양을 알아보고 런타임의 `calc_rev_append` 하나로 부릅니다. 거꾸로 만든 리스트를 다시 복사하지 않으므로 리스트 칸을 n개만 만듭니다(전에는 2n개).
 - **런타임:** `format_value`(출력과 Match failure 메시지)와 `equals`(structural `=`)가 cons와 튜플 블록을 따라갑니다. 리스트는 재귀가 아니라 반복문으로 돌아서 긴 리스트도 C 스택을 쓰지 않습니다. `equals`는 인터프리터처럼 길이를 먼저 비교합니다. 그래서 `[fun x -> x] = []`는 오류 없이 `false`입니다.
 
 ## 9. ADT와 option (단계 6)

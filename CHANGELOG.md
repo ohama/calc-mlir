@@ -4,6 +4,15 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.51.0] - 2026-10-29
+
+### 변경
+- 컴파일한 merge sort 20만(`benchmarks/msort.calc`)이 0.097초에서 0.066초(Python 0.21초)가 되었습니다.
+  - `match (a, b) with (p, q) -> …`처럼 분기가 모두 원소 수가 같은 튜플 패턴이나 `_`면, 튜플 블록을 만들지 않고 원소마다 패턴을 맞춥니다. 맞는 분기가 없을 때만 튜플을 만들어 `Match failure`를 냅니다.
+  - `append (reverse xs) ys`는 런타임의 `calc_rev_append` 하나로 부릅니다. 리스트 칸을 2n개가 아니라 n개만 만듭니다.
+  - 결과, 오류 메시지, 계산 순서는 같습니다. 인터프리터는 바뀌지 않았습니다.
+- 테스트 1개 추가 (총 1209개, 컴파일 테스트에 튜플 match와 `rev_append`의 경우 9가지)
+
 ## [0.50.0] - 2026-10-29
 
 ### 변경

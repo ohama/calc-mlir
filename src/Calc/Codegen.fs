@@ -340,6 +340,16 @@ let rec private irrefutable (pattern: Ast.Pattern) =
     | Ast.POr (a, _) -> irrefutable a
     | _ -> false
 
+/// match 의 분기가 모두 원소 n 개인 튜플 패턴이나 _ 인가
+let private tupleArms (n: int) (cases: (Ast.Pattern * CExpr option * CExpr) list) =
+    cases |> List.forall (fun (p, _, _) -> match p with Ast.PTuple ps -> ps.Length = n | Ast.PWildcard -> true | _ -> false)
+
+/// 분기의 패턴과 원소 값의 짝 (_ 는 원소마다 _)
+let private components (pattern: Ast.Pattern) (vs: string list) =
+    match pattern with
+    | Ast.PTuple ps -> List.zip ps vs
+    | _ -> vs |> List.map (fun v -> Ast.PWildcard, v)
+
 /// 식의 값을 담은 SSA 이름을 반환. env 는 변수 이름 → 그 값을 담은 SSA 이름
 let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr : string =
     // 정수 연산: 태그를 떼고 32비트에서 계산(한 바퀴 돎, 인터프리터와 같음)한 뒤 다시 태그
@@ -485,6 +495,11 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
         fb.Emit(sprintf "%s = llvm.inttoptr %s : i64 to !llvm.ptr" block rv)
         fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" vv (emitSlot fb block 1))
         emitConst fb "i64" unitValue
+    // append (reverse xs) ys: 거꾸로 만든 리스트를 다시 복사하지 않고 xs 의 원소를 ys 앞에 하나씩 붙임 (칸 n 개)
+    | CBuiltin ("append", [ CBuiltin ("reverse", [ xs ]); ys ]) ->
+        let xv = emitExpr fb env xs
+        let yv = emitExpr fb env ys
+        emitCall fb "calc_rev_append" [ xv; yv ] "i64"
     | CBuiltin (name, args) ->
         let values = args |> List.map (emitExpr fb env)
         emitCall fb (builtinSymbol name) values "i64"
@@ -504,6 +519,19 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
         emitIf fb (emitIsTuple fb pv)
             (fun () -> emitCall fb "calc_make_data" [ name; pv ] "i64")
             (fun () -> emitBlock fb (dataHeader true) [ name; pv ])
+    // match (a, b) with (p, q) -> …: 튜플 블록을 만들지 않고 원소마다 패턴을 맞춤 (분기가 모두 같은 길이의 튜플 패턴이나 _)
+    | CMatch (CTuple items, cases) when tupleArms items.Length cases ->
+        let vs = items |> List.map (emitExpr fb env)
+        let rec emitCases cases =
+            match cases with
+            | [] ->
+                fb.Emit(sprintf "llvm.call @calc_match_failure(%s) : (i64) -> ()" (emitBlock fb (tupleHeader vs.Length) vs))
+                emitConst fb "i64" 0L
+            | (pattern, None, body) :: _ when irrefutable pattern -> emitExpr fb (emitBindAll fb (components pattern vs) env) body
+            | (pattern, guard, body) :: rest ->
+                let cond = emitComponentsCondition fb env (components pattern vs) guard
+                emitIf fb cond (fun () -> emitExpr fb (emitBindAll fb (components pattern vs) env) body) (fun () -> emitCases rest)
+        emitCases cases
     | CMatch (scrutinee, cases) ->
         let v = emitExpr fb env scrutinee
         // 분기마다 "조건(패턴 검사, 가드) → 본문, 아니면 나머지 분기". 조건을 i1 로 먼저 만들어서 나머지 분기는 한 번만 생성
@@ -553,6 +581,23 @@ and private emitCaseCondition (fb: FunctionBuilder) (env: Map<string, string>) (
     | Some g ->
         let guardTrue () = untagBool fb (emitExpr fb (emitBind fb pattern v env) g)
         emitIfOf fb "i1" test guardTrue (fun () -> emitConst fb "i1" 0L)
+
+/// 원소별로 맞추는 튜플 match 의 분기 조건: 원소의 패턴을 왼쪽부터 (앞이 실패하면 뒤는 검사하지 않음), 그다음 가드
+and private emitComponentsCondition (fb: FunctionBuilder) (env: Map<string, string>) (pairs: (Ast.Pattern * string) list) (guard: CExpr option) =
+    let rec testAll pairs =
+        match pairs |> List.filter (fun (p, _) -> not (irrefutable p)) with
+        | [] -> emitConst fb "i1" 1L
+        | [ p, v ] -> emitTest fb p v
+        | (p, v) :: rest -> emitIfOf fb "i1" (emitTest fb p v) (fun () -> testAll rest) (fun () -> emitConst fb "i1" 0L)
+    let test = testAll pairs
+    match guard with
+    | None -> test
+    | Some g ->
+        let guardTrue () = untagBool fb (emitExpr fb (emitBindAll fb pairs env) g)
+        emitIfOf fb "i1" test guardTrue (fun () -> emitConst fb "i1" 0L)
+
+and private emitBindAll (fb: FunctionBuilder) (pairs: (Ast.Pattern * string) list) (env: Map<string, string>) =
+    pairs |> List.fold (fun env (p, v) -> emitBind fb p v env) env
 
 /// let rec ... and ...: 모든 클로저를 먼저 할당한 뒤 다른 함수를 가리키는 칸을 채움 (서로를 가리키므로 순서대로 만들 수 없음).
 /// 그룹의 이름을 더한 환경을 돌려줌
@@ -674,6 +719,18 @@ and private emitTail (fb: FunctionBuilder) (env: Map<string, string>) (expr: CEx
         branch c (fun () -> emitTail fb env thenExpr) (fun () -> emitTail fb env elseExpr)
     | CApply (f, a) -> fb.Emit(sprintf "llvm.return %s : i64" (emitApply fb env "tail " f a))
     | CCallDirect (funcName, closure, args) -> fb.Emit(sprintf "llvm.return %s : i64" (emitCallDirect fb env "tail " funcName closure args))
+    | CMatch (CTuple items, cases) when tupleArms items.Length cases ->
+        let vs = items |> List.map (emitExpr fb env)
+        let rec emitCases cases =
+            match cases with
+            | [] ->
+                fb.Emit(sprintf "llvm.call @calc_match_failure(%s) : (i64) -> ()" (emitBlock fb (tupleHeader vs.Length) vs))
+                fb.Emit "llvm.unreachable"
+            | (pattern, None, body) :: _ when irrefutable pattern -> emitTail fb (emitBindAll fb (components pattern vs) env) body
+            | (pattern, guard, body) :: rest ->
+                let cond = emitComponentsCondition fb env (components pattern vs) guard
+                branch cond (fun () -> emitTail fb (emitBindAll fb (components pattern vs) env) body) (fun () -> emitCases rest)
+        emitCases cases
     | CMatch (scrutinee, cases) ->
         let v = emitExpr fb env scrutinee
         let rec emitCases cases =
@@ -728,6 +785,7 @@ let private declarations =
       "llvm.func @calc_error_divide_by_zero()"
       "llvm.func @calc_error_index()"
       "llvm.func @calc_make_data(i64, i64) -> i64"
+      "llvm.func @calc_rev_append(i64, i64) -> i64"
       "llvm.func @calc_data_payload(i64) -> i64"
       "llvm.func @calc_error_overflow()"
       "llvm.func @calc_add(i64, i64) -> i64"
