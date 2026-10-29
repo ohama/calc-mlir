@@ -6,12 +6,8 @@ type Value =
     | VInt of int
     | VBool of bool
     | VString of string
-    /// fun param -> body, 정의된 시점의 환경을 함께 저장 (정적 범위)
-    | VClosure of param: string * body: Expr * env: Map<string, Value>
-    /// let rec name param = body. 호출할 때 name 을 자기 자신으로 환경에 추가
-    | VRecClosure of name: string * param: string * body: Expr * env: Map<string, Value>
-    /// let rec f x = ... and g y = ... 의 index 번째 함수. 호출할 때 그룹의 모든 이름을 환경에 추가
-    | VRecGroup of index: int * bindings: (string * string * Expr) list * env: Map<string, Value>
+    /// fun param -> body 를 평가한 함수 (정의된 곳의 칸을 가리킴, 정적 범위). let rec 의 함수도 이것
+    | VClosure of Closure
     | VList of Value list
     /// (v1, v2, ...) 원소 2개 이상
     | VTuple of Value list
@@ -32,6 +28,21 @@ type Value =
     /// 레코드 타입의 선언 (환경에만 있는 값): 환경의 "." + 필드 이름이 이 값. 필드 이름으로 타입과 필드 순서를 찾음
     | VRecordType of typeName: string * fields: string list
 
+/// 함수 값: fun p1 -> … -> fun pn -> body 를 인자 Arity 개의 함수 하나로. 부를 때 Size 칸의 Frame 을 만들고 칸 0.. 에 인자를 넣어
+/// Code 를 실행. Bound 는 partial application 으로 이미 받은 인자. 같은 함수인지만 비교할 수 있음 (참조)
+and Closure(arity: int, size: int, parent: Frame, code: Frame -> Value, bound: Value list) =
+    member _.Arity = arity
+    member _.Size = size
+    member _.Parent = parent
+    member _.Code = code
+    member _.Bound = bound
+
+/// 함수 호출(과 최상위 식) 하나의 칸들. 안쪽 함수의 Frame 은 그 함수를 만든 곳의 Frame 을 Parent 로 가리킴 (정적 범위)
+and [<AllowNullLiteral>] Frame(size: int, parent: Frame) =
+    member val Slots: Value[] = Array.zeroCreate size
+    member _.Parent = parent
+
+/// 이름 → 값. 내장 함수, 생성자, REPL 의 앞 입력에서 정의한 값 (평가할 때는 상수로 씀)
 type Env = Map<string, Value>
 
 /// 문자열을 리터럴 형태로 출력 (렉서가 받는 이스케이프로 되돌림)
@@ -47,7 +58,7 @@ let rec formatValue value =
     | VBool true -> "true"
     | VBool false -> "false"
     | VString s -> quote s
-    | VClosure _ | VRecClosure _ | VRecGroup _ | VBuiltin _ | VConstructor _ -> "<fun>"
+    | VClosure _ | VBuiltin _ | VConstructor _ -> "<fun>"
     | VList items -> "[" + (items |> List.map formatValue |> String.concat "; ") + "]"
     | VTuple items -> "(" + (items |> List.map formatValue |> String.concat ", ") + ")"
     | VData (_, ctor, None) -> ctor
@@ -79,7 +90,7 @@ let typeName value =
     | VInt _ -> "int"
     | VBool _ -> "bool"
     | VString _ -> "string"
-    | VClosure _ | VRecClosure _ | VRecGroup _ | VBuiltin _ | VConstructor _ -> "function"
+    | VClosure _ | VBuiltin _ | VConstructor _ -> "function"
     | VList _ -> "list"
     | VTuple _ -> "tuple"
     | VData (typeName, _, _) -> typeName
@@ -384,169 +395,412 @@ let recordTypeOf (env: Env) (field: string) =
     | Some (VRecordType (typeName, names)) -> typeName, names
     | _ -> failwithf "Unknown record field: %s" field
 
-/// let rec ... and ...: 그룹의 함수마다 VRecGroup 값을 환경에 추가 (서로를 부를 수 있음)
-let declareRecGroup (env: Env) (bindings: (string * string * Expr) list) =
-    bindings |> List.indexed |> List.fold (fun acc (i, (name, _, _)) -> Map.add name (VRecGroup (i, bindings, env)) acc) env
+// ---- 평가 ----
+// 식을 먼저 한 번 훑어서 변수마다 "몇 단계 바깥 함수의 몇 번째 칸"인지 정하고, 그 칸을 읽고 쓰는 F# 클로저(Code)로 바꾼 뒤 실행.
+// 환경을 Map 으로 들고 다니면 let 과 호출마다 Map.add, 변수마다 문자열 비교로 찾기가 들어서, prelude 함수를 원소마다 부르는
+// 프로그램이 느림 (100만 개 리스트 예제 5.3초). 실행 중 오류와 그 시점은 Map 으로 평가하던 때와 같음
 
-let rec evalIn (env: Env) expr =
-    match expr with
-    | Number n -> VInt n
-    | Bool b -> VBool b
-    | Str s -> VString s
-    | Unit -> VUnit
-    | Annot (e, _) -> evalIn env e
-    | Seq (first, rest) ->
-        evalIn env first |> ignore
-        evalIn env rest
-    | Var name ->
-        match Map.tryFind name env with
-        | Some v -> v
-        | None -> failwithf "Unbound variable: %s" name
-    | Let (name, value, body) ->
-        let v = evalIn env value
-        evalIn (Map.add name v env) body
-    | LetRec (name, param, body, inExpr) ->
-        evalIn (Map.add name (VRecClosure (name, param, body, env)) env) inExpr
-    | LetRecs (bindings, inExpr) -> evalIn (declareRecGroup env bindings) inExpr
-    | Lambda (param, body) -> VClosure (param, body, env)
-    | App (f, arg) ->
-        // 값에 의한 호출: 함수와 인자를 먼저 평가한 뒤 본문을 평가
-        let fv = evalIn env f
-        let av = evalIn env arg
-        apply fv av
-    | If (cond, thenExpr, elseExpr) ->
-        if evalBool env cond then evalIn env thenExpr else evalIn env elseExpr
-    // + 는 int 덧셈 또는 string 연결. 왼쪽 값의 타입으로 정함
-    | Add (a, b) ->
-        match evalIn env a with
-        | VInt x -> VInt (x + evalInt env b)
-        | VString x -> VString (x + evalString env b)
-        | v -> typeError "int or string" v
-    | Subtract (a, b) -> VInt (evalInt env a - evalInt env b)
-    | Multiply (a, b) -> VInt (evalInt env a * evalInt env b)
-    | Divide (a, b) -> VInt (evalInt env a / evalInt env b)
-    | Modulo (a, b) -> VInt (evalInt env a % evalInt env b)
-    | Negate e -> VInt -(evalInt env e)
-    | Equal (a, b) -> VBool (evalEquals env a b)
-    | NotEqual (a, b) -> VBool (not (evalEquals env a b))
-    | Less (a, b) -> VBool (evalCompare env a b < 0)
-    | Greater (a, b) -> VBool (evalCompare env a b > 0)
-    | LessEqual (a, b) -> VBool (evalCompare env a b <= 0)
-    | GreaterEqual (a, b) -> VBool (evalCompare env a b >= 0)
-    // && 와 || 는 단락 평가: 왼쪽으로 결과가 정해지면 오른쪽은 평가하지 않음
-    | And (a, b) -> VBool (evalBool env a && evalBool env b)
-    | Or (a, b) -> VBool (evalBool env a || evalBool env b)
-    | Not e -> VBool (not (evalBool env e))
-    | Nil -> VList []
-    | Cons (head, tail) ->
-        let h = evalIn env head
-        VList (h :: evalList env tail)
-    | Tuple items -> VTuple (items |> List.map (evalIn env))
-    | Match (scrutinee, cases) ->
-        let value = evalIn env scrutinee
-        // 위에서부터 패턴과 가드가 모두 맞는 첫 분기
-        let rec tryCases cases =
-            match cases with
-            | [] -> matchFailure value
-            | (pattern, guard, body) :: rest ->
-                match matchPattern pattern value env with
-                | Some caseEnv when (match guard with None -> true | Some g -> evalBool caseEnv g) ->
-                    evalIn caseEnv body
-                | _ -> tryCases rest
-        tryCases cases
-    | LetPattern (pattern, value, body) ->
-        let v = evalIn env value
-        match matchPattern pattern v env with
-        | Some bodyEnv -> evalIn bodyEnv body
-        | None -> matchFailure v
-    | Ctor name ->
-        match Map.tryFind name env with
-        | Some (VData _ | VConstructor _ as v) -> v
-        | _ -> failwithf "Unknown constructor: %s" name
-    | TypeDecl (typeName, _, ctors, body) -> evalIn (declareConstructors env typeName ctors) body
-    | RecordDecl (typeName, _, fields, body) -> evalIn (declareRecord env typeName fields) body
-    // 쓴 순서대로 계산한 뒤 선언한 순서로 놓음. 필드가 빠지거나 다른 타입의 필드면 오류 (타입 검사가 먼저 막음)
-    | Record fields ->
-        let typeName, names = recordTypeOf env (fst fields.Head)
-        let values = fields |> List.map (fun (f, e) -> f, evalIn env e)
-        for f, _ in fields do
-            if not (List.contains f names) then failwithf "The record field %s does not belong to type %s" f typeName
-        let missing = names |> List.filter (fun n -> not (List.exists (fun (f, _) -> f = n) fields))
-        if not missing.IsEmpty then failwithf "Missing record field: %s" (String.concat ", " missing)
-        VRecord (typeName, names |> List.map (fun n -> n, List.find (fun (f, _) -> f = n) values |> snd))
-    | Field (e, field) ->
-        match evalIn env e with
-        | VRecord (_, values) as v ->
-            match List.tryFind (fun (f, _) -> f = field) values with
-            | Some (_, x) -> x
-            | None -> failwithf "Type error: the record %s has no field %s" (formatValue v) field
-        | v -> typeError "record" v
-    | RecordUpdate (e, fields) ->
-        match evalIn env e with
-        | VRecord (typeName, values) as v ->
-            let updates = fields |> List.map (fun (f, x) -> f, evalIn env x)
-            for f, _ in updates do
-                if not (List.exists (fun (n, _) -> n = f) values) then
-                    failwithf "Type error: the record %s has no field %s" (formatValue v) f
-            VRecord (typeName, values |> List.map (fun (n, old) -> n, defaultArg (updates |> List.tryFind (fun (f, _) -> f = n) |> Option.map snd) old))
-        | v -> typeError "record" v
-    | ExceptionDecl (name, argType, body) -> evalIn (declareConstructors env "exn" [ name, argType ]) body
-    | Printf (kind, format) -> formatFunction kind format
-    // 본문에서 raise 된 예외만 받음 (0으로 나누기 같은 실행 중 오류는 받지 않음). 맞는 분기가 없으면 같은 값을 다시 raise
-    | Try (body, cases) ->
-        try
-            evalIn env body
-        with CalcException exn ->
-            let rec handle cases =
-                match cases with
-                | [] -> raise (CalcException exn)
-                | (pattern, guard, handler) :: rest ->
-                    match matchPattern pattern exn env with
-                    | Some caseEnv when (match guard with None -> true | Some g -> evalBool caseEnv g) ->
-                        evalIn caseEnv handler
-                    | _ -> handle rest
-            handle cases
+/// 함수 하나(또는 최상위 식)의 칸 수. 본문을 다 훑은 뒤 정해지고, 호출할 때 그만큼 만듦
+type private SlotCount() =
+    member val Count = 0 with get, set
+    member this.Next() =
+        let n = this.Count
+        this.Count <- n + 1
+        n
 
-and evalInt env expr =
-    match evalIn env expr with
+/// 훑는 동안의 범위: 변수 → (정의한 함수의 깊이, 칸), 지금 함수의 깊이와 칸 수, 상수(내장 함수, 생성자, 앞 입력의 값)
+type private Scope =
+    { Vars: Map<string, int * int>
+      Depth: int
+      Slots: SlotCount
+      Consts: Env }
+
+type private Code = Frame -> Value
+
+/// 지금 함수에 칸 하나를 더해 name 을 묶음
+let private bindSlot (scope: Scope) (name: string) =
+    let slot = scope.Slots.Next()
+    slot, { scope with Vars = Map.add name (scope.Depth, slot) scope.Vars }
+
+/// hops 단계 바깥 함수의 slot 번째 칸
+let private access (hops: int) (slot: int) : Code =
+    match hops with
+    | 0 -> fun fr -> fr.Slots[slot]
+    | 1 -> fun fr -> fr.Parent.Slots[slot]
+    | 2 -> fun fr -> fr.Parent.Parent.Slots[slot]
+    | _ ->
+        fun fr ->
+            let mutable f = fr
+            for _ in 1 .. hops do
+                f <- f.Parent
+            f.Slots[slot]
+
+let private asInt (code: Code) fr =
+    match code fr with
     | VInt n -> n
     | v -> typeError "int" v
 
-and evalBool env expr =
-    match evalIn env expr with
+let private asBool (code: Code) fr =
+    match code fr with
     | VBool b -> b
     | v -> typeError "bool" v
 
-and evalString env expr =
-    match evalIn env expr with
+let private asString (code: Code) fr =
+    match code fr with
     | VString s -> s
     | v -> typeError "string" v
 
-/// < > <= >= 는 int 끼리 또는 string 끼리 (문자 코드 순서) 비교
-and evalCompare env a b =
-    match evalIn env a with
-    | VInt _ | VString _ as x -> compareValues x (evalIn env b)
-    | v -> typeError "int or string" v
-
-and evalList env expr =
-    match evalIn env expr with
+let private asList (code: Code) fr =
+    match code fr with
     | VList items -> items
     | v -> typeError "list" v
 
-and evalEquals env a b =
-    let x = evalIn env a
-    valueEquals x (evalIn env b)
+let rec private patternNames pattern =
+    match pattern with
+    | PVar name -> [ name ]
+    | PCons (h, t) -> patternNames h @ patternNames t
+    | PTuple items -> List.collect patternNames items
+    | PRecord fields -> List.collect (snd >> patternNames) fields
+    | PCtor (_, Some p) -> patternNames p
+    | POr (a, _) -> patternNames a
+    | PWildcard | PInt _ | PBool _ | PString _ | PNil | PUnit | PCtor (_, None) -> []
+
+/// 패턴 → 값이 맞는지 보고 묶는 이름의 칸에 쓰는 함수. 이름의 칸은 scope 에 이미 있음 (compileArm).
+/// 생성자가 없거나 인자 유무가 틀리면 그 패턴을 시도할 때 오류 (Map 으로 평가하던 matchPattern 과 같음)
+let rec private compilePattern (scope: Scope) (pattern: Pattern) : Value -> Frame -> bool =
+    let sub = compilePattern scope
+    match pattern with
+    | PVar name ->
+        let _, slot = scope.Vars[name]
+        fun v fr ->
+            fr.Slots[slot] <- v
+            true
+    | PWildcard -> fun _ _ -> true
+    | PUnit -> fun v _ -> v = VUnit
+    // 왼쪽부터 처음 일치하는 쪽. 두 쪽이 같은 칸에 씀
+    | POr (a, b) ->
+        let a, b = sub a, sub b
+        fun v fr -> a v fr || b v fr
+    | PInt n -> fun v _ -> (match v with VInt m -> m = n | _ -> false)
+    | PBool b -> fun v _ -> (match v with VBool c -> c = b | _ -> false)
+    | PString s -> fun v _ -> (match v with VString t -> t = s | _ -> false)
+    | PNil -> fun v _ -> (match v with VList [] -> true | _ -> false)
+    | PCons (h, t) ->
+        let h, t = sub h, sub t
+        fun v fr ->
+            match v with
+            | VList (x :: rest) -> h x fr && t (VList rest) fr
+            | _ -> false
+    | PTuple items ->
+        let items = items |> List.map sub |> Array.ofList
+        fun v fr ->
+            match v with
+            | VTuple vs when List.length vs = items.Length ->
+                let vs = Array.ofList vs
+                let mutable ok = true
+                let mutable i = 0
+                while ok && i < items.Length do
+                    ok <- items[i] vs[i] fr
+                    i <- i + 1
+                ok
+            | _ -> false
+    | PRecord fields ->
+        let fields = fields |> List.map (fun (f, p) -> f, sub p)
+        fun v fr ->
+            match v with
+            | VRecord (_, values) ->
+                fields
+                |> List.forall (fun (f, m) ->
+                    match List.tryFind (fun (n, _) -> n = f) values with
+                    | Some (_, x) -> m x fr
+                    | None -> false)
+            | _ -> false
+    | PCtor (name, argPattern) ->
+        // 오타 난 생성자가 조용히 "불일치"가 되지 않도록, 지금 보이는 생성자인지와 인자 유무를 먼저 확인
+        let typeName =
+            match Map.tryFind name scope.Consts, argPattern with
+            | Some (VData (t, _, None)), None -> Ok t
+            | Some (VConstructor (t, _, _)), Some _ -> Ok t
+            | Some (VData _), Some _ -> Error (sprintf "Constructor %s takes no argument" name)
+            | Some (VConstructor _), None -> Error (sprintf "Constructor %s requires an argument" name)
+            | _ -> Error (sprintf "Unknown constructor: %s" name)
+        let arg = argPattern |> Option.map sub
+        match typeName with
+        | Error message -> fun _ _ -> failwith message
+        | Ok typeName ->
+            fun v fr ->
+                match v, arg with
+                | VData (t, c, None), None -> t = typeName && c = name
+                | VData (t, c, Some payload), Some p -> t = typeName && c = name && p payload fr
+                | _ -> false
+
+/// match, try 의 분기: (패턴, 가드, 본문). 패턴이 묶는 이름마다 칸 하나
+let rec private compileArm (scope: Scope) (pattern: Pattern, guard: Expr option, body: Expr) =
+    let inner = patternNames pattern |> List.distinct |> List.fold (fun s name -> snd (bindSlot s name)) scope
+    compilePattern inner pattern, guard |> Option.map (compile inner), compile inner body
+
+/// 위에서부터 패턴과 가드가 모두 맞는 첫 분기의 번호. 없으면 -1
+and private findArm (arms: ((Value -> Frame -> bool) * Code option * Code)[]) (v: Value) (fr: Frame) =
+    let mutable found = -1
+    let mutable i = 0
+    while found < 0 && i < arms.Length do
+        let m, guard, _ = arms[i]
+        if m v fr && (match guard with None -> true | Some g -> asBool g fr) then found <- i
+        i <- i + 1
+    found
+
+/// fun p1 -> fun p2 -> body: 인자 여럿의 함수 하나 (칸 0, 1, … 에 인자). 인자 표기(let a = (a : t) in)는 값이 그대로라 건너뜀
+and private lambda (scope: Scope) (param: string) (body: Expr) : Code =
+    let rec chain (parameters: string list) (body: Expr) =
+        match body with
+        | Lambda (p, rest) -> chain (parameters @ [ p ]) rest
+        | Let (name, Annot (Var same, _), rest) when name = same && List.last parameters = name -> chain parameters rest
+        | _ -> parameters, body
+    let parameters, body = chain [ param ] body
+    let slots = SlotCount()
+    let vars = parameters |> List.fold (fun acc p -> Map.add p (scope.Depth + 1, slots.Next()) acc) scope.Vars
+    let code = compile { scope with Vars = vars; Depth = scope.Depth + 1; Slots = slots } body
+    let arity = parameters.Length
+    fun fr -> VClosure (Closure(arity, slots.Count, fr, code, []))
+
+and private compile (scope: Scope) (expr: Expr) : Code =
+    let c = compile scope
+    match expr with
+    | Number n ->
+        let v = VInt n
+        fun _ -> v
+    | Bool b ->
+        let v = VBool b
+        fun _ -> v
+    | Str s ->
+        let v = VString s
+        fun _ -> v
+    | Unit -> fun _ -> VUnit
+    | Annot (e, _) -> c e
+    | Seq (first, rest) ->
+        let first, rest = c first, c rest
+        fun fr ->
+            first fr |> ignore
+            rest fr
+    | Var name ->
+        match Map.tryFind name scope.Vars with
+        | Some (depth, slot) -> access (scope.Depth - depth) slot
+        | None ->
+            match Map.tryFind name scope.Consts with
+            | Some v -> fun _ -> v
+            | None -> fun _ -> failwithf "Unbound variable: %s" name
+    | Let (name, value, body) ->
+        let value = c value
+        let slot, inner = bindSlot scope name
+        let body = compile inner body
+        fun fr ->
+            fr.Slots[slot] <- value fr
+            body fr
+    // 본문의 name 은 지금 칸을 가리키므로, 함수를 만든 뒤 그 칸에 넣으면 자기 자신
+    | LetRec (name, param, body, inExpr) ->
+        let slot, inner = bindSlot scope name
+        let f = lambda inner param body
+        let rest = compile inner inExpr
+        fun fr ->
+            fr.Slots[slot] <- f fr
+            rest fr
+    | LetRecs (bindings, inExpr) ->
+        let inner, slots =
+            bindings
+            |> List.fold (fun (s, acc) (name, _, _) -> let slot, s = bindSlot s name in s, acc @ [ slot ]) (scope, [])
+        let fs = bindings |> List.map (fun (_, param, body) -> lambda inner param body) |> Array.ofList
+        let slots = Array.ofList slots
+        let rest = compile inner inExpr
+        fun fr ->
+            for i in 0 .. fs.Length - 1 do
+                fr.Slots[slots[i]] <- fs[i] fr
+            rest fr
+    | Lambda (param, body) -> lambda scope param body
+    // 값에 의한 호출: 함수와 인자를 먼저 평가한 뒤 본문을 평가. f a b 는 (f a) b 와 같은 순서:
+    // 인자 수가 같은 함수면 중간 함수 없이 바로 부름 (partial application 은 부수 효과가 없으므로 순서가 같음)
+    | App _ ->
+        let rec spine e args =
+            match e with
+            | App (f, a) -> spine f (a :: args)
+            | _ -> e, args
+        let head, args = spine expr []
+        let f = c head
+        let args = args |> List.map c |> Array.ofList
+        match args with
+        | [| arg |] ->
+            fun fr ->
+                let fv = f fr
+                let av = arg fr
+                apply fv av
+        | _ ->
+            let n = args.Length
+            fun fr ->
+                match f fr with
+                | VClosure cl when cl.Arity = n && cl.Bound.IsEmpty ->
+                    let frame = Frame(cl.Size, cl.Parent)
+                    for i in 0 .. n - 1 do
+                        frame.Slots[i] <- args[i] fr
+                    cl.Code frame
+                | fv ->
+                    let mutable g = fv
+                    for i in 0 .. n - 2 do
+                        g <- apply g (args[i] fr)
+                    apply g (args[n - 1] fr)
+    | If (cond, thenExpr, elseExpr) ->
+        let cond, t, e = c cond, c thenExpr, c elseExpr
+        fun fr -> if asBool cond fr then t fr else e fr
+    // + 는 int 덧셈 또는 string 연결. 왼쪽 값의 타입으로 정함
+    | Add (a, b) ->
+        let a, b = c a, c b
+        fun fr ->
+            match a fr with
+            | VInt x -> VInt (x + asInt b fr)
+            | VString x -> VString (x + asString b fr)
+            | v -> typeError "int or string" v
+    | Subtract (a, b) -> intOp scope a b (-)
+    | Multiply (a, b) -> intOp scope a b (*)
+    | Divide (a, b) -> intOp scope a b (/)
+    | Modulo (a, b) -> intOp scope a b (%)
+    | Negate e ->
+        let e = c e
+        fun fr -> VInt -(asInt e fr)
+    | Equal (a, b) ->
+        let a, b = c a, c b
+        fun fr ->
+            let x = a fr
+            VBool (valueEquals x (b fr))
+    | NotEqual (a, b) ->
+        let a, b = c a, c b
+        fun fr ->
+            let x = a fr
+            VBool (not (valueEquals x (b fr)))
+    | Less (a, b) -> comparison scope a b (fun n -> n < 0)
+    | Greater (a, b) -> comparison scope a b (fun n -> n > 0)
+    | LessEqual (a, b) -> comparison scope a b (fun n -> n <= 0)
+    | GreaterEqual (a, b) -> comparison scope a b (fun n -> n >= 0)
+    // && 와 || 는 단락 평가: 왼쪽으로 결과가 정해지면 오른쪽은 평가하지 않음
+    | And (a, b) ->
+        let a, b = c a, c b
+        fun fr -> VBool (asBool a fr && asBool b fr)
+    | Or (a, b) ->
+        let a, b = c a, c b
+        fun fr -> VBool (asBool a fr || asBool b fr)
+    | Not e ->
+        let e = c e
+        fun fr -> VBool (not (asBool e fr))
+    | Nil -> fun _ -> VList []
+    | Cons (head, tail) ->
+        let head, tail = c head, c tail
+        fun fr ->
+            let h = head fr
+            VList (h :: asList tail fr)
+    | Tuple items ->
+        let items = List.map c items
+        fun fr -> VTuple [ for item in items -> item fr ]
+    | Match (scrutinee, cases) ->
+        let scrutinee = c scrutinee
+        let arms = cases |> List.map (compileArm scope) |> Array.ofList
+        fun fr ->
+            let v = scrutinee fr
+            match findArm arms v fr with
+            | -1 -> matchFailure v
+            | i ->
+                let _, _, body = arms[i]
+                body fr
+    | LetPattern (pattern, value, body) ->
+        let value = c value
+        let m, _, body = compileArm scope (pattern, None, body)
+        fun fr ->
+            let v = value fr
+            if m v fr then body fr else matchFailure v
+    | Ctor name ->
+        match Map.tryFind name scope.Consts with
+        | Some (VData _ | VConstructor _ as v) -> fun _ -> v
+        | _ -> fun _ -> failwithf "Unknown constructor: %s" name
+    | TypeDecl (typeName, _, ctors, body) -> compile { scope with Consts = declareConstructors scope.Consts typeName ctors } body
+    | RecordDecl (typeName, _, fields, body) -> compile { scope with Consts = declareRecord scope.Consts typeName fields } body
+    | ExceptionDecl (name, argType, body) -> compile { scope with Consts = declareConstructors scope.Consts "exn" [ name, argType ] } body
+    // 쓴 순서대로 계산한 뒤 선언한 순서로 놓음. 필드가 빠지거나 다른 타입의 필드면 오류 (타입 검사가 먼저 막음)
+    | Record fields ->
+        let recordType = try Ok (recordTypeOf scope.Consts (fst fields.Head)) with ex -> Error ex.Message
+        let fields = fields |> List.map (fun (f, e) -> f, c e)
+        fun fr ->
+            match recordType with
+            | Error message -> failwith message
+            | Ok (typeName, names) ->
+                let values = fields |> List.map (fun (f, e) -> f, e fr)
+                for f, _ in fields do
+                    if not (List.contains f names) then failwithf "The record field %s does not belong to type %s" f typeName
+                let missing = names |> List.filter (fun n -> not (List.exists (fun (f, _) -> f = n) fields))
+                if not missing.IsEmpty then failwithf "Missing record field: %s" (String.concat ", " missing)
+                VRecord (typeName, names |> List.map (fun n -> n, List.find (fun (f, _) -> f = n) values |> snd))
+    | Field (e, field) ->
+        let e = c e
+        fun fr ->
+            match e fr with
+            | VRecord (_, values) as v ->
+                match List.tryFind (fun (f, _) -> f = field) values with
+                | Some (_, x) -> x
+                | None -> failwithf "Type error: the record %s has no field %s" (formatValue v) field
+            | v -> typeError "record" v
+    | RecordUpdate (e, fields) ->
+        let e = c e
+        let fields = fields |> List.map (fun (f, x) -> f, c x)
+        fun fr ->
+            match e fr with
+            | VRecord (typeName, values) as v ->
+                let updates = fields |> List.map (fun (f, x) -> f, x fr)
+                for f, _ in updates do
+                    if not (List.exists (fun (n, _) -> n = f) values) then
+                        failwithf "Type error: the record %s has no field %s" (formatValue v) f
+                VRecord (typeName, values |> List.map (fun (n, old) -> n, defaultArg (updates |> List.tryFind (fun (f, _) -> f = n) |> Option.map snd) old))
+            | v -> typeError "record" v
+    // 포맷의 함수는 한 번 만들어 둠 (포맷 오류는 평가할 때마다)
+    | Printf (kind, format) ->
+        let made = lazy (formatFunction kind format)
+        fun _ -> made.Force()
+    // 본문에서 raise 된 예외만 받음 (0으로 나누기 같은 실행 중 오류는 받지 않음). 맞는 분기가 없으면 같은 값을 다시 raise
+    | Try (body, cases) ->
+        let body = c body
+        let arms = cases |> List.map (compileArm scope) |> Array.ofList
+        fun fr ->
+            try
+                body fr
+            with CalcException exn ->
+                match findArm arms exn fr with
+                | -1 -> raise (CalcException exn)
+                | i ->
+                    let _, _, handler = arms[i]
+                    handler fr
+
+/// - * / % : int 끼리
+and private intOp (scope: Scope) a b (op: int -> int -> int) : Code =
+    let a, b = compile scope a, compile scope b
+    fun fr ->
+        let x = asInt a fr
+        VInt (op x (asInt b fr))
+
+/// < > <= >= 는 int 끼리 또는 string 끼리 (문자 코드 순서) 비교
+and private comparison (scope: Scope) a b (test: int -> bool) : Code =
+    let a, b = compile scope a, compile scope b
+    fun fr ->
+        match a fr with
+        | VInt _ | VString _ as x -> VBool (test (compareValues x (b fr)))
+        | v -> typeError "int or string" v
 
 and apply fv av =
     match fv with
-    | VClosure (param, body, closureEnv) ->
-        evalIn (Map.add param av closureEnv) body
-    | VRecClosure (name, param, body, closureEnv) ->
-        let env = closureEnv |> Map.add name fv |> Map.add param av
-        evalIn env body
-    | VRecGroup (index, bindings, closureEnv) ->
-        let _, param, body = bindings[index]
-        evalIn (declareRecGroup closureEnv bindings |> Map.add param av) body
+    // 인자가 다 모이면 Frame 을 만들어 본문 실행, 아니면 받은 인자를 더한 함수
+    | VClosure cl ->
+        if cl.Arity = 1 then
+            let frame = Frame(cl.Size, cl.Parent)
+            let mutable i = 0
+            for b in cl.Bound do
+                frame.Slots[i] <- b
+                i <- i + 1
+            frame.Slots[i] <- av
+            cl.Code frame
+        else VClosure (Closure(cl.Arity - 1, cl.Size, cl.Parent, cl.Code, cl.Bound @ [ av ]))
     | VBuiltin (name, []) when Format.kinds.Contains name ->
         match av with
         | VString format -> formatFunction name format
@@ -568,6 +822,18 @@ and private formatFunction (kind: string) (format: string) =
     match Format.parse format with
     | Ok pieces -> evalIn builtins (Format.expand kind pieces)
     | Error message -> failwith message
+
+/// env 의 이름을 상수로 보고 평가 (REPL 은 앞 입력의 값, 프로그램은 내장 함수)
+and evalIn (env: Env) (expr: Expr) : Value =
+    let slots = SlotCount()
+    let code = compile { Vars = Map.empty; Depth = 0; Slots = slots; Consts = env } expr
+    code (Frame(slots.Count, null))
+
+/// let rec f x = ... and g y = ...: 그룹의 함수를 만들어 환경에 추가 (REPL 의 최상위 let rec)
+let declareRecGroup (env: Env) (bindings: (string * string * Expr) list) =
+    match evalIn env (LetRecs (bindings, Tuple (bindings |> List.map (fun (name, _, _) -> Var name)))) with
+    | VTuple values -> List.fold2 (fun acc (name, _, _) v -> Map.add name v acc) env bindings values
+    | _ -> failwith "unreachable"
 
 /// 내장 함수만 있는 환경에서 평가
 let eval expr = evalIn builtins expr

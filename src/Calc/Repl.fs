@@ -20,7 +20,7 @@ let private withPrelude =
         (let declare env item =
             match item with
             | TopLet (name, value, _) -> Map.add name (Eval.evalIn env value) env
-            | TopLetRec (name, param, body, _) -> Map.add name (Eval.VRecClosure (name, param, body, env)) env
+            | TopLetRec (name, param, body, _) -> Eval.declareRecGroup env [ name, param, body ]
             | TopLetRecs (bindings, _) -> Eval.declareRecGroup env bindings
             | _ -> failwith "prelude.calc: only let and let rec declarations are supported"
          let items = Prelude.items ()
@@ -100,7 +100,7 @@ let private processItem (out: TextWriter) (input: string) (state: State) (item: 
     | TopLetRec (name, param, body, _) ->
         warn (chain declarations Unit)
         let t = typeOf (chain declarations (Var name))
-        let v = Eval.VRecClosure (name, param, body, state.Env)
+        let v = (Eval.declareRecGroup state.Env [ name, param, body ])[name]
         out.WriteLine(sprintf "val %s : %s = %s" name t (Eval.formatValue v))
         { state with Declarations = declarations; Env = Map.add name v state.Env }
     | TopLetRecs (bindings, _) ->

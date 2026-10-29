@@ -35,7 +35,7 @@ let rec valueMatches value t =
     | VRef cell, TyCon ("ref", [ e ]) -> valueMatches cell.Value e
     | VArray items, TyCon ("array", [ e ]) -> items |> Array.forall (fun v -> valueMatches v e)
     | VRecord (typeName, _), TyCon (name, _) -> name.StartsWith(typeName + "@")
-    | (VClosure _ | VRecClosure _ | VRecGroup _ | VBuiltin _ | VConstructor _), TyFun _ -> true
+    | (VClosure _ | VBuiltin _ | VConstructor _), TyFun _ -> true
     | _ -> false
 
 let inferred =

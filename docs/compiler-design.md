@@ -156,7 +156,7 @@ clang prog.o runtime.o builtins.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack
   ```
 
 - **closure conversion**(`Lower`): `fun x -> body`의 free variable을 구해서 클로저 블록에 저장합니다. 본문은 최상위 함수 `@lambda_N`이 되고, free variable을 클로저에서 꺼냅니다.
-- **`let rec f x = ...`**: 클로저 포인터 `%closure`가 바로 자기 자신입니다. 그래서 본문 안의 `f`는 `%closure`가 됩니다. 인터프리터의 `VRecClosure`(호출할 때 자기 자신을 넣음)와 같은 생각입니다.
+- **`let rec f x = ...`**: 클로저 포인터 `%closure`가 바로 자기 자신입니다. 그래서 본문 안의 `f`는 `%closure`가 됩니다. 인터프리터의 `let rec`(함수를 만든 뒤 자기 칸에 넣어 본문의 `f`가 자신을 가리킴)과 같은 생각입니다.
 - **호출** `f a`: 클로저의 0번 칸에서 코드 포인터를 꺼내 `llvm.call %code(%f, %a)`로 indirect call합니다.
 - 여러 인자 호출 `add 1 2`는 중간 클로저를 만듭니다. 느리지만 단순합니다. 이름에 묶은 함수(`let add a b = …`)에 인자를 모두 주는 호출은 0.34.0부터 인자를 모두 받는 함수를 direct call합니다([compiler-architecture.md](compiler-architecture.md) 15장).
 

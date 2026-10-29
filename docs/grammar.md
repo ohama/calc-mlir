@@ -774,8 +774,7 @@ type Value =
     | VInt of int                                         // 32비트 정수
     | VBool of bool                                       // true / false
     | VString of string                                   // "..."
-    | VClosure of param * body * env                      // fun param -> body + 정의 시점의 환경
-    | VRecClosure of name * param * body * env            // let rec name param = body
+    | VClosure of Closure                                 // fun, let rec 의 함수 (정의된 곳의 환경을 가리킴)
     | VList of Value list                                 // [v1; v2; ...]
     | VTuple of Value list                                // (v1, v2, ...)
     | VBuiltin of name * args                             // 내장 함수 (args: 지금까지 받은 인자)
@@ -787,7 +786,13 @@ type Value =
     | VRecord of typeName * fields                        // { x = 1; y = 2 } (선언한 순서)
 ```
 
-평가는 환경 `env : Map<string, Value>`에서 이루어집니다. 처음 환경에는 내장 함수만 들어 있습니다(아래 "내장 함수" 참고). 결과는 `formatValue`로 출력합니다.
+아래 규칙은 이름 → 값의 환경 `env`로 쓴 의미입니다. 처음 환경에는 내장 함수만 들어 있습니다(아래 "내장 함수" 참고). 결과는 `formatValue`로 출력합니다.
+
+**구현(0.42.0부터):** 평가기는 식을 먼저 한 번 훑어서 변수마다 "몇 단계 바깥 함수의 몇 번째 칸"인지 정하고, F# 클로저로 바꾼 뒤 실행합니다(`Eval.compile`).
+- **칸 배열:** 함수 호출마다 칸 배열(`Frame`) 하나를 만들고, 바깥 함수의 배열을 부모로 가리킵니다.
+- **여러 인자 함수:** `fun a -> fun b -> …`는 인자 두 개의 함수 하나입니다. 인자가 다 모인 호출(`f x y`)은 중간 함수를 만들지 않고 바로 부릅니다.
+- **상수:** 내장 함수, 생성자, REPL의 앞 입력 값은 상수로 넣습니다.
+- **같은 의미:** 아래 규칙과 같은 결과, 같은 오류, 같은 계산 순서입니다. 환경을 `Map`으로 들고 다니던 0.41.0까지보다 빠릅니다(아래 "prelude"의 성능).
 - 정수는 `3`, `-3`처럼 출력됩니다.
 - 불리언은 `true`, `false`로 출력됩니다.
 - 문자열은 따옴표와 이스케이프를 붙인 리터럴 형태로 출력됩니다. 예: `"say \"hi\"\n"`. 출력을 그대로 다시 입력하면 같은 값이 됩니다.
@@ -811,8 +816,8 @@ type Value =
 | `Str s` | | `VString s` |
 | `Var x` | | `env`에서 `x`의 값. 없으면 `Unbound variable: x` 오류 |
 | `Let (x, e1, e2)` | 아무 타입 | `e1`을 평가해 `v`를 얻고, `env`에 `x = v`를 추가한 환경에서 `e2`를 평가 |
-| `LetRec (f, x, e1, e2)` | | `env`에 `f = VRecClosure (f, x, e1, env)`를 추가한 환경에서 `e2`를 평가 |
-| `Lambda (x, e)` | | `VClosure (x, e, env)`. 현재 환경을 함께 저장 |
+| `LetRec (f, x, e1, e2)` | | `env`에 `f = ⟨x, e1, env + {f}⟩`(본문의 `f`가 자기 자신인 함수 값)를 추가한 환경에서 `e2`를 평가 |
+| `Lambda (x, e)` | | 함수 값 `⟨x, e, env⟩`. 현재 환경을 함께 저장 |
 | `App (f, a)` | `f`: function | `f`, `a` 순서로 평가한 뒤 아래 "함수 호출" 규칙으로 본문을 평가 |
 | `If (c, e1, e2)` | `c`: bool | `c`가 `true`면 `e1`, `false`면 `e2`를 평가. **선택된 분기만** 평가함 |
 | `Add` | int, int 또는 string, string | int 덧셈 또는 문자열 연결. 왼쪽 값의 타입으로 정함 |
@@ -836,8 +841,7 @@ type Value =
 
 | `fv` | 본문을 평가하는 환경 |
 |---|---|
-| `VClosure (x, body, cenv)` | `cenv` + `{x = av}` |
-| `VRecClosure (f, x, body, cenv)` | `cenv` + `{f = fv}` + `{x = av}`. 본문에서 `f`가 자기 자신을 가리킴 |
+| 함수 값 `⟨x, body, cenv⟩` | `cenv` + `{x = av}` (`let rec`의 함수면 `cenv`에 자기 자신이 들어 있음) |
 | 그 밖의 값 | `Type error: expected function but got <타입>` |
 
 - 본문은 **호출한 곳의 환경이 아니라 함수를 정의한 곳의 환경(`cenv`)** 에서 평가합니다.
@@ -887,9 +891,9 @@ type Value =
   map (fun x -> x * x) [1; 2; 3]                  (* [1; 4; 9] *)
   ```
 - **재귀 깊이 한계**: 평가기는 재귀 호출마다 .NET 스택을 사용합니다.
-  - `calc` 명령은 512MB 스택의 스레드에서 평가하므로 재귀 깊이 약 100,000까지 동작합니다. 1,000,000에서는 넘칩니다.
+  - `calc` 명령은 512MB 스택의 스레드에서 평가합니다. tail call이 아닌 재귀(`1 + f (n - 1)`)는 깊이 3,000,000까지 동작하고 10,000,000에서는 넘칩니다(0.42.0, macOS arm64).
   - .NET은 스택 오버플로를 잡을 수 없으므로 `Error:` 메시지 없이 `Stack overflow.`를 출력하고 프로세스가 끝납니다.
-  - 꼬리 재귀 최적화는 하지 않습니다.
+  - tail call은 스택을 쓰지 않으므로 깊이에 한계가 없습니다(위 "함수 호출").
 
 ### 내장 함수
 
@@ -1059,7 +1063,12 @@ let sum (xs: int list) : int = fold (fun acc x -> acc + x) 0 xs
 - **`--no-typecheck`의 오류:** 타입이 맞지 않게 쓰면 prelude 안의 `match`나 연산이 실패합니다. `fst 1`은 `Match failure: 1`, `range 1 true`는 `Type error: expected int or string but got bool`입니다.
 - **실패하는 함수:** `head`, `tail`, `nth`는 `failwith`로 `Failure`를 raise합니다. 메시지는 내장 함수였을 때와 같고(`head: empty list`), 이제 `try`로 받을 수 있습니다.
 - **내장 함수로 남은 것:** `length`와 `sort`는 여러 타입을 받는데, Calc 함수로 쓰면 allowed list가 있는 type variable이 generalize되지 않아(첫 사용이 타입을 정함) 같은 타입이 될 수 없습니다.
-- **성능:** 인터프리터는 F#의 `List` 함수 대신 Calc 코드를 해석하므로 긴 리스트에서 느립니다. 100만 개 리스트에 `range`, `map`, `filter`, `sum`, `exists`를 쓰는 프로그램이 0.77초에서 5.0초가 되었습니다(Release). 컴파일한 실행 파일은 0.04초에서 0.23초가 되었습니다.
+- **성능:** 인터프리터는 F#의 `List` 함수 대신 Calc 코드를 해석하므로 긴 리스트에서 느립니다. 100만 개 리스트에 `range`, `map`, `filter`, `sum`, `exists`를 쓰는 프로그램(Release)은 다음과 같습니다.
+
+  | | 0.29.0 (내장 함수) | 0.30.0 (prelude) | 0.34.0 | 0.42.0 |
+  |---|---|---|---|---|
+  | 인터프리터 | 0.77초 | 5.0초 | 5.3초 | 1.5초 (칸 배열 환경, 인자가 다 모인 호출) |
+  | 컴파일한 실행 파일 | 0.04초 | 0.23초 | 0.12초 (direct call) | 0.12초 |
 
 ## 5. 오류
 

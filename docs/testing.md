@@ -37,7 +37,7 @@ dotnet run --project tests/Calc.Tests -- --debug            # 각 테스트 시�
 | `PreludeTests.fs` | `Prelude` | 쓰는 정의만 붙이는지, prelude 전체가 경고 없이 타입 검사를 통과하는지, 타입이 예전 내장 함수와 같은지, 내장 함수와 이름이 겹치지 않는지, 가리기, 긴 리스트(인터프리터의 tail call) |
 | `LayoutTests.fs` | `Layout` | indentation 문법: 기존 예제(`EvalTests`, `InferTests`)를 켜고 끄고 파싱한 AST가 같음, 들여쓴 프로그램과 같은 뜻의 verbose 프로그램의 AST 비교(블록, 구분자, 이어지는 줄, 중첩 `match`, 괄호, 모듈, `done` 생략), 탭과 끝나지 않은 `let` 오류 |
 | `CompileTests.fs` | `Compile` | 생성한 MLIR, value representation(태그, 클로저 헤더), closure conversion(`Lower`), 컴파일한 실행 파일의 출력(`print` 출력 포함), tail call(`tailcc`의 `tail` 호출과 `-O0`에서 깊이 1000만, 인자 수가 다른 함수 사이 포함), 알려진 함수의 direct call(`Lower`의 `CCallDirect`, 가리기, partial application), 예외(잡히지 않은 예외의 출력, 깊은 재귀와 쌓인 `try`에서 `_longjmp`), 문자열 포맷(출력 순서, partial application), mutable reference의 출력과 비교, 배열의 출력과 범위 밖 오류, 레코드의 출력과 계산 순서, 모듈의 생성자와 예외 이름, `-O0`에서 반복 1000만 번, **differential testing**(컴파일할 수 있는 `EvalTests` 예제와 `examples/*.calc`를 인터프리터와 비교). LLVM/GC가 없으면 건너뜀(Skipped) |
-| `EvalTests.fs` | `Eval` | 작은 문법(`%`의 .NET 의미, or 패턴과 가드, mutual recursion), `unit`, `;`, `print`(출력을 `evalWithOutput`으로 받아 확인), 식 계산 표(정수, 불리언, 함수, 재귀, 리스트, 문자열, 내장 함수, 튜플, 패턴 매칭, option, 사용자 정의 타입), `let`과 섀도잉, 클로저, short-circuit evaluation, 배열(같은 배열, `Array` 함수, 2차원, 빈 배열), 레코드(쓴 순서대로 계산, `with`, 같은 필드 이름, 레코드 패턴과 가드, 중첩, `let`의 왼쪽), 모듈(값, 타입, 생성자, 예외, 모듈 안의 모듈, `open`과 가리기), mutable reference와 `while`/`for`(같은 칸, 끝값이 int 최댓값, 끝값은 한 번만 계산), 타입 오류, 리스트·문자열·내장 함수·패턴 매칭·ADT 오류와 출력, 정의되지 않은 변수, 0으로 나누기, FsCheck property-based testing |
+| `EvalTests.fs` | `Eval` | 평가 순서(`f a b`와 `(f a) b`, partial application), tail call(인자 두 개, `and` 그룹), 작은 문법(`%`의 .NET 의미, or 패턴과 가드, mutual recursion), `unit`, `;`, `print`(출력을 `evalWithOutput`으로 받아 확인), 식 계산 표(정수, 불리언, 함수, 재귀, 리스트, 문자열, 내장 함수, 튜플, 패턴 매칭, option, 사용자 정의 타입), `let`과 섀도잉, 클로저, short-circuit evaluation, 배열(같은 배열, `Array` 함수, 2차원, 빈 배열), 레코드(쓴 순서대로 계산, `with`, 같은 필드 이름, 레코드 패턴과 가드, 중첩, `let`의 왼쪽), 모듈(값, 타입, 생성자, 예외, 모듈 안의 모듈, `open`과 가리기), mutable reference와 `while`/`for`(같은 칸, 끝값이 int 최댓값, 끝값은 한 번만 계산), 타입 오류, 리스트·문자열·내장 함수·패턴 매칭·ADT 오류와 출력, 정의되지 않은 변수, 0으로 나누기, FsCheck property-based testing |
 | `Main.fs` | — | entry point (`runTestsInAssemblyWithCLIArgs`) |
 
 `[<Tests>]` attribute가 붙은 값은 Expecto가 자동으로 찾아서 실행합니다.
@@ -202,7 +202,7 @@ dotnet run --project tests/Calc.Tests -- --filter "Compile"
 | 명령 | 기대 출력 | 종료 코드 |
 |---|---|---|
 | `--help`, `-h` | `USAGE: calc [--help] [--expr=<expr>] [--version] [--no-typecheck]`로 시작하는 사용법 | 0 |
-| `--version`, `-v` | `calc 0.41.0` (`Calc.fsproj`의 `<Version>`) | 0 |
+| `--version`, `-v` | `calc 0.42.0` (`Calc.fsproj`의 `<Version>`) | 0 |
 | `-e "(2+3)*4"` | `Result: 20` | 0 |
 | `--expr=7/2` | `Result: 3` | 0 |
 | `--expr "-5 + 2"` | `Result: -3` (`-`로 시작하는 식도 값으로 처리됨) | 0 |

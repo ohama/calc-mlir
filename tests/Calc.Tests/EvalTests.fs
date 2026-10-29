@@ -748,11 +748,32 @@ let tests =
         }
 
         test "클로저는 정의 시점의 환경을 저장" {
-            match calc "let y = 5 in fun x -> x + y" with
-            | VClosure ("x", _, env) -> Expect.equal (Map.tryFind "y" env) (Some (VInt 5)) ""
-            | v -> failtestf "클로저가 아님: %A" v
+            Expect.equal (apply (calc "let y = 5 in fun x -> x + y") (VInt 1)) (VInt 6) ""
+            Expect.equal (calc "let f = (let y = 5 in fun x -> x + y) in let y = 100 in f 1") (VInt 6) "부르는 곳의 y 가 아님"
         }
 
+        test "f a b 는 (f a) b 와 같은 순서: 앞 호출의 부수 효과가 뒤 인자보다 먼저" {
+            use writer = new System.IO.StringWriter()
+            let value = evalWithOutput writer (Program.load "let f x = (print x; fun y -> x + y) in f 1 (print 2; 10)")
+            Expect.equal (writer.ToString(), value) ("12", VInt 11) "f 1 이 1 을 출력한 뒤 두 번째 인자를 계산"
+            use writer2 = new System.IO.StringWriter()
+            let value2 = evalWithOutput writer2 (Program.load "let g a b = a - b in g (print 1; 10) (print 2; 3)")
+            Expect.equal (writer2.ToString(), value2) ("12", VInt 7) "인자가 다 모인 호출도 왼쪽부터"
+        }
+        test "partial application, 남는 인자, 인자 표기가 있는 여러 인자 함수" {
+            Expect.equal (calc "let g a b c = a * 100 + b * 10 + c in let h = g 1 in let k = h 2 in (k 3, h 4 5, g 6 7 8)") (VTuple [ VInt 123; VInt 145; VInt 678 ]) ""
+            Expect.equal (calc "let id x = x in id (fun y -> y + 1) 2") (VInt 3) "인자 하나 함수에 인자 둘"
+            Expect.equal (calc "let f (a: int) (b: int) : int = a - b in (f 5 3, (f 5) 3)") (VTuple [ VInt 2; VInt 2 ]) ""
+            Expect.equal (calc "let rec f a b = if a = 0 then b else f (a - 1) (b + 1) in let p = f 3 in (p 0, p 10)") (VTuple [ VInt 3; VInt 13 ]) "let rec 의 partial application"
+        }
+        test "같은 함수를 여러 번 불러도 칸은 호출마다 새로 (클로저가 서로의 값을 보지 않음)" {
+            Expect.equal (calc "let mk x = fun () -> x in let a = mk 1 in let b = mk 2 in (a (), b ())") (VTuple [ VInt 1; VInt 2 ]) ""
+            Expect.equal (calc "let rec build n acc = if n = 0 then acc else build (n - 1) ((fun () -> n) :: acc) in map (fun f -> f ()) (build 3 [])") (VList [ VInt 1; VInt 2; VInt 3 ]) ""
+        }
+        test "interpreter 의 tail call: 인자 두 개, and 그룹, 깊이 100만" {
+            Expect.equal (calc "let rec go i acc = if i = 0 then acc else go (i - 1) (acc + 2) in go 1000000 0") (VInt 2000000) ""
+            Expect.equal (calc "let rec even n = if n = 0 then true else odd (n - 1) and odd n = if n = 0 then false else even (n - 1) in even 1000001") (VBool false) ""
+        }
         test "인자는 호출 전에 평가 (값에 의한 호출)" {
             Expect.throwsT<DivideByZeroException>
                 (fun () -> calc "let k x = 1 in k (1 / 0)" |> ignore) ""
