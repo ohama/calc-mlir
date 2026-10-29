@@ -4,6 +4,16 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.55.0] - 2026-10-29
+
+### 변경
+- 컴파일러가 LLVM에 alias 정보를 줍니다.
+  - 클로저가 붙잡은 값, ref의 내용, 배열 원소에 접근할 때 서로 다른 TBAA 태그를 붙입니다.
+  - 런타임의 오류 함수(`calc_error_index`, `calc_error_divide_by_zero`, `calc_error_overflow`, `calc_match_failure`)는 `noreturn`으로 선언합니다.
+  - LLVM이 ref나 배열에 쓰는 반복 안에서 클로저 칸 읽기를 반복 밖으로 뺍니다. 에라토스테네스의 체 1억이 0.85초에서 0.72초, `benchmarks/sieve.calc`가 0.017초에서 0.013초가 되었습니다.
+  - 결과는 같습니다.
+- 테스트 1개 추가 (총 1215개): 생성한 MLIR의 TBAA 태그와 `noreturn`
+
 ## [0.54.0] - 2026-10-29
 
 ### 변경

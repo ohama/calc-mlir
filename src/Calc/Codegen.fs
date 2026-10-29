@@ -505,26 +505,31 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
         emitBlock fb (tupleHeader values.Length) values
     // 가변 참조: 블록 하나를 만들고, 1번 칸을 읽고 씀
     | CBuiltin ("ref", [ v ]) -> emitBlock fb refHeader [ emitExpr fb env v ]
-    | CBuiltin ("!", [ r ]) -> emitField fb (emitExpr fb env r) 1
+    | CBuiltin ("!", [ r ]) ->
+        let block = fb.Fresh()
+        fb.Emit(sprintf "%s = llvm.inttoptr %s : i64 to !llvm.ptr" block (emitExpr fb env r))
+        let v = fb.Fresh()
+        fb.Emit(sprintf "%s = llvm.load %s {tbaa = [#calc_tbaa_ref]} : !llvm.ptr -> i64" v (emitSlot fb block 1))
+        v
     // 배열: 범위를 확인하고 바로 읽고 씀 ([헤더, 원소...], 원소 수는 헤더의 단어 수). 인자는 왼쪽부터
     | CBuiltin (".[]", [ a; i ]) ->
         let av = emitExpr fb env a
         let iv = emitExpr fb env i
         let r = fb.Fresh()
-        fb.Emit(sprintf "%s = llvm.load %s : !llvm.ptr -> i64" r (emitElementAddress fb av iv))
+        fb.Emit(sprintf "%s = llvm.load %s {tbaa = [#calc_tbaa_array]} : !llvm.ptr -> i64" r (emitElementAddress fb av iv))
         r
     | CBuiltin (".[]<-", [ a; i; v ]) ->
         let av = emitExpr fb env a
         let iv = emitExpr fb env i
         let vv = emitExpr fb env v
-        fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" vv (emitElementAddress fb av iv))
+        fb.Emit(sprintf "llvm.store %s, %s {tbaa = [#calc_tbaa_array]} : i64, !llvm.ptr" vv (emitElementAddress fb av iv))
         emitConst fb "i64" unitValue
     | CBuiltin (":=", [ r; v ]) ->
         let rv = emitExpr fb env r
         let vv = emitExpr fb env v
         let block = fb.Fresh()
         fb.Emit(sprintf "%s = llvm.inttoptr %s : i64 to !llvm.ptr" block rv)
-        fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" vv (emitSlot fb block 1))
+        fb.Emit(sprintf "llvm.store %s, %s {tbaa = [#calc_tbaa_ref]} : i64, !llvm.ptr" vv (emitSlot fb block 1))
         emitConst fb "i64" unitValue
     // append (reverse xs) ys: 거꾸로 만든 리스트를 다시 복사하지 않고 xs 의 원소를 ys 앞에 하나씩 붙임 (칸 n 개)
     | CBuiltin ("append", [ CBuiltin ("reverse", [ xs ]); ys ]) ->
@@ -785,7 +790,7 @@ let private emitFunction (strings: StringTable) (sb: StringBuilder) (f: CFunctio
         f.Captured
         |> List.mapi (fun i name ->
             let v = fb.Fresh()
-            fb.Emit(sprintf "%s = llvm.load %s : !llvm.ptr -> i64" v (emitSlot fb "%closure" (2 + i)))
+            fb.Emit(sprintf "%s = llvm.load %s {tbaa = [#calc_tbaa_captured]} : !llvm.ptr -> i64" v (emitSlot fb "%closure" (2 + i)))
             name, v)
     let self =
         match f.Self with
@@ -812,19 +817,29 @@ let private emitFunction (strings: StringTable) (sb: StringBuilder) (f: CFunctio
 
 let private declarations =
     [ "// Calc 컴파일러가 만든 MLIR. 값은 i64 하나 (docs/compiler-design.md D3)"
+      // TBAA: 클로저가 붙잡은 값(만든 뒤 바뀌지 않음), ref 의 내용, 배열 원소는 서로 다른 블록이라 겹치지 않음.
+      // 이것을 알려야 LLVM 이 ref 나 배열에 쓰는 반복 안에서 클로저 칸 읽기를 반복 밖으로 뺌 (sieve 의 세는 반복)
+      "#calc_tbaa_root = #llvm.tbaa_root<id = \"calc\">"
+      "#calc_tbaa_captured_type = #llvm.tbaa_type_desc<id = \"captured\", members = {<#calc_tbaa_root, 0>}>"
+      "#calc_tbaa_ref_type = #llvm.tbaa_type_desc<id = \"ref\", members = {<#calc_tbaa_root, 0>}>"
+      "#calc_tbaa_array_type = #llvm.tbaa_type_desc<id = \"array\", members = {<#calc_tbaa_root, 0>}>"
+      "#calc_tbaa_captured = #llvm.tbaa_tag<base_type = #calc_tbaa_captured_type, access_type = #calc_tbaa_captured_type, offset = 0>"
+      "#calc_tbaa_ref = #llvm.tbaa_tag<base_type = #calc_tbaa_ref_type, access_type = #calc_tbaa_ref_type, offset = 0>"
+      "#calc_tbaa_array = #llvm.tbaa_tag<base_type = #calc_tbaa_array_type, access_type = #calc_tbaa_array_type, offset = 0>"
       "llvm.func @calc_init()"
       "llvm.func @calc_alloc(i64) -> !llvm.ptr"
       "llvm.func @calc_print_result(i64)"
-      "llvm.func @calc_error_divide_by_zero()"
-      "llvm.func @calc_error_index()"
+      // 오류 함수는 exit 로 끝나므로 noreturn: 반복 안의 범위 검사 실패 호출이 메모리를 바꾼다고 보지 않게 함
+      "llvm.func @calc_error_divide_by_zero() attributes {passthrough = [\"noreturn\", \"nounwind\"]}"
+      "llvm.func @calc_error_index() attributes {passthrough = [\"noreturn\", \"nounwind\"]}"
       "llvm.func @calc_make_data(i64, i64) -> i64"
       "llvm.func @calc_rev_append(i64, i64) -> i64"
       "llvm.func @calc_data_payload(i64) -> i64"
-      "llvm.func @calc_error_overflow()"
+      "llvm.func @calc_error_overflow() attributes {passthrough = [\"noreturn\", \"nounwind\"]}"
       "llvm.func @calc_add(i64, i64) -> i64"
       "llvm.func @calc_eq(i64, i64) -> i64"
       "llvm.func @calc_compare(i64, i64) -> i32"
-      "llvm.func @calc_match_failure(i64)"
+      "llvm.func @calc_match_failure(i64) attributes {passthrough = [\"noreturn\", \"nounwind\"]}"
       "llvm.func @calc_try(i64, i64) -> i64"
       // 런타임(C)이 클로저를 부르는 함수 (calc_try). 클로저의 함수는 tailcc 라 C 에서 바로 부를 수 없으므로 여기서 정의.
       // weak_odr: 모듈 여럿(테스트의 buildMany)을 한 실행 파일로 링크해도 하나만 남음 (linkonce_odr 는 모듈에서 쓰지 않으면 버려짐)

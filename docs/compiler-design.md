@@ -179,6 +179,10 @@ clang prog.o runtime.o builtins.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack
   - **타입을 쓰는 int 연산 (0.54.0부터):** 타입 추론이 `+`, `=`, `<>`, `<`, `>`, `<=`, `>=` 노드마다 피연산자 타입을 기록합니다. 추론이 끝난 뒤 int로 정해진 노드는 AST 루트에 붙여 둡니다(`Infer.intOperations`, `ConditionalWeakTable`). `Lower`는 그 노드를 int 전용 연산(`PIntAdd`, `PIntLess`, …)으로 바꾸고, Codegen은 태그 검사 없이 바로 계산합니다.
     - **태그 검사가 남는 경우:** 다형 함수 안의 `=`(generalize한 type variable)와, 쓰이지 않아 int인지 string인지 정해지지 않은 `<`, `+`입니다. 타입 검사를 하지 않고 Codegen만 부른 식도 그렇습니다.
     - **효과:** fib 41이 0.44초에서 0.33초(C는 0.28초), N-Queens 13이 0.53초에서 0.41초가 되었습니다.
+- **alias 정보 (0.55.0부터):** 클로저가 붙잡은 값을 읽을 때, ref의 내용을 읽고 쓸 때, 배열 원소를 읽고 쓸 때 서로 다른 TBAA 태그(`#calc_tbaa_captured`, `#calc_tbaa_ref`, `#calc_tbaa_array`)를 붙입니다.
+  - **오류 함수:** 런타임의 오류 함수(`calc_error_index`, `calc_error_divide_by_zero`, `calc_error_overflow`, `calc_match_failure`)는 `exit`로 끝나므로 `noreturn`으로 선언합니다.
+  - **효과:** LLVM이 ref나 배열에 쓰는 반복 안에서 클로저 칸 읽기를 반복 밖으로 뺍니다. 에라토스테네스의 체 1억이 0.85초에서 0.72초(같은 C 코드는 0.56초)가 되었습니다.
+  - **넣지 않은 것:** 클로저 칸 읽기에 `invariant`를 붙여도 같은 효과가 났습니다. 그러나 LLVM의 `!invariant.load`는 "그 메모리를 읽을 수 있는 모든 시점에서 값이 같다"는 약속이라, 할당한 직후 칸을 채우기 전에는 맞지 않아 쓰지 않았습니다.
 - 타입 추론을 통과했으므로 이 함수들은 타입 오류를 만나지 않습니다.
 - 정수 사칙연산(`-`, `*`, `/`, 단항 `-`)처럼 타입이 하나뿐인 연산은 처음부터 인라인 `arith`로 만듭니다.
 - 타입을 이용한 specialization(int `+`를 인라인으로)은 최적화 단계에서 합니다. 그러려면 `Infer`가 식마다 타입을 기록하도록 바꿔야 합니다.

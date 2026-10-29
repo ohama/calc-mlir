@@ -620,6 +620,14 @@ let tests =
                 // 타입 검사를 하지 않은 식은 지금처럼 태그를 봄
                 Expect.isTrue ((Codegen.emitProgram (Program.parse "let f x y = x < y in f 1 2")).Contains "llvm.call @calc_compare(") ""
             }
+            test "클로저 칸, ref, 배열 접근에는 서로 다른 TBAA 태그, 오류 함수는 noreturn" {
+                let mlir = Codegen.emitProgram (Program.parse "let a = Array.create 3 0 in let r = ref 0 in let f i = a.[i] <- !r; r := i in f 1")
+                for tag in [ "#calc_tbaa_captured"; "#calc_tbaa_ref"; "#calc_tbaa_array" ] do
+                    Expect.isTrue (mlir.Contains("{tbaa = [" + tag + "]}")) tag
+                for f in [ "calc_error_index"; "calc_error_divide_by_zero"; "calc_error_overflow"; "calc_match_failure" ] do
+                    Expect.stringContains mlir (sprintf "llvm.func @%s(" f) f
+                    Expect.isTrue (mlir.Split('\n') |> Array.exists (fun l -> l.Contains("@" + f + "(") && l.Contains "noreturn")) f
+            }
             test "어떤 값과도 일치하는 분기 뒤는 생성하지 않음" {
                 // + 는 int 인지 보는 scf.if 를 만들므로 - 로 확인
                 let mlir = Codegen.emitProgram (Program.parse "let (a, b) = (1, 2) in a - b")
