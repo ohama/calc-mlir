@@ -4,6 +4,13 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.39.0] - 2026-10-29
+
+### 변경
+- prelude(`src/Calc/prelude.calc`)와 `examples/`를 indentation 문법으로 다시 썼습니다. prelude의 AST는 예전 verbose 버전과 같고, 예제의 출력도 같습니다.
+- `docs/grammar.md`와 README의 예제를 indentation 문법으로 바꿨습니다(`;;`, `in`, `done`, `struct … end`를 쓰는 verbose syntax는 그대로 받습니다).
+- `LayoutTests`의 AST 비교에서 prelude와 examples를 뺐습니다(이제 verbose syntax가 아님).
+
 ## [0.38.0] - 2026-10-29
 
 ### 추가

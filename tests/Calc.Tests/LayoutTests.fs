@@ -27,21 +27,12 @@ let private expectError (input: string) (message: string) (line: int) (column: i
                 | _ -> failtestf "SyntaxError 가 아님: %s" ex.Message)
     }
 
-let private repoFile (path: string) = File.ReadAllText(Path.Combine(__SOURCE_DIRECTORY__, "..", "..", path))
-
 [<Tests>]
 let tests =
     testList "Layout" [
-        test "기존 입력은 indentation 문법을 켜도 AST 가 같음 (EvalTests, InferTests, examples, prelude)" {
-            let examples =
-                Directory.GetFiles(Path.Combine(__SOURCE_DIRECTORY__, "..", "..", "examples"), "*.calc")
-                |> Array.map File.ReadAllText
-                |> List.ofArray
-            let inputs =
-                (EvalTests.cases |> List.map fst)
-                @ (InferTests.inferred |> List.map fst)
-                @ examples
-                @ [ repoFile "src/Calc/prelude.calc" ]
+        // prelude 와 examples 는 0.39.0 부터 indentation 문법으로 씀 (prelude 는 verbose 로 쓴 예전 것과 AST 가 같음을 확인했음)
+        test "기존 입력은 indentation 문법을 켜도 AST 가 같음 (EvalTests, InferTests)" {
+            let inputs = (EvalTests.cases |> List.map fst) @ (InferTests.inferred |> List.map fst)
             for input in inputs do
                 Expect.equal (result Frontend.parse input) (result Frontend.parseVerbose input) input
         }

@@ -86,7 +86,7 @@ dotnet run --project src/Calc
 ```
 
 ```
-calc 0.38.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
+calc 0.39.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
 # let add a b = a + b;;
 val add : int -> int -> int = <fun>
 # add 1 2;;
@@ -96,11 +96,16 @@ val add : int -> int -> int = <fun>
 `examples/`에 예제 프로그램이 있습니다(`hello.calc`, `tree.calc`).
 
 ```
-// examples/hello.calc 일부
+// examples/hello.calc 일부 (indentation 문법)
 let greet name = "Hello, " + name + "!"
-let rec fact n = if n = 0 then 1 else n * fact (n - 1)
-let () = println (greet "Calc")
-let _ = println (fact 10)
+
+let area s =
+    match s with
+    | Circle r -> 3 * r * r
+    | Rect (w, h) -> w * h
+
+println (greet "Calc")
+println (map area [Circle 2; Rect (3, 4)])
 ```
 
 `--` 뒤의 인자는 `dotnet run`이 아니라 Calc 프로그램에 전달됩니다.

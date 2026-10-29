@@ -274,17 +274,22 @@ F#과 같은 순서입니다. 함수 호출은 `!`와 `.`를 뺀 어떤 연산�
 
 ### 최상위 선언, `;;`, `;`
 
-프로그램은 최상위 항목을 차례로 씁니다(OCaml과 같은 방식).
+프로그램은 최상위 항목을 차례로 씁니다. 0열에서 시작하는 새 줄이 새 항목입니다(아래 "indentation 문법").
 
 ```
 type shape = Circle of int | Rect of int * int
-let area s = match s with Circle r -> 3 * r * r | Rect (w, h) -> w * h
+let area s =
+    match s with
+    | Circle r -> 3 * r * r
+    | Rect (w, h) -> w * h
 let rec fact n = if n = 0 then 1 else n * fact (n - 1)
-let () = println (fact 5)
-;;
-println (area (Rect (2, 3)));
+
+println (fact 5)
+println (area (Rect (2, 3)))
 area (Circle 1)
 ```
+
+한 줄에 이어 쓰거나 OCaml처럼 쓸 때는 `;;`로 항목을 나눕니다(`let x = 1;; x + 1`).
 
 - **선언:** `in` 없는 `let`, `let rec`, `let (a, b) =`, `let () =`, `let _ =`, `type`. 앞의 선언은 뒤의 모든 항목에서 보입니다. 파서가 `let … in (나머지 항목)` 사슬로 풀어 쓰므로, 의미는 `let … in`과 같습니다.
 - **선언 뒤의 식:** 0열에서 시작하는 새 줄은 새 항목입니다(아래 "indentation 문법"). 한 줄에 이어 쓸 때는 `;;` 다음에 씁니다(`let x = 1;; x + 1`). 선언의 오른쪽 식은 다음 선언, `;;`, 0열의 새 줄까지 이어집니다. 그래서 `let x = f` 다음 줄의 `g`는 0열이면 새 식, 들여쓰면 `f g`(함수 호출)입니다.
@@ -528,9 +533,9 @@ let safeDiv a b = try Some (a / (if b = 0 then failwith "div" else b)) with Fail
 ```
 type point = { x: int; y: int }
 type 'a box = { value: 'a; label: string }
-;;
-let p = { y = 2; x = 1 } in            (* { x = 1; y = 2 } *)
-let q = { p with x = 10 } in           (* { x = 10; y = 2 }, p 는 그대로 *)
+
+let p = { y = 2; x = 1 }               (* { x = 1; y = 2 } *)
+let q = { p with x = 10 }              (* { x = 10; y = 2 }, p 는 그대로 *)
 p.x + q.x                              (* 11 *)
 ```
 
@@ -548,17 +553,21 @@ p.x + q.x                              (* 11 *)
 OCaml과 같은 문법의 모듈입니다. 최상위에서 선언합니다.
 
 ```
-module Stack = struct
-  type 'a t = Empty | Push of 'a * 'a t
-  exception EmptyStack
-  let empty = Empty
-  let push x s = Push (x, s)
-  let pop s = match s with Empty -> raise EmptyStack | Push (x, rest) -> (x, rest)
-end
-;;
-let s = Stack.push 1 Stack.empty in
+module Stack =
+    type 'a t = Empty | Push of 'a * 'a t
+    exception EmptyStack
+    let empty = Empty
+    let push x s = Push (x, s)
+    let pop s =
+        match s with
+        | Empty -> raise EmptyStack
+        | Push (x, rest) -> (x, rest)
+
+let s = Stack.push 1 Stack.empty
 (fst (Stack.pop s), (fun (t: int Stack.t) -> t) s)      (* (1, Stack.Push (1, Stack.Empty)) *)
 ```
+
+`module Stack = struct … end`로 써도 같습니다.
 
 - **선언:** `module M = struct … end`, 또는 `module M =` 다음 줄부터 들여쓴 선언(indentation 문법). 안에는 최상위와 같은 선언(`let`, `let rec … and`, `type`, 레코드 타입, `exception`, `module`, `open`)만 쓸 수 있습니다. 식을 실행하려면 `let _ = e`로 씁니다. 모듈 이름은 대문자로 시작합니다.
 - **밖에서 쓰기:** `M.f`(값), `M.C`(생성자, 패턴에서도), `M.t`(타입 표기). 모듈 안의 모듈은 `M.N.g`입니다. 점 앞뒤에 공백을 둘 수 없습니다(`M . f`는 생성자 `M`의 필드 읽기).
@@ -578,15 +587,24 @@ let s = Stack.push 1 Stack.empty in
 OCaml, F#과 같은 mutable reference와 반복문입니다.
 
 ```
-let total = ref 0 in
-for i = 1 to 10 do total := !total + i done;
-!total                                                   (* 55 *)
+let total = ref 0
+for i = 1 to 10 do
+    total := !total + i
+println !total                                           (* 55 *)
 
-let counter () = let n = ref 0 in fun () -> incr n; !n in
-let next = counter () in (next (), next ())              (* (1, 2) *)
+let counter () =
+    let n = ref 0
+    fun () -> incr n; !n
+let next = counter ()
+println (next (), next ())                               (* (1, 2) *)
 
-let n = ref 10 in while !n > 0 do n := !n - 3 done; !n   (* -2 *)
+let n = ref 10
+while !n > 0 do
+    n := !n - 3
+!n                                                       (* -2 *)
 ```
+
+한 줄로 쓰면 `for i = 1 to 10 do total := !total + i done`처럼 `done`으로 닫습니다.
 
 - **`ref v : 'a ref`:** 내용이 `v`인 새 칸입니다. 내장 함수이므로 보통 이름처럼 가릴 수 있습니다(`let ref x = x in …`).
 - **`!r : 'a`:** 지금 내용입니다. 함수 호출보다 강하게 묶입니다(`f !r == f (!r)`).
@@ -958,7 +976,11 @@ type Value =
 위 표의 함수 중 22개는 [`src/Calc/prelude.calc`](../src/Calc/prelude.calc)에 Calc 코드로 있습니다. 인터프리터, 타입 추론, 컴파일러가 모두 이 정의 하나를 씁니다.
 
 ```
-let rec fold f acc xs = match xs with [] -> acc | x :: rest -> fold f (f acc x) rest
+let rec fold f acc xs =
+    match xs with
+    | [] -> acc
+    | x :: rest -> fold f (f acc x) rest
+
 let reverse xs = fold (fun acc x -> x :: acc) [] xs
 let map f xs = reverse (fold (fun acc x -> f x :: acc) [] xs)
 let sum (xs: int list) : int = fold (fun acc x -> acc + x) 0 xs
