@@ -1,0 +1,34 @@
+// 이진 탐색 트리: ADT, 재귀. LCG 키 20만 개를 넣고 크기, 높이, 찾기
+type tree = Leaf | Node of tree * int * tree
+
+let rec insert x t =
+    match t with
+    | Leaf -> Node (Leaf, x, Leaf)
+    | Node (l, v, r) ->
+        if x < v then Node (insert x l, v, r)
+        else if x > v then Node (l, v, insert x r)
+        else t
+
+let rec contains x t =
+    match t with
+    | Leaf -> false
+    | Node (l, v, r) -> if x = v then true else if x < v then contains x l else contains x r
+
+let rec build n x t = if n = 0 then t else build (n - 1) ((x * 75 + 74) % 65537) (insert x t)
+
+let rec size t =
+    match t with
+    | Leaf -> 0
+    | Node (l, _, r) -> size l + 1 + size r
+
+let rec height t =
+    match t with
+    | Leaf -> 0
+    | Node (l, _, r) ->
+        let a = height l
+        let b = height r
+        1 + (if a > b then a else b)
+
+let t = build 200000 1 Leaf
+let rec countHits n x acc = if n = 0 then acc else countHits (n - 1) ((x * 13 + 7) % 100003) (if contains x t then acc + 1 else acc)
+println (size t, height t, countHits 200000 5 0)

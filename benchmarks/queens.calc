@@ -1,0 +1,16 @@
+// N-Queens: 리스트와 backtracking. 놓은 퀸의 열을 리스트로 들고 다님
+let rec safe q d qs =
+    match qs with
+    | [] -> true
+    | x :: rest -> x <> q && x <> q + d && x <> q - d && safe q (d + 1) rest
+
+let rec place n row qs =
+    if row = n then 1
+    else
+        let rec tryCol c acc =
+            if c = n then acc
+            else if safe c 1 qs then tryCol (c + 1) (acc + place n (row + 1) (c :: qs))
+            else tryCol (c + 1) acc
+        tryCol 0 0
+
+println (place 10 0 [])

@@ -4,6 +4,12 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [Unreleased]
+
+### 추가
+- 성능 비교 `benchmarks/`: 예제 다섯 개(fib, queens, sieve, msort, bst)의 Calc 프로그램과 Python 프로그램, 측정 스크립트 `run.py`. 세 결과의 출력이 같은지 확인하고 시간을 표로 출력합니다.
+- 문서 `docs/benchmarks.md`: 결과와 분석. 컴파일한 실행 파일은 호출, 반복, 배열 위주의 예제에서 Python보다 3~14배 빠르고, 할당이 많은 예제에서는 비슷합니다. 인터프리터는 Python보다 3~14배 느립니다.
+
 ## [0.42.0] - 2026-10-29
 
 ### 변경

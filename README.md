@@ -160,6 +160,7 @@ Error: parse error: unexpected '+' (line 1, column 5)
 │   └── Program.fs            # 명령줄 처리 (Argu)
 ├── tests/Calc.Tests/         # Expecto + FsCheck 테스트
 ├── docs/                     # 빌드, 테스트, 문법 문서
+├── benchmarks/               # Python, 인터프리터, 컴파일러 성능 비교 (python3 benchmarks/run.py)
 ├── examples/                 # 예제 프로그램 (calc examples/hello.calc)
 ├── howto/                    # 문제 해결 기록
 ├── CHANGELOG.md
@@ -183,6 +184,7 @@ Error: parse error: unexpected '+' (line 1, column 5)
 | [docs/grammar.md](docs/grammar.md) | 토큰, EBNF, 우선순위, AST 대응, 평가 규칙, 오류 |
 | [docs/compiler-design.md](docs/compiler-design.md) | MLIR/LLVM 네이티브 컴파일 설계와 단계별 계획 (단계 7 완료) |
 | [docs/compiler-architecture.md](docs/compiler-architecture.md) | 컴파일러 구조와 흐름: 예제 하나로 따라가는 MLIR → LLVM IR → 실행 파일, entry point `main`, 런타임 링크 |
+| [docs/benchmarks.md](docs/benchmarks.md) | 예제 다섯 개로 Python, 인터프리터, 컴파일러의 출력과 실행 시간 비교 |
 | [howto/](howto/README.md) | 개발하면서 부딪힌 문제와 해결 방법 |
 | [CHANGELOG.md](CHANGELOG.md) | 버전별 변경 사항 |
 
