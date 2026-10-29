@@ -125,6 +125,7 @@ clang prog.o runtime.o builtins.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack
 | `[]` | `5` | `101` |
 | `()` (unit) | `7` | `111` |
 | cons (`x :: xs`) | 헤더 없는 `[head, tail]` 16바이트 블록의 주소 `\| 2` (0.53.0부터) | `010` |
+| 인자 없는 생성자 (`None`, `Leaf`) | `(생성자 번호 << 32) \| 6` (0.59.0부터. 아래 `DATA`) | `110` |
 | 그 밖의 모든 값 | 힙 블록 포인터 (8-byte alignment) | `000` |
 
 힙 블록은 첫 단어가 **헤더**(종류, 필드 수)입니다.
@@ -134,7 +135,7 @@ clang prog.o runtime.o builtins.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack
 | `STRING` | 길이, UTF-16 code unit 배열. 헤더는 `2 \| (뒤따르는 단어 수 << 8)`. 상수는 8-byte aligned 전역(`llvm.mlir.global`, GC 대상 아님), 연결 결과는 `GC_MALLOC_ATOMIC`(안에 포인터가 없어 GC가 내용을 훑지 않음) |
 | `CONS` | 0.52.0까지는 head, tail과 헤더 `3 \| (2 << 8)`. 지금은 헤더가 없는 `[head, tail]` 블록이고 값의 태그 `2`가 cons임을 나타냅니다. 24바이트 블록은 Boehm GC에서 32바이트를 써서, 헤더를 없애면 리스트 메모리가 반이 됩니다. 이를 위해 `calc_init`이 interior pointer를 끄고(`GC_set_all_interior_pointers(0)`, 16바이트 요청이 32바이트로 올라가지 않음) 주소 + 2를 `GC_register_displacement(2)`로 알립니다. 스택과 레지스터의 interior pointer는 이 설정과 상관없이 인정됩니다. `[]`는 블록이 아니라 immediate value `5` |
 | `TUPLE` | 원소 n개. 헤더 `4 \| (n << 8)` |
-| `DATA` | 생성자 이름(C 문자열 전역의 포인터), 인자(있으면). 헤더 `5 \| (단어 수 << 8)`. 단어 수 2는 튜플이 아닌 인자 하나이고, 3 이상이면 튜플 인자의 원소를 블록에 편 것입니다(`Node (l, v, r)`은 `[헤더, 이름, l, v, r]` 블록 하나, 0.50.0부터). 인자 전체를 묶는 패턴(`Node p`)은 런타임의 `calc_data_payload`가 튜플을 다시 만들고, 실행 중에 튜플인 인자(`map Node xs`)는 `calc_make_data`가 폅니다. 인자 없는 생성자는 8-byte aligned 전역 상수 블록. 처음 설계한 descriptor(이름, 타입 이름, 번호) 대신 이름만 둡니다. 타입 검사를 통과했으므로 같은 타입끼리만 비교하고, 인터프리터도 생성자를 이름으로 비교하기 때문입니다 |
+| `DATA` | 인자. 헤더 `5 \| (인자 단어 수 << 8) \| (생성자 번호 << 32)`. 단어 수 1은 튜플이 아닌 인자 하나이고, 2 이상이면 튜플 인자의 원소를 블록에 편 것입니다(`Node (l, v, r)`은 `[헤더, l, v, r]` 블록 하나). 인자 전체를 묶는 패턴(`Node p`)은 런타임의 `calc_data_payload`가 튜플을 다시 만들고, 실행 중에 튜플인 인자(`map Node xs`)는 `calc_make_data`가 폅니다. 인자 없는 생성자는 블록이 아니라 즉시값입니다(위 표). **생성자 번호**는 생성자 이름(C 문자열 전역)의 주소에서 런타임의 `calc_name_none` 주소를 뺀 값입니다. 생성한 코드와 런타임이 한 실행 파일에 링크되므로 32비트에 들어가고, `None`은 0입니다. 런타임은 번호로 이름을 찾아 출력하고, 같은 생성자인지는 번호로 비교합니다. 0.58.0까지는 `[헤더, 이름 포인터, 인자...]`였고 인자 없는 생성자는 전역 상수 블록이었습니다 |
 | `CLOSURE` | 코드 포인터, 캡처한 값들 (인자가 여럿인 함수는 끝에 direct 함수 포인터, 헤더에 인자 수) |
 | `REF` | 내용. 헤더 `6 \| (1 << 8)`. `r := v`가 내용을 바꿈 (0.35.0) |
 | `ARRAY` | 원소 n개. 헤더 `8 \| (n << 8)`. 원소 읽기와 쓰기는 생성 코드가 범위를 검사하고 바로 load/store함(0.50.0부터. 범위 밖이면 `calc_error_index`). 값으로 쓴 `.[]`는 런타임 함수 `calc_builtin_array_get`/`set` |
@@ -213,7 +214,7 @@ clang prog.o runtime.o builtins.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack
   - 인자가 다 모인 호출(`substr s 1 3`)은 런타임 함수를 바로 부릅니다(`CBuiltin`). 남는 인자는 결과에 차례로 적용합니다.
   - 값으로 쓰거나 partial application을 하면(`map length xs`, `substr "abc"`), 인자를 하나씩 받는 클로저 `fun $b0 -> fun $b1 -> ...`가 됩니다. 인터프리터의 `VBuiltin`과 같게 `<fun>`으로 출력되고, `=` 비교 오류도 같습니다. 처음 설계한 "정적 클로저 객체"는 필요 없었습니다. closure conversion이 바깥 인자를 캡처하기 때문입니다.
 - **higher-order function:** `map`, `filter`, `fold`, `exists`, `forall`, `tryFind`는 C에서 `calc_apply(closure, arg)`로 사용자 클로저를 부릅니다. 앞에서부터 부르고, `exists`, `forall`, `tryFind`는 결과가 정해지면 멈춥니다.
-- **option:** `Some`/`None`의 이름과 `None` 값은 런타임 전역(`calc_name_some`, `calc_name_none`, `calc_none`)입니다. 그래야 `tryHead`가 만든 값과 컴파일한 패턴의 이름 포인터 비교가 맞습니다.
+- **option:** `Some`/`None`의 이름은 런타임 전역(`calc_name_some`, `calc_name_none`)입니다. `calc_name_none`은 생성자 번호의 기준이라 `None`의 값은 즉시값 `6`(`CALC_NONE`)입니다.
 - **`upper`, `lower`, `trim`:** .NET의 `ToUpperInvariant`, `ToLowerInvariant`, `Char.IsWhiteSpace`를 code point마다 표로 만든 `runtime/unicode.h`를 씁니다. 표는 `gen-unicode.fsx`가 만들고, 테스트가 지금 .NET과 같은지 확인합니다.
 - **`toString`과 출력:** 같은 코드를 씁니다. 런타임의 `calc_buffer_value`(UTF-16 버퍼에 `Eval.formatValue` 형식으로)입니다.
 - `Some`과 `None`, 사용자 생성자는 단계 6에서 정적 클로저가 아니라 `Lower`가 처리합니다. 바로 적용한 `Some 1`은 그 자리에서 `DATA` 블록을 만들고, 값으로 쓴 `Some`은 클로저 `fun x -> Some x`가 됩니다. 생성자 이름은 `llvm.mlir.global` C 문자열 상수입니다.
@@ -288,8 +289,8 @@ value  calc_eq(value a, value b);             // 구조적 비교
 int32_t calc_compare(value a, value b);       // int 또는 string (ordinal)
 value  calc_apply(value closure, value arg);  // 내장 고차 함수가 사용자 클로저를 부름
 // 내장 함수 (builtins.c): calc_builtin_length, calc_builtin_substr, ... (21개)
-extern const char calc_name_some[], calc_name_none[];   // option 의 생성자 이름
-extern const calc_unit calc_none;                       // None 값
+extern const char calc_name_some[], calc_name_none[];   // option 의 생성자 이름. calc_name_none 은 생성자 번호의 기준
+#define CALC_NONE ((value)6)                            // None 값 (즉시값)
 ```
 
 생성 코드와 런타임은 이 헤더 하나로만 약속합니다. 런타임 함수 이름은 모두 `calc_`로 시작합니다.

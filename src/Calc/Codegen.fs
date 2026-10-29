@@ -39,10 +39,14 @@ let consTag = 2L
 /// 튜플 블록 = [헤더, 원소...]
 let tupleHeader (count: int) = kindTuple ||| (int64 count <<< 8)
 
-/// 생성자 값 블록 = [헤더, 생성자 이름(C 문자열 포인터), 인자(있으면)]
-let dataHeader (hasPayload: bool) = kindData ||| ((if hasPayload then 2L else 1L) <<< 8)
-/// 인자가 튜플이면 원소를 블록에 바로 넣음: [헤더, 이름, 원소...] (블록 하나). 단어 수가 2 면 튜플이 아닌 인자 하나
-let flatDataHeader (fields: int) = kindData ||| (int64 (1 + fields) <<< 8)
+/// 생성자 값 블록 = [헤더, 인자...]. 헤더 = 종류 | (인자 단어 수 << 8) | (생성자 번호 << 32).
+/// 단어 수가 1 이면 튜플이 아닌 인자 하나, 2 이상이면 튜플 인자의 원소를 편 것 (Node (l, v, r) 은 블록 하나).
+/// 생성자 번호 = 이름 전역의 주소 - calc_name_none 의 주소 (같은 실행 파일 안이라 32비트에 들어감, None 은 0).
+/// 이 함수는 번호를 뺀 부분
+let dataHeader (fields: int) = kindData ||| (int64 fields <<< 8)
+
+/// 인자 없는 생성자의 값은 즉시값 (번호 << 32) | 6. 블록이 아니므로 패턴 검사에서 메모리를 읽지 않음
+let ctorTag = 6L
 
 /// ref 블록 = [헤더, 내용]. := 가 내용 칸을 바꿈
 let refHeader = kindRef ||| (1L <<< 8)
@@ -70,8 +74,6 @@ type private StringTable(prefix: string) =
     let order = ResizeArray<string>()
     let ctorNames = System.Collections.Generic.Dictionary<string, string>()
     let ctorOrder = ResizeArray<string>()
-    let units = System.Collections.Generic.Dictionary<string, string * string>()
-    let unitOrder = ResizeArray<string>()
 
     member _.NameOf(s: string) =
         match names.TryGetValue s with
@@ -97,20 +99,7 @@ type private StringTable(prefix: string) =
             ctorOrder.Add ctor
             name
 
-    /// 인자 없는 생성자의 값: 전역 상수 블록 [헤더, 이름]
-    member this.CtorUnit(ctor: string) =
-        let nameGlobal = this.CtorName ctor
-        match ctor, units.TryGetValue ctor with
-        | "None", _ -> "calc_none"
-        | _, (true, (name, _)) -> name
-        | _ ->
-            let name = sprintf "%sunit_%d" prefix units.Count
-            units[ctor] <- (name, nameGlobal)
-            unitOrder.Add ctor
-            name
-
     member _.CtorEntries = ctorOrder |> Seq.map (fun c -> ctorNames[c], c) |> List.ofSeq
-    member _.UnitEntries = unitOrder |> Seq.map (fun c -> units[c]) |> List.ofSeq
 
     /// 바깥 클로저 함수 이름 → (direct 함수, 인자 수) (CFunction.Direct). 클로저를 만들 때 마지막 칸과 헤더에 넣음
     member val Directs = System.Collections.Generic.Dictionary<string, string * int>()
@@ -121,19 +110,6 @@ type private StringTable(prefix: string) =
 /// 생성자 이름 전역 (C 문자열). 값이 아니라 블록의 칸에 들어가므로 정렬이 필요 없음
 let private emitCtorNameGlobal (sb: StringBuilder) (name: string, ctor: string) =
     sb.AppendLine(sprintf "llvm.mlir.global internal constant @%s(\"%s\\00\") {addr_space = 0 : i32}" name ctor) |> ignore
-
-/// 인자 없는 생성자의 값: 8바이트 정렬 전역 블록 [헤더, 이름 포인터]. 주소가 곧 값
-let private emitCtorUnitGlobal (sb: StringBuilder) (name: string, nameGlobal: string) =
-    let ty = "!llvm.struct<(i64, ptr)>"
-    let line (text: string) = sb.AppendLine(text) |> ignore
-    line (sprintf "llvm.mlir.global internal constant @%s() {addr_space = 0 : i32, alignment = 8 : i64} : %s {" name ty)
-    line (sprintf "  %%0 = llvm.mlir.undef : %s" ty)
-    line (sprintf "  %%h = llvm.mlir.constant(%d : i64) : i64" (dataHeader false))
-    line (sprintf "  %%1 = llvm.insertvalue %%h, %%0[0] : %s" ty)
-    line (sprintf "  %%n = llvm.mlir.addressof @%s : !llvm.ptr" nameGlobal)
-    line (sprintf "  %%2 = llvm.insertvalue %%n, %%1[1] : %s" ty)
-    line (sprintf "  llvm.return %%2 : %s" ty)
-    line "}"
 
 /// 문자열 상수 전역: 8바이트 정렬이라 주소가 곧 값 (하위 3비트 000). 상수라 GC 대상이 아님
 let private emitStringGlobal (sb: StringBuilder) (name: string, s: string) =
@@ -318,6 +294,18 @@ let private emitGlobalAddress (fb: FunctionBuilder) (name: string) =
     fb.Emit(sprintf "%s = llvm.ptrtoint %s : !llvm.ptr to i64" r address)
     r
 
+/// 생성자 번호 << 32 (dataHeader 의 주석). None 은 0 이라 상수
+let private emitCtorBits (fb: FunctionBuilder) (ctor: string) =
+    if ctor = "None" then emitConst fb "i64" 0L
+    else
+        let name = emitGlobalAddress fb (fb.Strings.CtorName ctor)
+        let offset = emitOp fb "arith.subi" name (emitGlobalAddress fb "calc_name_none") "i64"
+        emitOp fb "arith.shli" offset (emitConst fb "i64" 32L) "i64"
+
+/// 인자 없는 생성자의 값 (즉시값)
+let private emitCtorImmediate (fb: FunctionBuilder) (ctor: string) =
+    emitOp fb "arith.ori" (emitCtorBits fb ctor) (emitConst fb "i64" ctorTag) "i64"
+
 /// 블록 값 v 의 index 번째 단어 (0: 헤더)
 let private emitField (fb: FunctionBuilder) (v: string) (index: int) =
     let block = fb.Fresh()
@@ -327,11 +315,15 @@ let private emitField (fb: FunctionBuilder) (v: string) (index: int) =
     r
 
 /// [헤더, 값...] 블록을 GC 로 할당하고 채움. 값은 이미 계산한 SSA 이름 (평가 순서는 부르는 쪽이 정함)
-let private emitBlock (fb: FunctionBuilder) (header: int64) (values: string list) =
+let rec private emitBlock (fb: FunctionBuilder) (header: int64) (values: string list) =
+    emitBlockWith fb (emitConst fb "i64" header) values
+
+/// emitBlock 과 같지만 헤더가 SSA 값 (생성자 블록: 번호가 링크할 때 정해짐)
+and private emitBlockWith (fb: FunctionBuilder) (header: string) (values: string list) =
     let size = emitConst fb "i64" (int64 (8 * (1 + values.Length)))
     let block = fb.Fresh()
     fb.Emit(sprintf "%s = llvm.call @calc_alloc(%s) : (i64) -> !llvm.ptr" block size)
-    fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" (emitConst fb "i64" header) block)
+    fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" header block)
     values |> List.iteri (fun i v -> fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" v (emitSlot fb block (1 + i))))
     let r = fb.Fresh()
     fb.Emit(sprintf "%s = llvm.ptrtoint %s : !llvm.ptr to i64" r block)
@@ -366,12 +358,13 @@ let private emitIsTuple (fb: FunctionBuilder) (v: string) =
             c)
         (fun () -> emitConst fb "i1" 0L)
 
-/// 생성자 값 v 의 인자 하나: 단어 수가 2 면 칸 2, 아니면 원소들로 튜플을 다시 만듦
+/// 생성자 값 v 의 인자 하나: 단어 수가 1 이면 칸 1, 아니면 원소들로 튜플을 다시 만듦
 let private emitPayload (fb: FunctionBuilder) (v: string) =
     let words = emitOp fb "arith.shrui" (emitField fb v 0) (emitConst fb "i64" 8L) "i64"
+    let size = emitOp fb "arith.andi" words (emitConst fb "i64" 0xffffffL) "i64"
     let single = fb.Fresh()
-    fb.Emit(sprintf "%s = arith.cmpi eq, %s, %s : i64" single words (emitConst fb "i64" 2L))
-    emitIfOf fb "i64" single (fun () -> emitField fb v 2) (fun () -> emitCall fb "calc_data_payload" [ v ] "i64")
+    fb.Emit(sprintf "%s = arith.cmpi eq, %s, %s : i64" single size (emitConst fb "i64" 1L))
+    emitIfOf fb "i64" single (fun () -> emitField fb v 1) (fun () -> emitCall fb "calc_data_payload" [ v ] "i64")
 
 /// 어떤 값과도 일치하는 패턴 (검사 코드가 필요 없음)
 let rec private irrefutable (pattern: Ast.Pattern) =
@@ -625,17 +618,17 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
         let namesAddress = emitGlobalAddress fb (fb.Strings.CtorName (String.concat ";" names))
         emitBlock fb (recordHeader values.Length) (namesAddress :: List.map (emitExpr fb env) values)
     | CField (e, index) -> emitField fb (emitExpr fb env e) (2 + index)
-    | CData (ctor, None) -> emitGlobalAddress fb (fb.Strings.CtorUnit ctor)
+    | CData (ctor, None) -> emitCtorImmediate fb ctor
     | CData (ctor, Some (CTuple items)) ->
         let values = items |> List.map (emitExpr fb env)
-        emitBlock fb (flatDataHeader values.Length) (emitGlobalAddress fb (fb.Strings.CtorName ctor) :: values)
+        emitBlockWith fb (emitOp fb "arith.ori" (emitCtorBits fb ctor) (emitConst fb "i64" (dataHeader values.Length)) "i64") values
     // 인자가 실행 중에 튜플이면 (생성자를 함수 값으로 쓸 때 등) 런타임이 원소를 펴서 넣음
     | CData (ctor, Some payload) ->
         let pv = emitExpr fb env payload
-        let name = emitGlobalAddress fb (fb.Strings.CtorName ctor)
+        let bits = emitCtorBits fb ctor
         emitIf fb (emitIsTuple fb pv)
-            (fun () -> emitCall fb "calc_make_data" [ name; pv ] "i64")
-            (fun () -> emitBlock fb (dataHeader true) [ name; pv ])
+            (fun () -> emitCall fb "calc_make_data" [ bits; pv ] "i64")
+            (fun () -> emitBlockWith fb (emitOp fb "arith.ori" bits (emitConst fb "i64" (dataHeader 1)) "i64") [ pv ])
     // match (a, b) with (p, q) -> …: 튜플 블록을 만들지 않고 원소마다 패턴을 맞춤 (분기가 모두 같은 길이의 튜플 패턴이나 _)
     | CMatch (CTuple items, cases) when tupleArms items.Length cases ->
         let vs = items |> List.map (emitExpr fb env)
@@ -791,6 +784,10 @@ and private emitTest (fb: FunctionBuilder) (pattern: Ast.Pattern) (v: string) : 
         let r = fb.Fresh()
         fb.Emit(sprintf "%s = arith.cmpi eq, %s, %s : i64" r v (emitConst fb "i64" c))
         r
+    let equalsValue (c: string) =
+        let r = fb.Fresh()
+        fb.Emit(sprintf "%s = arith.cmpi eq, %s, %s : i64" r v c)
+        r
     // 필드 index 의 하위 패턴들을 차례로: 앞이 실패하면 뒤는 검사하지 않음. read 는 index 번째 필드를 읽는 코드
     let rec fieldsBy (read: int -> string) (subpatterns: (Ast.Pattern * int) list) =
         match subpatterns |> List.filter (fun (p, _) -> not (irrefutable p)) with
@@ -822,14 +819,25 @@ and private emitTest (fb: FunctionBuilder) (pattern: Ast.Pattern) (v: string) : 
     | Ast.POr (a, b) ->
         let c = emitTest fb a v
         emitIfOf fb "i1" c (fun () -> emitConst fb "i1" 1L) (fun () -> emitTest fb b v)
-    // 타입 검사를 통과했으므로 v 는 같은 타입의 생성자 값. 이름 포인터가 같으면 같은 생성자 (이름은 모듈에 하나)
+    // 타입 검사를 통과했으므로 v 는 같은 타입의 생성자 값. 인자 없는 생성자는 즉시값이 같은지
+    | Ast.PCtor (ctor, None) -> equalsValue (emitCtorImmediate fb ctor)
+    // 인자 있는 생성자: 블록(태그 0)이고 헤더의 생성자 번호가 같은지. 같은 타입의 인자 없는 생성자는 즉시값이라 먼저 태그를 봄
     | Ast.PCtor (ctor, argPattern) ->
-        let isCtor = fb.Fresh()
-        fb.Emit(sprintf "%s = arith.cmpi eq, %s, %s : i64" isCtor (emitField fb v 1) (emitGlobalAddress fb (fb.Strings.CtorName ctor)))
+        let tag = emitOp fb "arith.andi" v (emitConst fb "i64" 7L) "i64"
+        let isBlock = fb.Fresh()
+        fb.Emit(sprintf "%s = arith.cmpi eq, %s, %s : i64" isBlock tag (emitConst fb "i64" 0L))
+        let isCtor =
+            emitIfOf fb "i1" isBlock
+                (fun () ->
+                    let bits = emitOp fb "arith.andi" (emitField fb v 0) (emitConst fb "i64" (-1L <<< 32)) "i64"
+                    let c = fb.Fresh()
+                    fb.Emit(sprintf "%s = arith.cmpi eq, %s, %s : i64" c bits (emitCtorBits fb ctor))
+                    c)
+                (fun () -> emitConst fb "i1" 0L)
         match argPattern with
-        // 튜플 인자는 블록에 펴져 있음: i 번째 원소가 칸 2 + i
+        // 튜플 인자는 블록에 펴져 있음: i 번째 원소가 칸 1 + i
         | Some (Ast.PTuple items) when not (irrefutable (Ast.PTuple items)) ->
-            emitIfOf fb "i1" isCtor (fun () -> fields (items |> List.mapi (fun i p -> p, 2 + i))) (fun () -> emitConst fb "i1" 0L)
+            emitIfOf fb "i1" isCtor (fun () -> fields (items |> List.mapi (fun i p -> p, 1 + i))) (fun () -> emitConst fb "i1" 0L)
         | Some p when not (irrefutable p) ->
             emitIfOf fb "i1" isCtor (fun () -> emitTest fb p (emitPayload fb v)) (fun () -> emitConst fb "i1" 0L)
         | _ -> isCtor
@@ -844,7 +852,7 @@ and private emitBind (fb: FunctionBuilder) (pattern: Ast.Pattern) (v: string) (e
     | Ast.PCons (h, t) -> List.fold (fieldBy (emitConsField fb v)) env [ h, 0; t, 1 ]
     | Ast.PTuple items -> List.fold field env (items |> List.mapi (fun i p -> p, 1 + i))
     | Ast.PRecord items -> List.fold field env (items |> List.mapi (fun i (_, p) -> p, 2 + i))
-    | Ast.PCtor (_, Some (Ast.PTuple items)) -> List.fold field env (items |> List.mapi (fun i p -> p, 2 + i))
+    | Ast.PCtor (_, Some (Ast.PTuple items)) -> List.fold field env (items |> List.mapi (fun i p -> p, 1 + i))
     | Ast.PCtor (_, Some p) -> if Set.isEmpty (patternVars p) then env else emitBind fb p (emitPayload fb v) env
     // 맞은 쪽(왼쪽부터)에서 이름마다 값을 꺼냄: 이름 수만큼 값을 내는 scf.if
     | Ast.POr (a, b) ->
@@ -988,7 +996,6 @@ let private declarations =
       // option 의 이름과 None 값은 런타임에 하나 (runtime.h)
       "llvm.mlir.global external constant @calc_name_some() {addr_space = 0 : i32} : !llvm.array<5 x i8>"
       "llvm.mlir.global external constant @calc_name_none() {addr_space = 0 : i32} : !llvm.array<5 x i8>"
-      "llvm.mlir.global external constant @calc_none() {addr_space = 0 : i32} : !llvm.struct<(i64, ptr)>"
       "" ]
 /// 프로그램 하나: 문자열 상수, 클로저마다 최상위 함수, 식 하나를 계산하는 진입 함수 @entry. 심볼 이름에는 prefix 를 붙임
 let private emitBody (sb: StringBuilder) (prefix: string) (entry: string) (expr: Ast.Expr) =
@@ -1004,7 +1011,6 @@ let private emitBody (sb: StringBuilder) (prefix: string) (entry: string) (expr:
     let line (s: string) = sb.AppendLine(s) |> ignore
     strings.Entries |> List.iter (emitStringGlobal sb)
     strings.CtorEntries |> List.iter (emitCtorNameGlobal sb)
-    strings.UnitEntries |> List.iter (emitCtorUnitGlobal sb)
     if not (strings.Entries.IsEmpty && strings.CtorEntries.IsEmpty) then line ""
     sb.Append(functions) |> ignore
     line (sprintf "llvm.func @%s() -> i64 {" entry)

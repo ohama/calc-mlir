@@ -77,22 +77,21 @@ value calc_string_of(const uint16_t *units, int64_t length) {
     return (value)s;
 }
 
-/* 생성자 name 에 실행 중에 튜플인 인자를 줌: 원소를 펴서 [헤더, 이름, 원소...] */
-value calc_make_data(value name, value tuple) {
+/* 생성자(번호 << 32 = bits)에 실행 중에 튜플인 인자를 줌: 원소를 펴서 [헤더, 원소...] */
+value calc_make_data(value bits, value tuple) {
     int64_t n = CALC_SIZE(tuple);
-    value *block = calc_alloc(8 * (2 + n));
-    block[0] = CALC_KIND_DATA | ((1 + n) << 8);
-    block[1] = name;
-    for (int64_t i = 1; i <= n; i++) block[1 + i] = CALC_FIELD(tuple, i);
+    value *block = calc_alloc(8 * (1 + n));
+    block[0] = bits | CALC_KIND_DATA | (n << 8);
+    for (int64_t i = 1; i <= n; i++) block[i] = CALC_FIELD(tuple, i);
     return (value)block;
 }
 
 /* 편 블록의 인자를 튜플로 다시 만듦 (Some p 처럼 인자 전체를 묶는 패턴) */
 value calc_data_payload(value v) {
-    int64_t n = CALC_SIZE(v) - 1;
+    int64_t n = CALC_DATA_SIZE(v);
     value *block = calc_alloc(8 * (1 + n));
     block[0] = CALC_KIND_TUPLE | (n << 8);
-    for (int64_t i = 1; i <= n; i++) block[i] = CALC_FIELD(v, 1 + i);
+    for (int64_t i = 1; i <= n; i++) block[i] = CALC_FIELD(v, i);
     return (value)block;
 }
 
@@ -105,7 +104,6 @@ value calc_cons(value head, value tail) {
 
 const char calc_name_some[] = "Some";
 const char calc_name_none[] = "None";
-const calc_unit calc_none __attribute__((aligned(8))) = {CALC_KIND_DATA | (1 << 8), calc_name_none};
 
 int64_t calc_list_length(value v) {
     int64_t n = 0;
@@ -158,7 +156,7 @@ void calc_buffer_quoted(calc_buffer *b, const uint16_t *units, int64_t length) {
 /* 생성자나 ref 뒤의 인자 (Eval.applied). 다시 입력했을 때 같은 값이 되도록 괄호: Some (Some 1), Some (-1), ref (ref 1).
    튜플은 이미 괄호가 있음 */
 static void buffer_applied(calc_buffer *b, value p) {
-    int paren = (CALC_IS_KIND(p, CALC_KIND_DATA) && CALC_SIZE(p) >= 2) || CALC_IS_KIND(p, CALC_KIND_REF) ||
+    int paren = CALC_IS_KIND(p, CALC_KIND_DATA) || CALC_IS_KIND(p, CALC_KIND_REF) ||
                 (CALC_IS_INT(p) && CALC_INT_VAL(p) < 0);
     buffer_ascii(b, paren ? " (" : " ");
     calc_buffer_value(b, p);
@@ -187,14 +185,16 @@ void calc_buffer_value(calc_buffer *b, value v) {
             calc_buffer_value(b, CALC_HEAD(p));
         }
         buffer_ascii(b, "]");
+    } else if (CALC_IS_CTOR0(v)) {
+        buffer_ascii(b, CALC_CTOR_NAME(v));
     } else if (CALC_IS_KIND(v, CALC_KIND_DATA)) {
-        buffer_ascii(b, (const char *)CALC_FIELD(v, 1));
-        if (CALC_SIZE(v) == 2) buffer_applied(b, CALC_FIELD(v, 2));
-        else if (CALC_SIZE(v) > 2) {
+        buffer_ascii(b, CALC_CTOR_NAME(CALC_HEADER(v)));
+        if (CALC_DATA_SIZE(v) == 1) buffer_applied(b, CALC_FIELD(v, 1));
+        else {
             /* 튜플 인자를 편 블록: Rect (2, 3) */
             buffer_ascii(b, " (");
-            for (int64_t i = 2; i <= CALC_SIZE(v); i++) {
-                if (i > 2) buffer_ascii(b, ", ");
+            for (int64_t i = 1; i <= CALC_DATA_SIZE(v); i++) {
+                if (i > 1) buffer_ascii(b, ", ");
                 calc_buffer_value(b, CALC_FIELD(v, i));
             }
             buffer_ascii(b, ")");
@@ -326,9 +326,9 @@ void calc_raise(value exn) {
         _longjmp(calc_handlers->jump, 1);
     }
     /* 받는 try 가 없음: Failure s 는 s (failwith 의 메시지), 나머지는 exception <값> */
-    if (strcmp((const char *)CALC_FIELD(exn, 1), "Failure") == 0 && CALC_SIZE(exn) == 2) {
+    if (CALC_IS_PTR(exn) && strcmp(CALC_CTOR_NAME(CALC_HEADER(exn)), "Failure") == 0 && CALC_DATA_SIZE(exn) == 1) {
         calc_buffer b = {0};
-        calc_string *s = CALC_STRING(CALC_FIELD(exn, 2));
+        calc_string *s = CALC_STRING(CALC_FIELD(exn, 1));
         calc_buffer_units(&b, s->units, s->length);
         calc_error(calc_buffer_utf8(&b));
     }
@@ -364,7 +364,7 @@ static int equals(value a, value b) {
     if (CALC_IS_KIND(a, CALC_KIND_CLOSURE)) {
         calc_error("Type error: expected int, bool, string, list, tuple or data but got function");
     }
-    if (CALC_IS_INT(a) || CALC_IS_BOOL(a) || a == CALC_UNIT) {
+    if (CALC_IS_INT(a) || CALC_IS_BOOL(a) || a == CALC_UNIT || CALC_IS_CTOR0(a)) {
         return a == b;
     }
     if (CALC_IS_KIND(a, CALC_KIND_STRING)) {
@@ -380,9 +380,9 @@ static int equals(value a, value b) {
     }
     /* 타입 검사를 통과했으므로 같은 타입: 생성자가 다르면 false, 같으면 인자를 비교 */
     if (CALC_IS_KIND(a, CALC_KIND_DATA)) {
-        if (strcmp((const char *)CALC_FIELD(a, 1), (const char *)CALC_FIELD(b, 1)) != 0) return 0;
-        /* 같은 생성자면 단어 수도 같음 (튜플 인자는 펴져 있음) */
-        for (int64_t i = 2; i <= CALC_SIZE(a); i++) {
+        /* b 는 인자 없는 생성자(즉시값)일 수 있음. 헤더가 같으면 같은 생성자, 같은 단어 수 (튜플 인자는 펴져 있음) */
+        if (!CALC_IS_PTR(b) || CALC_HEADER(a) != CALC_HEADER(b)) return 0;
+        for (int64_t i = 1; i <= CALC_DATA_SIZE(a); i++) {
             if (!equals(CALC_FIELD(a, i), CALC_FIELD(b, i))) return 0;
         }
         return 1;

@@ -403,6 +403,18 @@ let private runCases =
           "exception Stop of int in let r = ref 0 in (try while true do (r := !r + 1; if !r = 5 then raise (Stop !r) else ()) done with Stop k -> println k)", ("5\n", "", 0), "반복 안에서 raise"
           "let i = ref 0 in while !i < 1000000 do i := !i + 1 done; println !i", ("1000000\n", "", 0), "긴 반복 (스택이 자라지 않음)"
         ]
+      "생성자 값 (이름 칸 없는 블록, 인자 없는 생성자는 즉시값)",
+        [
+          "type t = A | B of int | C of int * int in println (A = B 1, B 1 = A, B 1 = B 1, A = A, B 1 = B 2, C (1, 2) = C (1, 2), C (1, 2) = A)", ("(false, false, true, true, false, true, false)\n", "", 0), "= : 즉시값과 블록, 헤더 비교"
+          "let f = Some in println (f (1, 2), (match f (1, 2) with Some (a, b) -> a + b | None -> 0), (match Some (3, 4) with Some p -> fst p | None -> 0))", ("(Some (1, 2), 3, 3)\n", "", 0), "실행 중에 편 튜플 인자 (calc_make_data, calc_data_payload)"
+          "type t = A | B of int in println (Some None, [None; Some (Some 1)], Some (B 1), B (-1), [A; B 2], (A, Some A))", ("(Some None, [None; Some (Some 1)], Some (B 1), B (-1), [A; B 2], (A, Some A))\n", "", 0), "출력: 즉시값 생성자와 괄호"
+          "type u = X | Y of string in type v = P | Q of u in println (match Q (Y \"s\") with Q (Y s) -> s | Q X -> \"x\" | P -> \"p\", [P; Q X; Q (Y \"a\")])", ("(\"s\", [P; Q X; Q (Y \"a\")])\n", "", 0), "겹친 생성자 패턴"
+          "exception E in exception F of int * string in println ((try raise E with E -> 1), (try raise (F (2, \"b\")) with F (n, s) -> n), (try raise Not_found with E -> 0 | Not_found -> 3))", ("(1, 2, 3)\n", "", 0), "예외: 인자 없음, 튜플 인자, Not_found"
+          "type tree = Leaf | Node of tree * int * tree in let rec build n t = if n = 0 then t else build (n - 1) (Node (t, n, Leaf)) in let rec sum t acc = match t with Leaf -> acc | Node (l, v, _) -> sum l (acc + v % 10) in let t = build 300000 Leaf in let junk = map (fun x -> Some (x, x)) (range 1 300000) in println (sum t 0, length junk)", ("(1350000, 300000)\n", "", 0), "수거가 여러 번 일어나도 32바이트 칸이 살아 있음"
+          "exception F of int * string in raise (F (1, \"x\"))", ("", "Error: exception F (1, \"x\")\n", 1), "받지 않은 예외의 출력"
+          "raise Not_found", ("", "Error: exception Not_found\n", 1), "받지 않은 인자 없는 예외"
+          "failwith \"boom\"", ("", "Error: boom\n", 1), "받지 않은 Failure 는 메시지만"
+        ]
       "인자가 여럿인 간접 호출 (클로저의 direct 함수)",
         [
           "let g h = h (print 1; 1) (print 2; 2) in println (g (fun a b -> a * 10 + b))", ("1212\n", "", 0), "인자 둘을 주는 간접 호출: 인자를 왼쪽부터"
@@ -578,21 +590,23 @@ let tests =
                 Expect.equal (Codegen.tagBool false) 3L ""
                 Expect.equal (Codegen.tagBool true) 11L ""
             }
-            test "Some 과 None 은 런타임의 전역 (내장 함수가 만든 option 과 패턴이 맞도록)" {
+            test "Some 의 이름은 런타임의 전역, None 은 즉시값 6 (생성자 번호의 기준)" {
                 let mlir = Codegen.emitProgram (Program.parse "match Some None with | Some None -> 1 | _ -> 0")
                 Expect.stringContains mlir "llvm.mlir.addressof @calc_name_some" ""
-                Expect.stringContains mlir "llvm.mlir.addressof @calc_none" ""
+                Expect.stringContains mlir "arith.constant 6 : i64" "None"
                 Expect.isFalse (mlir.Contains "@ctor_") "이 모듈의 생성자 이름 전역은 없음"
             }
-            test "인자 없는 생성자는 전역 상수 블록, 이름은 C 문자열 전역" {
+            test "인자 없는 생성자는 즉시값 (이름 전역의 번호 << 32 | 6), 이름은 C 문자열 전역" {
                 let mlir = Codegen.emitProgram (Program.parse "type t = Red | Blue in [Red; Red]")
                 Expect.stringContains mlir "llvm.mlir.global internal constant @ctor_0(\"Red\\00\")" ""
-                Expect.stringContains mlir "@unit_0() {addr_space = 0 : i32, alignment = 8 : i64} : !llvm.struct<(i64, ptr)>" ""
-                Expect.isFalse (mlir.Contains "@unit_1") "같은 생성자는 하나"
+                Expect.isFalse (mlir.Contains "@ctor_1") "같은 생성자는 하나"
+                Expect.isFalse (mlir.Contains "!llvm.struct<(i64, ptr)>") "전역 블록이 없음"
+                Expect.stringContains mlir "llvm.mlir.addressof @calc_name_none" "번호의 기준"
             }
-            test "생성자 헤더: 종류 5, 이름과 인자" {
-                Expect.equal (Codegen.dataHeader false) 0x105L "이름만"
-                Expect.equal (Codegen.dataHeader true) 0x205L "이름 + 인자"
+            test "생성자 헤더: 종류 5, 인자 단어 수 (이름 칸이 없음)" {
+                Expect.equal (Codegen.dataHeader 1) 0x105L "인자 하나"
+                Expect.equal (Codegen.dataHeader 3) 0x305L "튜플 인자 원소 셋"
+                Expect.equal Codegen.ctorTag 6L ""
             }
             test "클로저는 calc_alloc 으로 할당하고 간접 호출" {
                 let mlir = Codegen.emitProgram (Program.parse "let k = 10 in (fun f -> f 32) (fun x -> x + k)")

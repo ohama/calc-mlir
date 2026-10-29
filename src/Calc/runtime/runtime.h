@@ -31,8 +31,9 @@ typedef int64_t value;
 #define CALC_KIND_CLOSURE 1 /* [헤더, 코드 포인터, 캡처한 값...] */
 #define CALC_KIND_STRING 2  /* [헤더, 길이, UTF-16 코드 단위...] (.NET string 과 같은 단위) */
 #define CALC_KIND_TUPLE 4   /* [헤더, 원소...]. 원소 수 = 헤더의 단어 수 */
-#define CALC_KIND_DATA 5    /* [헤더, 생성자 이름(const char *), 인자...]. 단어 수 2: 튜플이 아닌 인자 하나, 3 이상: 튜플 인자의 원소를
-                               편 것 (Node (l, v, r) 은 블록 하나). 인자 없는 생성자는 전역 상수 블록 */
+#define CALC_KIND_DATA 5    /* [헤더, 인자...]. 헤더 = 종류 | (인자 단어 수 << 8) | (생성자 번호 << 32). 단어 수 1: 튜플이 아닌
+                               인자 하나, 2 이상: 튜플 인자의 원소를 편 것 (Node (l, v, r) 은 블록 하나). 인자 없는 생성자는
+                               즉시값 (번호 << 32) | 6 (CALC_TAG_CTOR) */
 #define CALC_KIND_REF 6     /* [헤더, 내용]. r := v 가 내용을 바꿈 */
 #define CALC_KIND_RECORD 7  /* [헤더, 필드 이름들("x;y", const char *), 값...]. 값은 선언한 순서 */
 #define CALC_KIND_ARRAY 8   /* [헤더, 원소...]. 원소 수 = 헤더의 단어 수. a.[i] <- v 가 원소를 바꿈 */
@@ -49,6 +50,16 @@ typedef struct {
 #define CALC_STRING(v) ((calc_string *)(v))
 #define CALC_FIELD(v, i) (((value *)(v))[(i)])
 #define CALC_SIZE(v) (CALC_HEADER(v) >> 8)
+
+/* 생성자 번호 = 생성자 이름(C 문자열) 전역의 주소 - calc_name_none 의 주소. 생성한 코드와 런타임이 한 실행 파일에
+   링크되므로 32비트에 들어감. 이름은 번호로 찾고, 같은 생성자인지는 번호로 비교 (이름 전역은 프로그램마다 하나) */
+#define CALC_TAG_CTOR 6
+#define CALC_IS_CTOR0(v) (((v) & CALC_TAG_MASK) == CALC_TAG_CTOR)
+#define CALC_CTOR_NUMBER(word) ((int64_t)(word) >> 32) /* 헤더나 인자 없는 생성자의 즉시값에서 */
+/* 주소를 정수로 더함: calc_name_none + 번호 는 배열 밖을 가리키는 포인터 연산(undefined behavior)이라 clang 이
+   strlen 을 잘못 최적화함 ("None" 의 길이 안에 있다고 봄) */
+#define CALC_CTOR_NAME(word) ((const char *)((intptr_t)calc_name_none + CALC_CTOR_NUMBER(word)))
+#define CALC_DATA_SIZE(v) ((CALC_HEADER(v) >> 8) & 0xffffff)
 
 #define CALC_TRUE ((value)11)
 #define CALC_FALSE ((value)3)
@@ -84,15 +95,11 @@ value calc_apply(value f, value arg);
 value calc_try(value body, value handler);
 void calc_raise(value exn) __attribute__((noreturn));
 
-/* option: Some 과 None 의 이름과 None 값은 런타임에 하나. 생성한 코드도 이 전역을 가리킴 (패턴 검사가 이름 포인터를 비교) */
+/* option: Some 과 None 의 이름은 런타임에 하나. 생성한 코드도 이 전역을 가리킴. calc_name_none 은 생성자 번호의 기준이라
+   None 의 번호는 0, 값은 즉시값 6 */
 extern const char calc_name_some[];
 extern const char calc_name_none[];
-typedef struct {
-    int64_t header;
-    const char *name;
-} calc_unit;
-extern const calc_unit calc_none;
-#define CALC_NONE ((value)&calc_none)
+#define CALC_NONE ((value)CALC_TAG_CTOR)
 
 /* ---- 런타임 안에서 함께 쓰는 도우미 (runtime.c, builtins.c) ---- */
 
@@ -101,7 +108,7 @@ value calc_bool(int b);
 calc_string *calc_new_string(int64_t length); /* 내용은 부르는 쪽이 채움 */
 value calc_string_of(const uint16_t *units, int64_t length);
 value calc_cons(value head, value tail);
-value calc_make_data(value name, value tuple);
+value calc_make_data(value bits, value tuple);
 value calc_data_payload(value v);
 int64_t calc_list_length(value list);
 
