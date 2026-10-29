@@ -16,7 +16,7 @@ let tagBool (b: bool) = if b then (1L <<< 3) ||| 3L else 3L
 let kindClosure = 1L
 let kindString = 2L
 
-let kindCons = 3L
+// 3 은 예전 cons 블록의 종류. 지금 cons 는 헤더가 없음 (consTag)
 let kindTuple = 4L
 let kindData = 5L
 let kindRef = 6L
@@ -30,8 +30,8 @@ let unitValue = 7L
 
 let closureHeader (capturedCount: int) = kindClosure ||| (int64 (1 + capturedCount) <<< 8)
 
-/// cons 블록 = [헤더, head, tail]
-let consHeader = kindCons ||| (2L <<< 8)
+/// cons 값 = 헤더 없는 [head, tail] 16바이트 블록의 주소 | 2 (runtime.h 의 CALC_TAG_CONS)
+let consTag = 2L
 
 /// 튜플 블록 = [헤더, 원소...]
 let tupleHeader (count: int) = kindTuple ||| (int64 count <<< 8)
@@ -268,6 +268,16 @@ let private emitSlot (fb: FunctionBuilder) (block: string) (index: int) =
     fb.Emit(sprintf "%s = llvm.getelementptr %s[%d] : (!llvm.ptr) -> !llvm.ptr, i64" r block index)
     r
 
+/// cons 값 v 의 index 번째 단어 (0: head, 1: tail). 블록 주소는 v - 2
+let private emitConsField (fb: FunctionBuilder) (v: string) (index: int) =
+    let block = fb.Fresh()
+    fb.Emit(sprintf "%s = llvm.inttoptr %s : i64 to !llvm.ptr" block v)
+    let address = fb.Fresh()
+    fb.Emit(sprintf "%s = llvm.getelementptr %s[%d] : (!llvm.ptr) -> !llvm.ptr, i8" address block (8 * index - int consTag))
+    let r = fb.Fresh()
+    fb.Emit(sprintf "%s = llvm.load %s : !llvm.ptr -> i64" r address)
+    r
+
 /// 전역의 주소를 i64 로
 let private emitGlobalAddress (fb: FunctionBuilder) (name: string) =
     let address = fb.Fresh()
@@ -421,10 +431,10 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
     | CPrim (PEqual, [ a; b ]) ->
         let x = emitExpr fb env a
         let y = emitExpr fb env b
-        // int, bool, [], () 는 값 자체를 비교. 블록(리스트, 문자열 등)은 런타임이 내용을 비교
-        let tag = emitOp fb "arith.andi" x (emitConst fb "i64" 7L) "i64"
+        // int, bool, [], () (태그가 홀수) 는 값 자체를 비교. 블록과 cons(태그 0, 2)는 런타임이 내용을 비교
+        let odd = emitOp fb "arith.andi" x (emitConst fb "i64" 1L) "i64"
         let immediate = fb.Fresh()
-        fb.Emit(sprintf "%s = arith.cmpi ne, %s, %s : i64" immediate tag (emitConst fb "i64" 0L))
+        fb.Emit(sprintf "%s = arith.cmpi ne, %s, %s : i64" immediate odd (emitConst fb "i64" 0L))
         emitIf fb immediate
             (fun () ->
                 let eq = fb.Fresh()
@@ -468,7 +478,13 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
     | CCons (h, t) ->
         let hv = emitExpr fb env h
         let tv = emitExpr fb env t
-        emitBlock fb consHeader [ hv; tv ]
+        let block = fb.Fresh()
+        fb.Emit(sprintf "%s = llvm.call @calc_alloc(%s) : (i64) -> !llvm.ptr" block (emitConst fb "i64" 16L))
+        fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" hv block)
+        fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" tv (emitSlot fb block 1))
+        let address = fb.Fresh()
+        fb.Emit(sprintf "%s = llvm.ptrtoint %s : !llvm.ptr to i64" address block)
+        emitOp fb "arith.ori" address (emitConst fb "i64" consTag) "i64"
     | CTuple items ->
         let values = items |> List.map (emitExpr fb env)
         emitBlock fb (tupleHeader values.Length) values
@@ -632,14 +648,15 @@ and private emitTest (fb: FunctionBuilder) (pattern: Ast.Pattern) (v: string) : 
         let r = fb.Fresh()
         fb.Emit(sprintf "%s = arith.cmpi eq, %s, %s : i64" r v (emitConst fb "i64" c))
         r
-    // 필드 index 의 하위 패턴들을 차례로: 앞이 실패하면 뒤는 검사하지 않음
-    let rec fields (subpatterns: (Ast.Pattern * int) list) =
+    // 필드 index 의 하위 패턴들을 차례로: 앞이 실패하면 뒤는 검사하지 않음. read 는 index 번째 필드를 읽는 코드
+    let rec fieldsBy (read: int -> string) (subpatterns: (Ast.Pattern * int) list) =
         match subpatterns |> List.filter (fun (p, _) -> not (irrefutable p)) with
         | [] -> emitConst fb "i1" 1L
-        | [ p, index ] -> emitTest fb p (emitField fb v index)
+        | [ p, index ] -> emitTest fb p (read index)
         | (p, index) :: rest ->
-            let c = emitTest fb p (emitField fb v index)
-            emitIfOf fb "i1" c (fun () -> fields rest) (fun () -> emitConst fb "i1" 0L)
+            let c = emitTest fb p (read index)
+            emitIfOf fb "i1" c (fun () -> fieldsBy read rest) (fun () -> emitConst fb "i1" 0L)
+    let fields = fieldsBy (emitField fb v)
     match pattern with
     // () 는 unit 의 유일한 값이라 항상 일치
     | Ast.PVar _ | Ast.PWildcard | Ast.PUnit -> emitConst fb "i1" 1L
@@ -653,7 +670,7 @@ and private emitTest (fb: FunctionBuilder) (pattern: Ast.Pattern) (v: string) : 
         let isCons = fb.Fresh()
         fb.Emit(sprintf "%s = arith.cmpi ne, %s, %s : i64" isCons v (emitConst fb "i64" nilValue))
         if irrefutable h && irrefutable t then isCons
-        else emitIfOf fb "i1" isCons (fun () -> fields [ h, 1; t, 2 ]) (fun () -> emitConst fb "i1" 0L)
+        else emitIfOf fb "i1" isCons (fun () -> fieldsBy (emitConsField fb v) [ h, 0; t, 1 ]) (fun () -> emitConst fb "i1" 0L)
     // 타입 검사를 통과했으므로 원소 수는 항상 같음
     | Ast.PTuple items -> fields (items |> List.mapi (fun i p -> p, 1 + i))
     // Lower 가 선언한 순서의 모든 필드로 채웠으므로 i 번째가 칸 2 + i (0, 1 은 헤더와 필드 이름)
@@ -676,11 +693,12 @@ and private emitTest (fb: FunctionBuilder) (pattern: Ast.Pattern) (v: string) : 
 
 /// 일치한 패턴이 묶는 이름을 환경에 넣음. 이름을 묶는 하위 패턴의 필드만 읽음 (인터프리터처럼 앞에서부터, 같은 이름은 뒤가 이김)
 and private emitBind (fb: FunctionBuilder) (pattern: Ast.Pattern) (v: string) (env: Map<string, string>) =
-    let field (env: Map<string, string>) (p: Ast.Pattern, index: int) =
-        if Set.isEmpty (patternVars p) then env else emitBind fb p (emitField fb v index) env
+    let fieldBy (read: int -> string) (env: Map<string, string>) (p: Ast.Pattern, index: int) =
+        if Set.isEmpty (patternVars p) then env else emitBind fb p (read index) env
+    let field = fieldBy (emitField fb v)
     match pattern with
     | Ast.PVar name -> Map.add name v env
-    | Ast.PCons (h, t) -> List.fold field env [ h, 1; t, 2 ]
+    | Ast.PCons (h, t) -> List.fold (fieldBy (emitConsField fb v)) env [ h, 0; t, 1 ]
     | Ast.PTuple items -> List.fold field env (items |> List.mapi (fun i p -> p, 1 + i))
     | Ast.PRecord items -> List.fold field env (items |> List.mapi (fun i (_, p) -> p, 2 + i))
     | Ast.PCtor (_, Some (Ast.PTuple items)) -> List.fold field env (items |> List.mapi (fun i p -> p, 2 + i))

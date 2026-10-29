@@ -363,10 +363,10 @@ match [7] with | x :: _ when x > 5 -> x | _ -> 0
 ```
 
 ```mlir
-// [7] = 7 :: [] → cons 블록 [헤더 515 = 3 | (2 << 8), head 57, tail 5]
-%v4 = llvm.call @calc_alloc(%v3) : (i64) -> !llvm.ptr
+// [7] = 7 :: [] → 헤더 없는 cons 칸 [head 57, tail 5] (16바이트), 값은 주소 | 2
+%v4 = llvm.call @calc_alloc(%v3) : (i64) -> !llvm.ptr     // %v3 = 16
 ...
-%v8 = llvm.ptrtoint %v4 : !llvm.ptr to i64
+%v8 = arith.ori %v7, %v9 : i64                         // ptrtoint | 2
 
 // 첫 분기의 조건 (i1): cons 인가? 그렇다면 head 를 읽어 가드 x > 5
 %v9 = arith.cmpi ne, %v8, %v10 : i64                  // %v10 = 5 ([])
@@ -395,6 +395,7 @@ match [7] with | x :: _ when x > 5 -> x | _ -> 0
 - **`match (a, b) with (p, q) -> …` (0.51.0부터):** 분기가 모두 원소 수가 같은 튜플 패턴이나 `_`면 튜플 블록을 만들지 않습니다. 원소를 왼쪽부터 계산한 뒤 원소마다 패턴을 맞춥니다. 맞는 분기가 없을 때만 튜플을 만들어 `calc_match_failure`에 줍니다. merge sort의 `match (xs, ys) with`가 단계마다 하던 할당이 없어졌습니다.
 - **`append (reverse xs) ys` (0.51.0부터):** Codegen이 이 모양을 알아보고 런타임의 `calc_rev_append` 하나로 부릅니다. 거꾸로 만든 리스트를 다시 복사하지 않으므로 리스트 칸을 n개만 만듭니다(전에는 2n개).
 - **런타임:** `format_value`(출력과 Match failure 메시지)와 `equals`(structural `=`)가 cons와 튜플 블록을 따라갑니다. 리스트는 재귀가 아니라 반복문으로 돌아서 긴 리스트도 C 스택을 쓰지 않습니다. `equals`는 인터프리터처럼 길이를 먼저 비교합니다. 그래서 `[fun x -> x] = []`는 오류 없이 `false`입니다.
+- **cons 칸 (0.53.0부터):** 헤더가 없는 `[head, tail]` 16바이트 블록이고, 값은 블록 주소에 태그 `2`를 붙인 것입니다. head는 `값 - 2`, tail은 `값 + 6` 바이트에서 읽습니다. `=`의 빠른 경로는 "태그가 홀수(int, bool, `[]`, `()`)면 비트를 비교"이므로 cons는 런타임이 내용을 비교합니다. merge sort 20만이 0.064초에서 0.049초, 최대 메모리가 72MB에서 38MB가 되었습니다.
 
 ## 9. ADT와 option (단계 6)
 

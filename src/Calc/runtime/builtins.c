@@ -10,8 +10,8 @@
 
 #define STR(v) CALC_STRING(v)
 #define INT(v) CALC_INT_VAL(v)
-#define HEAD(v) CALC_FIELD(v, 1)
-#define TAIL(v) CALC_FIELD(v, 2)
+#define HEAD(v) CALC_HEAD(v)
+#define TAIL(v) CALC_TAIL(v)
 
 /* 리스트를 앞에서부터 만듦 (마지막 칸의 tail 을 고쳐 붙임) */
 typedef struct {

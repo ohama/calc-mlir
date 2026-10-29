@@ -4,6 +4,17 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.53.0] - 2026-10-29
+
+### 변경
+- 컴파일한 코드의 리스트 칸이 헤더 없는 `[head, tail]` 16바이트 블록입니다. 값은 블록 주소에 태그 `2`를 붙인 것입니다.
+  - 전에는 `[헤더, head, tail]` 24바이트라 Boehm GC에서 32바이트를 썼습니다.
+  - `calc_init`이 interior pointer를 끄고(`GC_set_all_interior_pointers(0)`) 주소 + 2를 `GC_register_displacement(2)`로 알립니다.
+  - merge sort 20만(`benchmarks/msort.calc`)이 0.064초에서 0.049초(Python 0.21초), 최대 메모리가 72MB에서 38MB가 되었습니다.
+  - `=`의 빠른 경로는 "태그가 홀수(int, bool, `[]`, `()`)면 비트를 비교"로 바뀌었습니다. 결과는 같습니다.
+  - 인터프리터는 바뀌지 않았습니다.
+- 테스트 1개 추가 (총 1212개, 컴파일 테스트에 리스트 칸의 경우 11가지: 중첩, `=`, ref와 배열, 런타임의 리스트 함수, 예외, 클로저, 여러 번의 수거를 거치는 긴 리스트)
+
 ## [0.52.0] - 2026-10-29
 
 ### 변경

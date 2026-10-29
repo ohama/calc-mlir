@@ -75,7 +75,7 @@ dotnet src/Calc/bin/Debug/net10.0/Calc.dll --expr "2 + 3"
 | 옵션 | 짧은 형식 | 설명 |
 |---|---|---|
 | `--expr <expr>` | `-e <expr>` | 주어진 식을 계산합니다. `--expr=<expr>` 형식도 됩니다. 생략하면 표준 입력에서 읽습니다. |
-| `--version` | `-v` | 버전을 출력하고 종료합니다 (예: `calc 0.52.0`). |
+| `--version` | `-v` | 버전을 출력하고 종료합니다 (예: `calc 0.53.0`). |
 | `--no-typecheck` | | 타입 추론을 건너뛰고 바로 평가합니다. 타입은 평가 중에 동적으로 검사됩니다. |
 | `--emit-mlir` | | 평가하지 않고, 컴파일러가 만든 MLIR을 출력합니다. |
 | `--compile <path>` | | 평가하지 않고, 네이티브 실행 파일을 `<path>`에 만듭니다. `--compile=<path>` 형식도 됩니다. |
@@ -146,7 +146,7 @@ rm -f src/Calc/{Lexer,Parser}.fs{,i}
 
 ```
 $ dotnet run --project src/Calc
-calc 0.52.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
+calc 0.53.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
 # let rec fact n =
     if n = 0 then 1 else n * fact (n - 1);;
 val fact : int -> int = <fun>

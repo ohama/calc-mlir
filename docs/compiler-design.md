@@ -124,6 +124,7 @@ clang prog.o runtime.o builtins.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack
 | `bool b` | `(b << 3) \| 3` | `011` |
 | `[]` | `5` | `101` |
 | `()` (unit) | `7` | `111` |
+| cons (`x :: xs`) | 헤더 없는 `[head, tail]` 16바이트 블록의 주소 `\| 2` (0.53.0부터) | `010` |
 | 그 밖의 모든 값 | 힙 블록 포인터 (8-byte alignment) | `000` |
 
 힙 블록은 첫 단어가 **헤더**(종류, 필드 수)입니다.
@@ -131,7 +132,7 @@ clang prog.o runtime.o builtins.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack
 | 종류 | 필드 |
 |---|---|
 | `STRING` | 길이, UTF-16 code unit 배열. 헤더는 `2 \| (뒤따르는 단어 수 << 8)`. 상수는 8-byte aligned 전역(`llvm.mlir.global`, GC 대상 아님), 연결 결과는 `GC_MALLOC_ATOMIC`(안에 포인터가 없어 GC가 내용을 훑지 않음) |
-| `CONS` | head, tail. 헤더 `3 \| (2 << 8)`. `[]`는 블록이 아니라 immediate value `5` |
+| `CONS` | 0.52.0까지는 head, tail과 헤더 `3 \| (2 << 8)`. 지금은 헤더가 없는 `[head, tail]` 블록이고 값의 태그 `2`가 cons임을 나타냅니다. 24바이트 블록은 Boehm GC에서 32바이트를 써서, 헤더를 없애면 리스트 메모리가 반이 됩니다. 이를 위해 `calc_init`이 interior pointer를 끄고(`GC_set_all_interior_pointers(0)`, 16바이트 요청이 32바이트로 올라가지 않음) 주소 + 2를 `GC_register_displacement(2)`로 알립니다. 스택과 레지스터의 interior pointer는 이 설정과 상관없이 인정됩니다. `[]`는 블록이 아니라 immediate value `5` |
 | `TUPLE` | 원소 n개. 헤더 `4 \| (n << 8)` |
 | `DATA` | 생성자 이름(C 문자열 전역의 포인터), 인자(있으면). 헤더 `5 \| (단어 수 << 8)`. 단어 수 2는 튜플이 아닌 인자 하나이고, 3 이상이면 튜플 인자의 원소를 블록에 편 것입니다(`Node (l, v, r)`은 `[헤더, 이름, l, v, r]` 블록 하나, 0.50.0부터). 인자 전체를 묶는 패턴(`Node p`)은 런타임의 `calc_data_payload`가 튜플을 다시 만들고, 실행 중에 튜플인 인자(`map Node xs`)는 `calc_make_data`가 폅니다. 인자 없는 생성자는 8-byte aligned 전역 상수 블록. 처음 설계한 descriptor(이름, 타입 이름, 번호) 대신 이름만 둡니다. 타입 검사를 통과했으므로 같은 타입끼리만 비교하고, 인터프리터도 생성자를 이름으로 비교하기 때문입니다 |
 | `CLOSURE` | 코드 포인터, 캡처한 값들 |

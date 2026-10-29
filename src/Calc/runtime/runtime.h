@@ -19,10 +19,17 @@ typedef int64_t value;
 #define CALC_BOOL_VAL(v) ((int)((v) >> 3))
 #define CALC_IS_PTR(v) (((v) & CALC_TAG_MASK) == 0)
 
+/* 리스트의 칸: 헤더 없는 [head, tail] 16바이트 블록. 값은 블록 주소 | 2 (tail 은 cons 또는 CALC_NIL).
+   헤더를 두면 24바이트라 Boehm GC 에서 32바이트를 씀. 주소 + 2 를 가리키는 포인터는 calc_init 이
+   GC_register_displacement 로 알림 */
+#define CALC_TAG_CONS 2
+#define CALC_IS_CONS(v) (((v) & CALC_TAG_MASK) == CALC_TAG_CONS)
+#define CALC_HEAD(v) (((value *)((v) - CALC_TAG_CONS))[0])
+#define CALC_TAIL(v) (((value *)((v) - CALC_TAG_CONS))[1])
+
 /* 힙 블록: 첫 단어가 헤더 = 종류 | (뒤따르는 단어 수 << 8). Codegen.closureHeader 와 같음 */
 #define CALC_KIND_CLOSURE 1 /* [헤더, 코드 포인터, 캡처한 값...] */
 #define CALC_KIND_STRING 2  /* [헤더, 길이, UTF-16 코드 단위...] (.NET string 과 같은 단위) */
-#define CALC_KIND_CONS 3    /* [헤더, head, tail]. tail 은 cons 또는 CALC_NIL */
 #define CALC_KIND_TUPLE 4   /* [헤더, 원소...]. 원소 수 = 헤더의 단어 수 */
 #define CALC_KIND_DATA 5    /* [헤더, 생성자 이름(const char *), 인자...]. 단어 수 2: 튜플이 아닌 인자 하나, 3 이상: 튜플 인자의 원소를
                                편 것 (Node (l, v, r) 은 블록 하나). 인자 없는 생성자는 전역 상수 블록 */

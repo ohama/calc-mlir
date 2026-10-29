@@ -10,8 +10,12 @@
 
 /* free space divisor 1: 수거 뒤 살아 있는 크기만큼 비워 둘 때까지 힙을 늘림 (기본 3). 수거가 드물어져서
    할당이 많은 프로그램이 25% 남짓 빨라지고, 최대 메모리는 2배 안쪽으로 늘어남 */
+/* interior pointer 를 끔: 켜 두면 객체 끝을 가리키는 포인터를 위해 1바이트를 더 붙여서 16바이트 요청이 32바이트가 됨.
+   힙의 값은 블록의 처음(블록) 또는 처음 + 2(cons)를 가리킴. 스택과 레지스터의 interior pointer 는 설정과 상관없이 인정됨 */
 void calc_init(void) {
+    GC_set_all_interior_pointers(0);
     GC_INIT();
+    GC_register_displacement(CALC_TAG_CONS);
     GC_set_free_space_divisor(1);
 }
 
@@ -93,11 +97,10 @@ value calc_data_payload(value v) {
 }
 
 value calc_cons(value head, value tail) {
-    value *block = calc_alloc(3 * sizeof(value));
-    block[0] = CALC_KIND_CONS | (2 << 8);
-    block[1] = head;
-    block[2] = tail;
-    return (value)block;
+    value *block = calc_alloc(2 * sizeof(value));
+    block[0] = head;
+    block[1] = tail;
+    return (value)block | CALC_TAG_CONS;
 }
 
 const char calc_name_some[] = "Some";
@@ -106,7 +109,7 @@ const calc_unit calc_none __attribute__((aligned(8))) = {CALC_KIND_DATA | (1 << 
 
 int64_t calc_list_length(value v) {
     int64_t n = 0;
-    for (; v != CALC_NIL; v = CALC_FIELD(v, 2)) n++;
+    for (; v != CALC_NIL; v = CALC_TAIL(v)) n++;
     return n;
 }
 
@@ -177,11 +180,11 @@ void calc_buffer_value(calc_buffer *b, value v) {
         buffer_ascii(b, "<fun>");
     } else if (CALC_IS_KIND(v, CALC_KIND_STRING)) {
         calc_buffer_quoted(b, CALC_STRING(v)->units, CALC_STRING(v)->length);
-    } else if (CALC_IS_KIND(v, CALC_KIND_CONS)) {
+    } else if (CALC_IS_CONS(v)) {
         buffer_ascii(b, "[");
-        for (value p = v; p != CALC_NIL; p = CALC_FIELD(p, 2)) {
+        for (value p = v; p != CALC_NIL; p = CALC_TAIL(p)) {
             if (p != v) buffer_ascii(b, "; ");
-            calc_buffer_value(b, CALC_FIELD(p, 1));
+            calc_buffer_value(b, CALC_HEAD(p));
         }
         buffer_ascii(b, "]");
     } else if (CALC_IS_KIND(v, CALC_KIND_DATA)) {
@@ -368,10 +371,10 @@ static int equals(value a, value b) {
         calc_string *x = CALC_STRING(a), *y = CALC_STRING(b);
         return x->length == y->length && memcmp(x->units, y->units, (size_t)x->length * sizeof(uint16_t)) == 0;
     }
-    if (a == CALC_NIL || CALC_IS_KIND(a, CALC_KIND_CONS)) {
+    if (a == CALC_NIL || CALC_IS_CONS(a)) {
         if (calc_list_length(a) != calc_list_length(b)) return 0;
-        for (; a != CALC_NIL; a = CALC_FIELD(a, 2), b = CALC_FIELD(b, 2)) {
-            if (!equals(CALC_FIELD(a, 1), CALC_FIELD(b, 1))) return 0;
+        for (; a != CALC_NIL; a = CALC_TAIL(a), b = CALC_TAIL(b)) {
+            if (!equals(CALC_HEAD(a), CALC_HEAD(b))) return 0;
         }
         return 1;
     }

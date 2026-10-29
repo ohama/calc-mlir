@@ -392,6 +392,20 @@ let private runCases =
           "let rec build n acc = if n = 0 then acc else build (n - 1) ((n, [n], Some n) :: acc) in let xs = build 300000 [] in println (length xs, head xs, nth xs 299999)", ("(300000, (1, [1], Some 1), (300000, [300000], Some 300000))\n", "", 0), "작은 블록 여러 크기, 수거가 일어나도 값이 그대로"
           "let t = (1, 2, 3, 4, 5, 6, 7, 8, 9) in let a = Array.create 20 7 in println (t, Array.length a, a.[19], [||] = [||])", ("((1, 2, 3, 4, 5, 6, 7, 8, 9), 20, 7, true)\n", "", 0), "8 단어보다 큰 블록과 빈 배열"
         ]
+      "리스트 칸 (헤더 없는 cons, 주소 | 2)",
+        [
+          "println ([[]], [[1]; []], [] = [], [1] = [], [1; 2] = [1; 2], [[1]] = [[1]], Some [], ([1], [2]))", ("([[]], [[1]; []], true, false, true, true, Some [], ([1], [2]))\n", "", 0), "빈 리스트, 중첩, =, 다른 값 안의 리스트"
+          "let r = ref [1] in r := 2 :: !r; println (!r, Array.ofList [3; 4], Array.toList [| [5] |])", ("([2; 1], [|3; 4|], [[5]])\n", "", 0), "ref, 배열과 리스트"
+          "println (sort [3; 1; 2], sort [\"b\"; \"a\"], split \"a,b\" \",\", join \"-\" [\"x\"; \"y\"], length [1; 2; 3])", ("([1; 2; 3], [\"a\"; \"b\"], [\"a\"; \"b\"], \"x-y\", 3)\n", "", 0), "sort, split, join, length (C 런타임의 리스트 함수)"
+          "exception E of int list in try raise (E [1; 2]) with E xs -> println xs", ("[1; 2]\n", "", 0), "예외의 리스트 인자"
+          "let f = fun xs -> fun x -> x :: xs in let g = f [9] in println (g 1, g 2)", ("([1; 9], [2; 9])\n", "", 0), "클로저가 붙잡은 리스트"
+          "let rec build n acc = if n = 0 then acc else build (n - 1) ([n] :: acc) in let xs = build 300000 [] in println (length xs, head xs, nth xs 299999, length (map (fun l -> 0 :: l) xs))", ("(300000, [1], [300000], 300000)\n", "", 0), "리스트 30만 개 안의 리스트: 수거가 여러 번 일어나도 그대로"
+          "let xs = range 1 500000 in let ys = map (fun x -> (x, [x])) xs in println (length ys, nth ys 499999)", ("(500000, (500000, [500000]))\n", "", 0), "튜플 안의 리스트 50만 개"
+          "type t = N of int list * t | E in let rec mk n = if n = 0 then E else N ([n; n], mk (n - 1)) in println (mk 3)", ("N ([3; 3], N ([2; 2], N ([1; 1], E)))\n", "", 0), "생성자 인자 안의 리스트"
+          "match [1; 2; 3] with a :: b :: rest -> println (a, b, rest) | _ -> ()", ("(1, 2, [3])\n", "", 0), "x :: y :: rest 패턴"
+          "println (match ([1], [2]) with (x :: _, y :: _) -> x + y | _ -> 0)", ("3\n", "", 0), "튜플 match 안의 cons 패턴"
+          "let rec loop n acc = if n = 0 then length acc else loop (n - 1) (n :: (if n % 1000 = 0 then [] else acc)) in println (loop 2000000 [])", ("1000\n", "", 0), "오래 사는 칸과 바로 버리는 칸이 섞임"
+        ]
       "튜플 match 와 rev_append",
         [
           "println (match ((print 1; [1]), (print 2; [])) with ([], _) -> 0 | (_, []) -> 2 | (x :: _, y :: _) -> x + y)", ("122\n", "", 0), "원소는 왼쪽부터 계산한 뒤 맞춤"
@@ -576,8 +590,8 @@ let tests =
                 Expect.equal (Codegen.stringHeader 4) 0x202L "8바이트 = 1단어"
                 Expect.equal (Codegen.stringHeader 5) 0x302L "10바이트 = 2단어"
             }
-            test "cons 와 튜플 헤더" {
-                Expect.equal Codegen.consHeader 0x203L "종류 3, head 와 tail"
+            test "cons 태그와 튜플 헤더" {
+                Expect.equal Codegen.consTag 2L "cons 는 헤더 없는 [head, tail] 블록의 주소 | 2"
                 Expect.equal (Codegen.tupleHeader 3) 0x304L "종류 4, 원소 3개"
                 Expect.equal Codegen.nilValue 5L "[] 는 즉시값"
             }
