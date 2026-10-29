@@ -574,7 +574,11 @@ let s = ref 0 in for i = 1 to 10 do s := !s + i done; !s
 
 - **런타임:** 결과 출력(`calc_buffer_value`)은 `ref 1`, `ref (Some 1)`처럼 생성자와 같은 괄호 규칙으로 출력하고, `calc_eq`는 내용을 비교합니다. 인터프리터의 `Eval.formatValue`, `Eval.valueEquals`와 같습니다.
 - **GC:** Boehm GC는 세대별이 아니므로 기존 블록의 칸에 새 블록의 포인터를 써도 write barrier가 필요 없습니다.
-- **반복문:** 파서가 `while`, `for`를 `$while`, `$for`라는 `let rec` 함수로 바꿉니다([grammar.md](grammar.md) "mutable reference와 반복문"). 컴파일러가 따로 할 일은 없습니다. 다음 반복은 tail position의 호출이라 `tail` 호출이 되고(12장), 이름에 묶은 함수라 direct call입니다(15장). 그래서 반복 횟수와 상관없이 스택이 자라지 않고, 클로저는 반복문마다 한 번만 만듭니다.
+- **반복문:** 파서가 `while`, `for`를 `$while`, `$for`라는 `let rec` 함수로 바꿉니다([grammar.md](grammar.md) "mutable reference와 반복문"). 인터프리터는 이 함수를 그대로 씁니다.
+  - **컴파일러 (0.57.0부터):** `Lower`가 이 모양을 알아보고 Core의 `CWhile`, `CFor`로 바꿉니다. Codegen은 지금 함수 안의 `scf.while`을 만듭니다. 반복 몸체를 최상위 함수로 만들지 않으므로 클로저가 없고, 바깥 변수는 SSA 값 그대로입니다.
+  - **`for`의 끝:** `for`는 `(i, 계속할지)`를 반복이 넘기고, 몸체 뒤에 `i`가 끝값 앞일 때만 `i ± 1`을 계산합니다. 그래서 끝값이 int의 끝이어도 넘치지 않습니다(파서의 `$for`와 같은 규칙).
+  - **효과:** 바깥 반복 한 바퀴마다 안쪽 반복의 클로저를 만들던 비용이 없어졌습니다. 겹친 `for` 2만 × 2만이 0.17초에서 0.13초가 되었습니다.
+  - **0.56.0까지:** 다음 반복은 tail position의 호출이라 `tail` 호출이 되고(12장), 이름에 묶은 함수라 direct call이었습니다(15장). 그래서 스택은 자라지 않았지만, 반복문마다 클로저를 만들었습니다.
 - **속도:** `for i = 1 to 100000000 do s := !s + i % 7 done`은 0.22초이고, 같은 일을 하는 tail recursion(`let rec go i s = …`)과 같습니다(`-O2`).
 
 ## 17. 레코드

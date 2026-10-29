@@ -497,6 +497,48 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
         let b = emitExpr fb env body
         let h = emitExpr fb env handler
         emitCall fb "calc_try" [ b; h ] "i64"
+    // while: 지금 함수 안의 scf.while. 조건 영역과 몸체 영역은 바깥의 값을 그대로 씀 (클로저가 없음)
+    | CWhile (cond, body) ->
+        fb.Emit("scf.while : () -> () {")
+        fb.Indent()
+        fb.Emit(sprintf "scf.condition(%s)" (untagBool fb (emitExpr fb env cond)))
+        fb.Dedent()
+        fb.Emit("} do {")
+        fb.Indent()
+        emitExpr fb env body |> ignore
+        fb.Emit("scf.yield")
+        fb.Dedent()
+        fb.Emit("}")
+        emitConst fb "i64" unitValue
+    // for: (i, 계속할지) 를 반복이 넘김. 몸체 뒤에 i 가 끝값 앞일 때만 i ± 1 (끝값이 int 의 끝이어도 넘치지 않음)
+    | CFor (var, start, stop, up, body) ->
+        let first = emitExpr fb env start
+        let last = emitExpr fb env stop
+        let go = fb.Fresh()
+        fb.Emit(sprintf "%s = arith.cmpi %s, %s, %s : i64" go (if up then "sle" else "sge") first last)
+        let r = fb.Fresh()
+        let i = fb.Fresh()
+        let more = fb.Fresh()
+        fb.Emit(sprintf "%s:2 = scf.while (%s = %s, %s = %s) : (i64, i1) -> (i64, i1) {" r i first more go)
+        fb.Indent()
+        fb.Emit(sprintf "scf.condition(%s) %s, %s : i64, i1" more i more)
+        fb.Dedent()
+        let current = fb.Fresh()
+        let unused = fb.Fresh()
+        fb.Emit("} do {")
+        fb.Emit(sprintf "^bb0(%s: i64, %s: i1):" current unused)
+        fb.Indent()
+        emitExpr fb (Map.add var current env) body |> ignore
+        let before = fb.Fresh()
+        fb.Emit(sprintf "%s = arith.cmpi %s, %s, %s : i64" before (if up then "slt" else "sgt") current last)
+        // 태그를 붙인 int 에 ±1 은 ±8 (끝값 앞이라 넘치지 않음)
+        let stepped = emitOp fb "arith.addi" current (emitConst fb "i64" (if up then 8L else -8L)) "i64"
+        let next = fb.Fresh()
+        fb.Emit(sprintf "%s = arith.select %s, %s, %s : i64" next before stepped current)
+        fb.Emit(sprintf "scf.yield %s, %s : i64, i1" next before)
+        fb.Dedent()
+        fb.Emit("}")
+        emitConst fb "i64" unitValue
     | CLetRecGroup (closures, body) -> emitExpr fb (emitRecGroup fb env closures) body
     | CNil -> emitConst fb "i64" nilValue
     // 인터프리터처럼 head 를 먼저 계산

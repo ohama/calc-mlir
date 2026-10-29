@@ -69,6 +69,10 @@ type CExpr =
     | CMatch of scrutinee: CExpr * cases: (Pattern * CExpr option * CExpr) list
     /// try: 런타임의 calc_try 가 _setjmp 한 뒤 body 클로저를 () 로 부르고, raise 되면 handler 클로저를 예외 값으로 부름
     | CTry of body: CExpr * handler: CExpr
+    /// while cond do body: 클로저를 만들지 않고 지금 함수 안의 반복으로 (결과는 ())
+    | CWhile of cond: CExpr * body: CExpr
+    /// for var = start to (또는 downto) stop do body: start 와 stop 은 이미 계산한 변수. 끝에 닿으면 var ± 1 을 계산하지 않음
+    | CFor of var: string * start: CExpr * stop: CExpr * up: bool * body: CExpr
 
 /// fun param -> body 를 최상위로 옮긴 것. 호출 규약은 (클로저, 인자...) -> 결과 (D4).
 /// 클로저로 부르는 함수는 인자가 하나, 인자를 모두 받는 direct 함수(CCallDirect)는 여럿
@@ -118,6 +122,8 @@ let rec freeVars (expr: CExpr) : Set<string> =
     | CField (e, _) -> freeVars e
     | CData (_, payload) -> payload |> Option.map freeVars |> Option.defaultValue Set.empty
     | CBuiltin (_, args) -> args |> List.map freeVars |> Set.unionMany
+    | CWhile (cond, body) -> Set.union (freeVars cond) (freeVars body)
+    | CFor (var, start, stop, _, body) -> Set.unionMany [ freeVars start; freeVars stop; Set.remove var (freeVars body) ]
     | CMatch (scrutinee, cases) ->
         let caseVars (pattern, guard, body) =
             let used = Set.union (guard |> Option.map freeVars |> Option.defaultValue Set.empty) (freeVars body)

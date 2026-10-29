@@ -392,6 +392,17 @@ let private runCases =
           "let rec build n acc = if n = 0 then acc else build (n - 1) ((n, [n], Some n) :: acc) in let xs = build 300000 [] in println (length xs, head xs, nth xs 299999)", ("(300000, (1, [1], Some 1), (300000, [300000], Some 300000))\n", "", 0), "작은 블록 여러 크기, 수거가 일어나도 값이 그대로"
           "let t = (1, 2, 3, 4, 5, 6, 7, 8, 9) in let a = Array.create 20 7 in println (t, Array.length a, a.[19], [||] = [||])", ("((1, 2, 3, 4, 5, 6, 7, 8, 9), 20, 7, true)\n", "", 0), "8 단어보다 큰 블록과 빈 배열"
         ]
+      "반복문 (지금 함수 안의 scf.while)",
+        [
+          "let s = ref 0 in for i = 1 to 10 do s := !s + i done; for i = 3 downto 1 do print i done; for i = 5 to 4 do print \"x\" done; for i = 4 downto 5 do print \"y\" done; println !s", ("32155\n", "", 0), "for: 위로, 아래로, 빈 범위"
+          "for k = 2147483646 to 2147483647 do print k done; for k = -2147483647 downto -2147483647 - 1 do print k done; println \"\"", ("21474836462147483647-2147483647-2147483648\n", "", 0), "끝값이 int 의 끝: i ± 1 을 계산하지 않고 끝남"
+          "let a = ref 1 in let b = ref 2 in let f () = (a := !a + 1; !a) in for i = (print \"s\"; f ()) to (print \"e\"; f () + 1) do print i done; println (!a, !b)", ("se234(3, 2)\n", "", 0), "start, stop 은 한 번씩 왼쪽부터"
+          "let fs = ref [] in for i = 1 to 3 do fs := (fun () -> i * 10) :: !fs done; println (map (fun f -> f ()) !fs)", ("[30; 20; 10]\n", "", 0), "몸체의 클로저가 반복마다의 i 를 붙잡음"
+          "let s = ref 0 in for i = 1 to 300 do for j = 1 to 300 do s := (!s + i * j) % 1000 done done; println !s", ("500\n", "", 0), "겹친 for"
+          "let i = ref 0 in let n = ref 0 in while (i := !i + 1; !i <= 5) do (while !n < !i * 2 do n := !n + 1 done) done; println (!i, !n)", ("(6, 10)\n", "", 0), "조건에 부수 효과, 겹친 while"
+          "exception Stop of int in let r = ref 0 in (try while true do (r := !r + 1; if !r = 5 then raise (Stop !r) else ()) done with Stop k -> println k)", ("5\n", "", 0), "반복 안에서 raise"
+          "let i = ref 0 in while !i < 1000000 do i := !i + 1 done; println !i", ("1000000\n", "", 0), "긴 반복 (스택이 자라지 않음)"
+        ]
       "타입이 int 인 연산",
         [
           "println (2147483647 + 1, -2147483647 - 1 - 1, 5 - 7, 100 + -3, 0 - 0, 1073741824 + 1073741824, -1073741824 - 1073741825)", ("(-2147483648, 2147483647, -2, 97, 0, -2147483648, 2147483647)\n", "", 0), "태그를 떼지 않는 +, -: 32비트에서 한 바퀴"
@@ -629,6 +640,12 @@ let tests =
                 for f in [ "calc_error_index"; "calc_error_divide_by_zero"; "calc_error_overflow"; "calc_match_failure" ] do
                     Expect.stringContains mlir (sprintf "llvm.func @%s(" f) f
                     Expect.isTrue (mlir.Split('\n') |> Array.exists (fun l -> l.Contains("@" + f + "(") && l.Contains "noreturn")) f
+            }
+            // 파서가 while/for 를 바꾼 let rec 을 Lower 가 알아보고 지금 함수 안의 반복(scf.while)으로 (클로저를 만들지 않음)
+            test "while 과 for 는 지금 함수 안의 scf.while" {
+                let mlir = Codegen.emitProgram (Program.parse "let s = ref 0 in for i = 1 to 3 do (let j = ref 0 in while !j < i do j := !j + 1 done; s := !s + !j) done; !s")
+                Expect.equal (mlir.Split([| "scf.while" |], System.StringSplitOptions.None).Length - 1) 2 "for 하나, while 하나"
+                Expect.isFalse (mlir.Contains "llvm.func internal tailcc @lambda_") "반복 몸체가 최상위 함수가 되지 않음"
             }
             test "어떤 값과도 일치하는 분기 뒤는 생성하지 않음" {
                 // + 는 int 인지 보는 scf.if 를 만들므로 - 로 확인

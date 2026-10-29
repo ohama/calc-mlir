@@ -145,6 +145,18 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Scope) (
     | Or (a, b) -> CIf (lower state ctors scope a, CBool true, lower state ctors scope b)
     | Lambda (param, body) -> state.AddFunction(param, None, lower state ctors (bind param scope) body)
     // let rec f x = body in e: 본문의 f 는 클로저 자신이라 캡처하지 않음. 본문의 재귀 호출도 direct 함수로
+    // 파서가 while 을 바꾼 모양 (Parser.makeWhile): let rec $while $u = if c then (body; $while ()) else () in $while ()
+    | LetRec ("$while", "$u", If (cond, Seq (body, App (Var "$while", Unit)), Unit), App (Var "$while", Unit)) ->
+        CWhile (lower state ctors scope cond, lower state ctors scope body)
+    // 파서가 for 를 바꾼 모양 (Parser.makeFor): let rec $for i = body; if i < $stop then $for (i + 1) else () in
+    // if $start <= $stop then $for $start else () (downto 는 >, -, >=)
+    | LetRec ("$for", var, Seq (body, If (before, App (Var "$for", step), Unit)), If (startsBefore, App (Var "$for", Var "$start"), Unit))
+        when (match before, step, startsBefore with
+              | Less (Var v, Var "$stop"), Add (Var w, Number 1), LessEqual (Var "$start", Var "$stop")
+              | Greater (Var v, Var "$stop"), Subtract (Var w, Number 1), GreaterEqual (Var "$start", Var "$stop") -> v = var && w = var
+              | _ -> false) ->
+        let up = (match step with Add _ -> true | _ -> false)
+        CFor (var, lower state ctors scope (Var "$start"), lower state ctors scope (Var "$stop"), up, lower state ctors (bind var scope) body)
     | LetRec (name, param, body, inExpr) ->
         let rest, inner = lambdaChain body
         let parameters = param :: rest
