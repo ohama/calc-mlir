@@ -514,6 +514,29 @@ let tests =
             expectError "5.[0] <- 1" "Type error: expected array but got int"
         ]
 
+        // 미리 만든 작은 정수, 조건식의 bool 경로 (Eval.ofInt, Eval.test), 객체 하나인 Frame
+        testList "빠른 경로의 경계" [
+            test "미리 만든 정수의 경계와 넘침" {
+                Expect.equal (calc "(1022 + 1, 1023 + 1, -255 - 1, -256 - 1, 2147483647 + 1, 0 - 0)")
+                    (VTuple [ VInt 1023; VInt 1024; VInt -256; VInt -257; VInt -2147483648; VInt 0 ]) ""
+                Expect.equal (calc "(1024 = 1023 + 1, -257 = -256 - 1, 5000 * 3 = 15000)") (VTuple [ VBool true; VBool true; VBool true ]) ""
+            }
+            test "조건식: int, string 비교와 단락 평가" {
+                Expect.equal (calc "if \"a\" < \"b\" && not (2 > 3) || 1 / 0 = 0 then 1 else 2") (VInt 1) ""
+                Expect.equal (calc "if [1; 2] = [1; 2] && (1, \"a\") <> (1, \"b\") then 1 else 2") (VInt 1) ""
+                Expect.equal (calc "let x = 3 in (x >= 3, x <= 2, x <> 3, not (x = 3))") (VTuple [ VBool true; VBool false; VBool false; VBool false ]) ""
+            }
+            expectError "if 1 = true then 1 else 0" "Type error: expected int but got bool"
+            expectError "if 1 < \"a\" then 1 else 0" "Type error: expected int but got string"
+            expectError "if \"a\" < 1 then 1 else 0" "Type error: expected string but got int"
+            expectError "if true < false then 1 else 0" "Type error: expected int or string but got bool"
+            expectError "if 1 then 1 else 0" "Type error: expected bool but got int"
+            expectError "if not 1 then 1 else 0" "Type error: expected bool but got int"
+            test "세 단계 넘게 바깥 함수의 칸" {
+                Expect.equal (calc "let a = 1 in let f b = let g c = let h d = let k e = a + b + c + d + e in k in h in g in f 2 3 4 5") (VInt 15) ""
+            }
+        ]
+
         testList "unit, ;, print" [
             let run (input: string) =
                 use writer = new System.IO.StringWriter()

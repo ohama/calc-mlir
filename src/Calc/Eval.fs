@@ -30,17 +30,25 @@ type Value =
 
 /// 함수 값: fun p1 -> … -> fun pn -> body 를 인자 Arity 개의 함수 하나로. 부를 때 Size 칸의 Frame 을 만들고 칸 0.. 에 인자를 넣어
 /// Code 를 실행. Bound 는 partial application 으로 이미 받은 인자. 같은 함수인지만 비교할 수 있음 (참조)
-and Closure(arity: int, size: int, parent: Frame, code: Frame -> Value, bound: Value list) =
+and Closure(arity: int, size: int, parent: obj[], code: obj[] -> Value, bound: Value list) =
     member _.Arity = arity
     member _.Size = size
     member _.Parent = parent
     member _.Code = code
     member _.Bound = bound
 
-/// 함수 호출(과 최상위 식) 하나의 칸들. 안쪽 함수의 Frame 은 그 함수를 만든 곳의 Frame 을 Parent 로 가리킴 (정적 범위)
-and [<AllowNullLiteral>] Frame(size: int, parent: Frame) =
-    member val Slots: Value[] = Array.zeroCreate size
-    member _.Parent = parent
+/// 함수 호출(과 최상위 식) 하나의 칸들: [바깥 Frame; 칸 0; 칸 1; …]. 안쪽 함수의 Frame 은 그 함수를 만든 곳의 Frame 을
+/// 0번에 가리킴 (정적 범위). 객체 하나라서 호출마다 할당이 한 번 (Frame 객체와 칸 배열을 따로 두면 두 번)
+type Frame = obj[]
+
+// 0번에는 Frame(또는 최상위의 null), 나머지에는 Value(또는 아직 쓰지 않은 null)만 넣으므로 형 검사 없이 꺼냄
+let inline private slotOf (fr: Frame) (slot: int) : Value = System.Runtime.CompilerServices.Unsafe.As<Value>(fr[slot + 1])
+let inline private setSlot (fr: Frame) (slot: int) (v: Value) = fr[slot + 1] <- v
+let inline private parentOf (fr: Frame) : Frame = System.Runtime.CompilerServices.Unsafe.As<obj[]>(fr[0])
+let inline private newFrame (size: int) (parent: Frame) : Frame =
+    let fr: obj[] = Array.zeroCreate (size + 1)
+    fr[0] <- parent
+    fr
 
 /// 이름 → 값. 내장 함수, 생성자, REPL 의 앞 입력에서 정의한 값 (평가할 때는 상수로 씀)
 type Env = Map<string, Value>
@@ -405,6 +413,10 @@ let recordTypeOf (env: Env) (field: string) =
 let private vTrue = VBool true
 let private vFalse = VBool false
 let inline private ofBool b = if b then vTrue else vFalse
+/// -256 ~ 1023 의 정수와 빈 리스트도 미리 만들어 둔 값을 씀
+let private smallInts = Array.init 1280 (fun i -> VInt (i - 256))
+let inline private ofInt n = if uint32 (n + 256) < 1280u then smallInts[n + 256] else VInt n
+let private vNil = VList []
 
 type private SlotCount() =
     member val Count = 0 with get, set
@@ -430,15 +442,15 @@ let private bindSlot (scope: Scope) (name: string) =
 /// hops 단계 바깥 함수의 slot 번째 칸
 let private access (hops: int) (slot: int) : Code =
     match hops with
-    | 0 -> fun fr -> fr.Slots[slot]
-    | 1 -> fun fr -> fr.Parent.Slots[slot]
-    | 2 -> fun fr -> fr.Parent.Parent.Slots[slot]
+    | 0 -> fun fr -> slotOf fr slot
+    | 1 -> fun fr -> slotOf (parentOf fr) slot
+    | 2 -> fun fr -> slotOf (parentOf (parentOf fr)) slot
     | _ ->
         fun fr ->
             let mutable f = fr
             for _ in 1 .. hops do
-                f <- f.Parent
-            f.Slots[slot]
+                f <- parentOf f
+            slotOf f slot
 
 let private asInt (code: Code) fr =
     match code fr with
@@ -460,6 +472,23 @@ let private asList (code: Code) fr =
     | VList items -> items
     | v -> typeError "list" v
 
+/// < > <= >= 는 int 끼리 또는 string 끼리 (문자 코드 순서) 비교. int 끼리는 compareValues 를 거치지 않음
+let inline private orderTest (a: Code) (b: Code) ([<InlineIfLambda>] op: int -> int -> bool) ([<InlineIfLambda>] test: int -> bool) : Frame -> bool =
+    fun fr ->
+        match a fr with
+        | VInt x ->
+            match b fr with
+            | VInt y -> op x y
+            | v -> typeError "int" v
+        | VString _ as x -> test (compareValues x (b fr))
+        | v -> typeError "int or string" v
+
+/// - * / % : int 끼리
+let inline private arith (a: Code) (b: Code) ([<InlineIfLambda>] op: int -> int -> int) : Code =
+    fun fr ->
+        let x = asInt a fr
+        ofInt (op x (asInt b fr))
+
 let rec private patternNames pattern =
     match pattern with
     | PVar name -> [ name ]
@@ -478,7 +507,7 @@ let rec private compilePattern (scope: Scope) (pattern: Pattern) : Value -> Fram
     | PVar name ->
         let _, slot = scope.Vars[name]
         fun v fr ->
-            fr.Slots[slot] <- v
+            setSlot fr slot v
             true
     | PWildcard -> fun _ _ -> true
     | PUnit -> fun v _ -> v = VUnit
@@ -600,7 +629,7 @@ and private compile (scope: Scope) (expr: Expr) : Code =
         let slot, inner = bindSlot scope name
         let body = compile inner body
         fun fr ->
-            fr.Slots[slot] <- value fr
+            setSlot fr slot (value fr)
             body fr
     // 본문의 name 은 지금 칸을 가리키므로, 함수를 만든 뒤 그 칸에 넣으면 자기 자신
     | LetRec (name, param, body, inExpr) ->
@@ -608,7 +637,7 @@ and private compile (scope: Scope) (expr: Expr) : Code =
         let f = lambda inner param body
         let rest = compile inner inExpr
         fun fr ->
-            fr.Slots[slot] <- f fr
+            setSlot fr slot (f fr)
             rest fr
     | LetRecs (bindings, inExpr) ->
         let inner, slots =
@@ -619,7 +648,7 @@ and private compile (scope: Scope) (expr: Expr) : Code =
         let rest = compile inner inExpr
         fun fr ->
             for i in 0 .. fs.Length - 1 do
-                fr.Slots[slots[i]] <- fs[i] fr
+                setSlot fr (slots[i]) (fs[i] fr)
             rest fr
     | Lambda (param, body) -> lambda scope param body
     // 값에 의한 호출: 함수와 인자를 먼저 평가한 뒤 본문을 평가. f a b 는 (f a) b 와 같은 순서:
@@ -640,15 +669,20 @@ and private compile (scope: Scope) (expr: Expr) : Code =
             fun fr ->
                 let fv = f fr
                 let av = arg fr
-                apply fv av
+                match fv with
+                | VClosure cl when cl.Arity = 1 && cl.Bound.IsEmpty ->
+                    let frame = newFrame cl.Size cl.Parent
+                    setSlot frame 0 av
+                    cl.Code frame
+                | _ -> apply fv av
         | _ ->
             let n = args.Length
             fun fr ->
                 match f fr with
                 | VClosure cl when cl.Arity = n && cl.Bound.IsEmpty ->
-                    let frame = Frame(cl.Size, cl.Parent)
+                    let frame = newFrame cl.Size cl.Parent
                     for i in 0 .. n - 1 do
-                        frame.Slots[i] <- args[i] fr
+                        setSlot frame i (args[i] fr)
                     cl.Code frame
                 | fv ->
                     let mutable g = fv
@@ -656,48 +690,27 @@ and private compile (scope: Scope) (expr: Expr) : Code =
                         g <- apply g (args[i] fr)
                     apply g (args[n - 1] fr)
     | If (cond, thenExpr, elseExpr) ->
-        let cond, t, e = c cond, c thenExpr, c elseExpr
-        fun fr -> if asBool cond fr then t fr else e fr
+        let cond, t, e = test scope cond, c thenExpr, c elseExpr
+        fun fr -> if cond fr then t fr else e fr
     // + 는 int 덧셈 또는 string 연결. 왼쪽 값의 타입으로 정함
     | Add (a, b) ->
         let a, b = c a, c b
         fun fr ->
             match a fr with
-            | VInt x -> VInt (x + asInt b fr)
+            | VInt x -> ofInt (x + asInt b fr)
             | VString x -> VString (x + asString b fr)
             | v -> typeError "int or string" v
-    | Subtract (a, b) -> intOp scope a b (-)
-    | Multiply (a, b) -> intOp scope a b (*)
-    | Divide (a, b) -> intOp scope a b (/)
-    | Modulo (a, b) -> intOp scope a b (%)
+    | Subtract (a, b) -> arith (c a) (c b) (fun x y -> x - y)
+    | Multiply (a, b) -> arith (c a) (c b) (fun x y -> x * y)
+    | Divide (a, b) -> arith (c a) (c b) (fun x y -> x / y)
+    | Modulo (a, b) -> arith (c a) (c b) (fun x y -> x % y)
     | Negate e ->
         let e = c e
         fun fr -> VInt -(asInt e fr)
-    | Equal (a, b) ->
-        let a, b = c a, c b
-        fun fr ->
-            let x = a fr
-            ofBool (valueEquals x (b fr))
-    | NotEqual (a, b) ->
-        let a, b = c a, c b
-        fun fr ->
-            let x = a fr
-            ofBool (not (valueEquals x (b fr)))
-    | Less (a, b) -> comparison scope a b (fun n -> n < 0)
-    | Greater (a, b) -> comparison scope a b (fun n -> n > 0)
-    | LessEqual (a, b) -> comparison scope a b (fun n -> n <= 0)
-    | GreaterEqual (a, b) -> comparison scope a b (fun n -> n >= 0)
-    // && 와 || 는 단락 평가: 왼쪽으로 결과가 정해지면 오른쪽은 평가하지 않음
-    | And (a, b) ->
-        let a, b = c a, c b
-        fun fr -> ofBool (asBool a fr && asBool b fr)
-    | Or (a, b) ->
-        let a, b = c a, c b
-        fun fr -> ofBool (asBool a fr || asBool b fr)
-    | Not e ->
-        let e = c e
-        fun fr -> ofBool (not (asBool e fr))
-    | Nil -> fun _ -> VList []
+    | Equal _ | NotEqual _ | Less _ | Greater _ | LessEqual _ | GreaterEqual _ | And _ | Or _ | Not _ ->
+        let t = test scope expr
+        fun fr -> ofBool (t fr)
+    | Nil -> fun _ -> vNil
     | Cons (head, tail) ->
         let head, tail = c head, c tail
         fun fr ->
@@ -834,32 +847,51 @@ and private saturatedBuiltin (scope: Scope) (head: Expr) (args: Code[]) : Code o
             | v -> typeError "array" v)
     | Some name, _ -> Some (fun fr -> callBuiltin name [ for a in args -> a fr ])
 
-/// - * / % : int 끼리
-and private intOp (scope: Scope) a b (op: int -> int -> int) : Code =
-    let a, b = compile scope a, compile scope b
-    fun fr ->
-        let x = asInt a fr
-        VInt (op x (asInt b fr))
-
-/// < > <= >= 는 int 끼리 또는 string 끼리 (문자 코드 순서) 비교
-and private comparison (scope: Scope) a b (test: int -> bool) : Code =
-    let a, b = compile scope a, compile scope b
-    fun fr ->
-        match a fr with
-        | VInt _ | VString _ as x -> ofBool (test (compareValues x (b fr)))
-        | v -> typeError "int or string" v
+/// 조건과 비교, 논리 연산: 중간 결과로 VBool 을 만들지 않고 bool 을 돌려줌 (if 의 조건은 이것만 씀)
+and private test (scope: Scope) (expr: Expr) : Frame -> bool =
+    let c = compile scope
+    match expr with
+    | Less (a, b) -> orderTest (c a) (c b) (fun x y -> x < y) (fun n -> n < 0)
+    | Greater (a, b) -> orderTest (c a) (c b) (fun x y -> x > y) (fun n -> n > 0)
+    | LessEqual (a, b) -> orderTest (c a) (c b) (fun x y -> x <= y) (fun n -> n <= 0)
+    | GreaterEqual (a, b) -> orderTest (c a) (c b) (fun x y -> x >= y) (fun n -> n >= 0)
+    | Equal (a, b) ->
+        let a, b = c a, c b
+        fun fr ->
+            match a fr with
+            | VInt x -> (match b fr with VInt y -> x = y | v -> typeError "int" v)
+            | x -> valueEquals x (b fr)
+    | NotEqual (a, b) ->
+        let a, b = c a, c b
+        fun fr ->
+            match a fr with
+            | VInt x -> (match b fr with VInt y -> x <> y | v -> typeError "int" v)
+            | x -> not (valueEquals x (b fr))
+    // && 와 || 는 단락 평가: 왼쪽으로 결과가 정해지면 오른쪽은 평가하지 않음
+    | And (a, b) ->
+        let a, b = test scope a, test scope b
+        fun fr -> a fr && b fr
+    | Or (a, b) ->
+        let a, b = test scope a, test scope b
+        fun fr -> a fr || b fr
+    | Not e ->
+        let e = test scope e
+        fun fr -> not (e fr)
+    | _ ->
+        let e = c expr
+        fun fr -> asBool e fr
 
 and apply fv av =
     match fv with
     // 인자가 다 모이면 Frame 을 만들어 본문 실행, 아니면 받은 인자를 더한 함수
     | VClosure cl ->
         if cl.Arity = 1 then
-            let frame = Frame(cl.Size, cl.Parent)
+            let frame = newFrame cl.Size cl.Parent
             let mutable i = 0
             for b in cl.Bound do
-                frame.Slots[i] <- b
+                setSlot frame i b
                 i <- i + 1
-            frame.Slots[i] <- av
+            setSlot frame i av
             cl.Code frame
         else VClosure (Closure(cl.Arity - 1, cl.Size, cl.Parent, cl.Code, cl.Bound @ [ av ]))
     | VBuiltin (name, []) when Format.kinds.Contains name ->
@@ -888,7 +920,7 @@ and private formatFunction (kind: string) (format: string) =
 and evalIn (env: Env) (expr: Expr) : Value =
     let slots = SlotCount()
     let code = compile { Vars = Map.empty; Depth = 0; Slots = slots; Consts = env } expr
-    code (Frame(slots.Count, null))
+    code (newFrame slots.Count null)
 
 /// let rec f x = ... and g y = ...: 그룹의 함수를 만들어 환경에 추가 (REPL 의 최상위 let rec)
 let declareRecGroup (env: Env) (bindings: (string * string * Expr) list) =

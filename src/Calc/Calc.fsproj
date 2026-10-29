@@ -3,11 +3,17 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
-    <Version>0.43.0</Version>
+    <Version>0.44.0</Version>
     <!-- 평가기의 tail call(evalIn → apply → evalIn)이 스택을 쓰지 않도록 Debug 에서도 .tail 호출을 냄.
          Calc 로 쓴 prelude(map, range 등)가 tail recursion 이라서, 빌드 구성에 따라 깊이 한계가 달라지면 안 됨 -->
     <Tailcalls>true</Tailcalls>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 기본값으로는 시작하고 100ms 동안 자주 부르는 메서드를 다시 최적화하지 않음. 1초 안팎에 끝나는 프로그램이 많아서
+         바로 시작하게 함 (fib 32: 0.39초 → 0.31초) -->
+    <RuntimeHostConfigurationOption Include="System.Runtime.TieredCompilation.CallCountingDelayMs" Value="0" />
+  </ItemGroup>
 
   <ItemGroup>
     <Compile Include="Ast.fs" />
