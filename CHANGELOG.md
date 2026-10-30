@@ -4,6 +4,12 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.65.1] - 2026-10-30
+
+### 변경
+- 세대 구분 GC (`CALC_GC=gen`): write barrier가 같은 칸은 다음 minor GC까지 한 번만 기록합니다(old 블록마다 단어당 bit). remembered set이 차면 GC를 일으키지 않고 늘립니다. old 배열의 칸 1000개에 새 리스트를 3천만 번 쓰는 프로그램이 0.12초(minor GC 457번)에서 0.07초(28번)로, Boehm과 같아졌습니다.
+- 테스트 1개 추가 (총 1242개): 세대 구분 GC 묶음에 minor GC 사이에 서로 다른 칸 20만 개에 쓰는 경우
+
 ## [0.65.0] - 2026-10-30
 
 ### 추가

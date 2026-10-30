@@ -173,7 +173,7 @@ static inline void calc_write(value *slot, value v) {
 ```
 
 - **빠른 길:** 쓰는 값이 int, bool 같은 즉시값이면 태그 검사 하나로 끝납니다. 체와 `incr`처럼 int를 쓰는 반복은 거의 그대로입니다. 타입 추론이 int로 정한 `:=`에는 barrier를 아예 내지 않을 수 있습니다(0.54.0의 `Infer.intOperations`와 같은 방식).
-- **remembered set:** 칸 주소의 배열(sequential store buffer)입니다. 꽉 차면 minor GC를 합니다. 같은 칸이 여러 번 들어가도 결과는 같습니다.
+- **remembered set:** 칸 주소의 배열(sequential store buffer)입니다. old 블록마다 단어당 bit를 두어, 다음 minor GC까지 같은 칸은 한 번만 넣습니다. 배열이 차면 늘립니다. 그래서 barrier는 GC를 일으키지 않습니다(3단계, 13장).
 - **큰 배열:** 칸 주소를 기록하므로 배열 전체를 훑지 않습니다.
 - **Codegen:** `:=`, 단어 배열 쓰기, `emitRecGroup`의 칸 채우기에서 store 뒤에 위 검사를 펼쳐 넣습니다. 느린 길만 런타임 함수(`calc_remember`)를 부릅니다.
 - **런타임:** `push`, `range`, `calc_array_set`, `Array.create`(old space에 바로 만든 큰 배열)에서 `calc_write`를 씁니다.
@@ -216,7 +216,7 @@ pin 한 nursery 블록은 안의 객체를 모두 훑어야 합니다. 헤더 �
 | nursery 블록 크기 | 32KB | pin 하나가 넘기는 양. 작으면 블록 표가 커짐 |
 | large object 경계 | 2KB | old space 블록 크기의 1/16 |
 | major GC 시작 | 지난 major GC 뒤 살아 있던 크기의 3배 (64MB 이상) | 1단계에서 정함 (11장) |
-| remembered set 크기 | 64K 칸 | 꽉 차면 minor GC |
+| remembered set 크기 | 64K 칸에서 시작 | 차면 두 배로 늘림 (3단계) |
 
 ## 6. 검증
 
@@ -234,7 +234,7 @@ pin 한 nursery 블록은 안의 객체를 모두 훑어야 합니다. 헤더 �
 |---|---|---|
 | 1. C 모델 (끝남, 11장) | C 모델에 collector를 붙임(nursery, minor GC, pinning, old space, major GC, write barrier) | Boehm 대비 msortm 0.33초 이하, livem 0.12초 이하, bstm 1.0초 이하. 최대 메모리는 Boehm의 1.5배 이하. 아니면 3장의 E를 다시 봄 |
 | 2. 런타임에 넣기 (끝남, 12장) | 1단계의 collector를 `runtime/gc.c`로. 할당 함수, 런타임 전역 root 등록, 런타임과 Codegen의 barrier(포인터일 때 런타임 호출). 빌드 스위치 `CALC_GC=gen`, 기본은 Boehm | 전체 테스트가 두 모드와 GC stress 모드에서 통과 |
-| 3. barrier 다듬기 | 빠른 길을 생성 코드에 펼쳐 넣기, int로 정해진 `:=`와 배열 쓰기는 barrier 없이 | MLIR 테스트, 측정 |
+| 3. barrier 다듬기 (끝남, 13장) | 같은 칸을 한 번만 기록, remembered set을 늘림. 펼쳐 넣기와 int 쓰기의 barrier 빼기는 측정해 보고 하지 않음 | 측정, 전체 테스트 |
 | 4. 측정과 조정 | nursery 크기, major GC 정책, 깊은 stack(8장) | 1장의 프로그램이 Boehm보다 빠르고, `benchmarks/`가 느려지지 않음 |
 | 5. 기본값으로 | Boehm 경로와 `-lgc`를 뺌. 문서(`compiler-design.md` D5, `compiler-architecture.md`) | 릴리스 |
 
@@ -356,3 +356,22 @@ pin 한 nursery 블록은 안의 객체를 모두 훑어야 합니다. 헤더 �
 - **pipe:** 리스트가 minor GC 몇 번 동안 살아 있어서(백만 개의 중간 리스트) 대부분 복사됩니다. Boehm과 같습니다.
 - **작은 프로그램의 메모리:** nursery가 16MB라 할당이 적은 프로그램도 최대 메모리가 16MB쯤 됩니다.
 - **다른 예제:** `benchmarks/`의 fib, queens, sieve와 배열 반복은 같습니다. barrier의 태그 검사는 int를 쓰는 반복에서 시간 차이가 없었습니다.
+
+## 13. 3단계 결과: barrier 다듬기
+
+barrier가 비싼 경우를 먼저 쟀습니다.
+
+| 프로그램 (실행 파일) | Boehm | 0.65.0 (`CALC_GC=gen`) | 3단계 뒤 |
+|---|---|---|---|
+| old 배열의 칸 1000개에 새 리스트 3천만 번 (`a.[i % 1000] <- [i]`) | 0.07초 | 0.12초 (minor GC 457번) | 0.07초 (minor GC 28번) |
+| ref 1000개에 int 3천만 번 (`r := !r + …`) | 0.03초 | 0.03초 | 0.03초 |
+| int 배열 칸 1000개에 3천만 번 | 0.02초 | 0.02초 | 0.02초 |
+| 같은 ref에 새 리스트 2천만 번 | 0.11초 | 0.10초 | 0.10초 |
+
+- **비쌌던 것:** 같은 칸들에 거듭 쓰면 remembered set이 64K번마다 차서 minor GC를 일으켰습니다. 0.65.0은 바로 앞의 칸만 비교해 중복을 걸렀으므로, 칸이 여럿이면 소용없었습니다.
+- **고친 것:** old 블록마다 단어당 remembered bit(블록당 512바이트, 처음 쓸 때 만듦)를 둡니다. bit가 서 있으면 기록하지 않고, minor GC가 칸을 처리할 때 bit를 지웁니다. remembered set은 차면 두 배로 늘리고 GC를 일으키지 않습니다. 그래서 barrier 안에서 값을 살려 두려고 순서를 맞출 필요도 없어졌습니다.
+- **하지 않은 것:**
+  - **빠른 길을 생성 코드에 펼쳐 넣기:** 위 가장 나쁜 경우도 Boehm과 같아져서 남은 이득이 없습니다. 펼쳐 넣으려면 블록 표의 주소를 생성 코드에 알려야 하고, Boehm 런타임에도 같은 이름이 있어야 합니다.
+  - **int로 정해진 쓰기에서 barrier 빼기:** int를 쓰는 반복은 태그 검사 하나로 끝나서 시간 차이가 없었습니다(위 둘째, 셋째 줄).
+- **테스트:** 세대 구분 GC 묶음에 "minor GC 사이에 서로 다른 칸 20만 개에 씀"(remembered set이 늘어나는 경우)을 더했습니다. 전체 1242개가 Boehm, `CALC_GC=gen`, `CALC_GC_STRESS=10`에서 통과합니다.
+

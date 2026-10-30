@@ -66,6 +66,7 @@ let private compileAndRunGen (env: (string * string) list) (input: string) =
 /// 세대 구분 GC 로 실행하는 프로그램: 수거가 여러 번 일어나고, old 객체에 young 객체를 쓰는 곳(write barrier)을 지남
 let private gcCases =
     [ "let r = ref [] in for i = 1 to 300000 do r := i :: (if i % 1000 = 0 then [] else !r) done; println (length !r, head !r)", ("(1, 300000)\n", "", 0), "ref 에 새 리스트를 거듭 씀 (:=)"
+      "let a = Array.create 200000 [] in let junk = map (fun x -> [x]) (range 1 100000) in for k = 1 to 3 do for i = 0 to 199999 do a.[i] <- [i + k] done done; println (fold (fun s l -> (s + head l) % 1000003) 0 (Array.toList a), length junk)", ("(440000, 100000)\n", "", 0), "minor GC 사이에 서로 다른 칸 20만 개에 씀 (remembered set 이 커짐)"
       "let a = Array.create 1000 [] in for i = 0 to 299999 do a.[i % 1000] <- i :: (if i % 7 = 0 then [] else a.[i % 1000]) done; println (fold (fun s l -> s + length l) 0 (Array.toList a))", ("3997\n", "", 0), "큰 배열(old space 에 바로)의 원소에 새 리스트 (a.[i] <- v)"
       "let xs = range 1 300000 in println (length (append xs [0]), length (filter (fun x -> x % 3 = 0) (map (fun x -> x * 2) xs)), nth (split (join \",\" [\"a\"; \"b\"]) \",\") 1)", ("(300001, 100000, \"b\")\n", "", 0), "런타임이 앞에서부터 만드는 리스트 (append 의 tail 고치기)"
       "let rec mymap f xs = match xs with [] -> [] | x :: rest -> f x :: mymap f rest in println (length (mymap (fun x -> [x]) (range 1 300000)))", ("300000\n", "", 0), "tail call 이 아닌 재귀 30만 단계의 stack"
@@ -835,7 +836,7 @@ let tests =
                 Expect.stringContains mlir "llvm.call @calc_alloc_cons() : () -> !llvm.ptr" "cons 는 cons 만 담는 블록"
                 Expect.stringContains mlir "@calc_write_barrier(!llvm.ptr, i64) attributes {memory_effects" "GC 의 기록만 바꿈"
                 let ints = Codegen.emitProgram (Program.parse "let r = ref 0 in r := 1; !r")
-                Expect.equal (count ints "llvm.call @calc_write_barrier(") 1 "int 를 쓰는 곳도 barrier 를 내지만 실행 중 태그 검사로 건너뜀 (3단계에서 뺌)"
+                Expect.equal (count ints "llvm.call @calc_write_barrier(") 1 "int 를 쓰는 곳도 barrier 를 내지만 실행 중 태그 검사로 건너뜀 (시간 차이가 없어 그대로 둠)"
             }
             test "클로저 칸, ref, 배열 접근에는 서로 다른 TBAA 태그, 오류 함수는 noreturn" {
                 let mlir = Codegen.emitProgram (Program.parse "let a = Array.create 3 0 in let r = ref 0 in let f i = a.[i] <- !r; r := i in f 1")

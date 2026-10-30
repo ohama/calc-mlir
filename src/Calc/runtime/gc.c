@@ -37,6 +37,7 @@ typedef struct {
     uint32_t nblocks;    /* LARGE: 블록 수 */
     char *top;           /* NURSERY*, OLD_PROMOTED*, OLD_SIZED: 쓴 곳의 끝 */
     uint64_t *marks;     /* old 블록: 단어마다 mark bit (객체 시작 단어) */
+    uint64_t *remembered; /* old 블록: 단어마다 remembered set 에 들어 있는지 (같은 칸을 한 번만 기록) */
 } block_meta;
 
 static char *region;
@@ -65,6 +66,7 @@ static int64_t take_block(int zero) {
 
 static void give_block(int64_t b) {
     if (meta[b].marks) { free(meta[b].marks); meta[b].marks = NULL; }
+    if (meta[b].remembered) { free(meta[b].remembered); meta[b].remembered = NULL; }
     meta[b].state = FREE;
     meta[b].pinned = 0;
     if (free_count == free_cap) {
@@ -184,14 +186,22 @@ static inline int is_young_block(int64_t b) { return meta[b].state == NURSERY ||
 static inline int is_young(value v) { return CALC_GC_IS_PTR(v) && in_region(v) && is_young_block(block_of((void *)(v & ~7))); }
 
 /* write barrier: 생성 코드와 런타임이 값을 쓴 뒤 부름 (쓰는 값이 포인터일 때). 오래된 객체의 칸에 젊은 객체를 썼으면 칸을 기록.
-   remembered set 이 차서 minor GC 를 하면 v 는 이 함수에서 아직 쓰이므로 stack 이나 레지스터에 있어 pin 되고 old 가 됨 */
+   칸마다 bit 를 두어 다음 minor GC 까지 한 번만 기록 (반복 안에서 같은 칸들에 거듭 씀). GC 를 일으키지 않음 */
 void calc_write_barrier(value *slot, value v) {
-    if (is_young(v) && !(in_region((value)slot) && is_young_block(block_of(slot)))) {
-        /* 같은 칸에 거듭 쓰면 (반복 안의 r := …) 한 번만 기록 */
-        if (remembered_count > 0 && remembered[remembered_count - 1] == slot) return;
-        if (remembered_count == remembered_cap) minor_collect();
-        if (is_young(v)) remembered[remembered_count++] = slot;
+    if (!is_young(v) || !in_region((value)slot)) return;
+    int64_t b = block_of(slot);
+    if (is_young_block(b)) return;
+    if (!meta[b].remembered) meta[b].remembered = calloc(BLOCK_WORDS / 64, sizeof(uint64_t));
+    int64_t w = ((char *)slot - block_start(b)) >> 3;
+    uint64_t bit = 1ull << (w & 63);
+    if (meta[b].remembered[w >> 6] & bit) return;
+    meta[b].remembered[w >> 6] |= bit;
+    if (remembered_count == remembered_cap) {
+        remembered_cap *= 2;
+        remembered = realloc(remembered, (size_t)remembered_cap * sizeof *remembered);
+        if (!remembered) calc_error("out of memory");
     }
+    remembered[remembered_count++] = slot;
 }
 
 /* ---- minor GC ---- */
@@ -305,7 +315,13 @@ static void __attribute__((noinline)) minor_collect(void) {
     int64_t promoted = kept;
     /* 3. root: 런타임 전역, remembered set, 넘긴 블록 */
     for (int64_t i = 0; i < root_count; i++) forward(roots[i]);
-    for (int64_t i = 0; i < remembered_count; i++) forward(remembered[i]);
+    for (int64_t i = 0; i < remembered_count; i++) {
+        value *slot = remembered[i];
+        int64_t b = block_of(slot);
+        int64_t w = ((char *)slot - block_start(b)) >> 3;
+        if (meta[b].remembered) meta[b].remembered[w >> 6] &= ~(1ull << (w & 63));
+        forward(slot);
+    }
     remembered_count = 0;
     for (int64_t i = 0; i < promoted; i++) scan_promoted(nursery_blocks[i]);
     for (int64_t i = 0; i < fresh_large_count; i++) scan_object(fresh_large[i]);
