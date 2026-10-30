@@ -28,6 +28,8 @@ type Prim =
     | PIntGreater
     | PIntLessEqual
     | PIntGreaterEqual
+    /// 타입 추론이 string 으로 정한 + 연쇄 (a + b + c ...) 를 편 것: 조각을 왼쪽부터 계산하고 한 번에 할당해 연결
+    | PConcat
 
 type CExpr =
     | CInt of int

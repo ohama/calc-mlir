@@ -20,12 +20,32 @@ let private bindAll (names: seq<string>) (scope: Scope) = Seq.fold (fun acc name
 let private know (name: string) (known: Known) (scope: Scope) = { bind name scope with Known = Map.add name known scope.Known }
 
 /// 프로그램 하나를 바꾸는 동안의 상태: 만든 함수와 다음 이름 번호 (테스트가 병렬이라 호출마다 새로)
-type private State(ints: System.Collections.Generic.HashSet<obj>) =
+type private State(ints: System.Collections.Generic.HashSet<obj>, stringAdds: System.Collections.Generic.HashSet<obj>) =
     let functions = ResizeArray<CFunction>()
     let mutable next = 0
+    // Infer 의 집합은 그대로 두고 복사본에 포맷이 펼친 + 를 더함
+    let strings = System.Collections.Generic.HashSet<obj>(stringAdds, HashIdentity.Reference)
 
     /// 타입 추론이 피연산자를 int 로 정한 연산 노드인가 (Infer.intOperations)
     member _.IsInt(node: Expr) = ints.Contains(box node)
+
+    /// 피연산자가 string 인 + 노드인가 (Infer.stringAdds, 또는 포맷이 펼친 식)
+    member _.IsStringAdd(node: Expr) = strings.Contains(box node)
+
+    /// 포맷이 펼친 식의 + 는 모두 문자열 연결 (조각이 문자열 리터럴, toString 결과, %s 인자)
+    member _.MarkStringAdds(expr: Expr) =
+        let rec go e =
+            match e with
+            | Add (a, b) ->
+                strings.Add(box e) |> ignore
+                go a
+                go b
+            | Lambda (_, body) -> go body
+            | App (f, a) ->
+                go f
+                go a
+            | _ -> ()
+        go expr
 
     member _.FreshName() =
         let name = sprintf "lambda_%d" next
@@ -128,6 +148,13 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Scope) (
         CLet (name, closure, lower state ctors (know name known scope) body)
     | Let (name, value, body) -> CLet (name, lower state ctors scope value, lower state ctors (bind name scope) body)
     | If (c, t, e) -> CIf (lower state ctors scope c, lower state ctors scope t, lower state ctors scope e)
+    // string 연쇄는 펴서 한 번에: a + (b + c) 도 조각은 왼쪽부터 a, b, c (계산 순서가 같음)
+    | Add _ when state.IsStringAdd expr ->
+        let rec pieces e =
+            match e with
+            | Add (a, b) when state.IsStringAdd e -> pieces a @ pieces b
+            | _ -> [ e ]
+        prim PConcat (pieces expr)
     | Add (a, b) -> prim (if state.IsInt expr then PIntAdd else PAdd) [ a; b ]
     | Subtract (a, b) -> prim PSubtract [ a; b ]
     | Multiply (a, b) -> prim PMultiply [ a; b ]
@@ -193,7 +220,10 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Scope) (
     // 포맷의 함수 (Format.expand) 는 내장 함수(toString, print)만 쓰므로 사용자 이름이 없는 범위에서 낮춤
     | Printf (kind, format) ->
         match Format.parse format with
-        | Ok pieces -> lower state ctors emptyScope (Format.expand kind pieces)
+        | Ok pieces ->
+            let expanded = Format.expand kind pieces
+            state.MarkStringAdds expanded
+            lower state ctors emptyScope expanded
         | Error message -> failwithf "Lower: %s" message // 타입 검사를 통과했으므로 생기지 않음
     // 인자가 다 모인 내장 함수는 런타임 함수를 바로 호출. 남는 인자는 결과에 차례로 적용
     | App _ when (match spine expr with
@@ -269,7 +299,7 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Scope) (
         CMatch (lower state ctors scope value, [ fillRecordFields scope pattern, None, lower state ctors (bindAll (patternVars pattern) scope) body ])
 
 let lowerProgram (expr: Expr) : CProgram =
-    let state = State(Infer.intOperations expr)
+    let state = State(Infer.intOperations expr, Infer.stringAdds expr)
     // 'a option = None | Some of 'a 와 예외 Failure, Not_found 는 선언 없이 쓸 수 있음 (Eval 의 초기 환경과 같음)
     let main = lower state (Map.ofList [ "None", false; "Some", true; "Failure", true; "Not_found", false ]) emptyScope expr
     { Functions = state.Functions; Main = main }

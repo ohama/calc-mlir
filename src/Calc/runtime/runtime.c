@@ -362,6 +362,34 @@ void calc_error_overflow(void) { calc_error("Arithmetic operation resulted in an
 
 /* ---- 다형 연산 ---- */
 
+/* 문자열 조각 n 개: 길이를 더해 한 번 할당하고 차례로 복사 (Codegen 이 string 으로 정해진 + 연쇄를 펴서 부름) */
+static value concat_parts(const value *parts, int n) {
+    int64_t length = 0;
+    for (int i = 0; i < n; i++) length += CALC_STRING(parts[i])->length;
+    calc_string *r = calc_new_string(length);
+    int64_t at = 0;
+    for (int i = 0; i < n; i++) {
+        calc_string *x = CALC_STRING(parts[i]);
+        memcpy(r->units + at, x->units, (size_t)x->length * sizeof(uint16_t));
+        at += x->length;
+    }
+    return (value)r;
+}
+
+value calc_concat2(value a, value b) { return concat_parts((value[]){a, b}, 2); }
+value calc_concat3(value a, value b, value c) { return concat_parts((value[]){a, b, c}, 3); }
+value calc_concat4(value a, value b, value c, value d) { return concat_parts((value[]){a, b, c, d}, 4); }
+value calc_concat5(value a, value b, value c, value d, value e) { return concat_parts((value[]){a, b, c, d, e}, 5); }
+value calc_concat6(value a, value b, value c, value d, value e, value f) {
+    return concat_parts((value[]){a, b, c, d, e, f}, 6);
+}
+value calc_concat7(value a, value b, value c, value d, value e, value f, value g) {
+    return concat_parts((value[]){a, b, c, d, e, f, g}, 7);
+}
+value calc_concat8(value a, value b, value c, value d, value e, value f, value g, value h) {
+    return concat_parts((value[]){a, b, c, d, e, f, g, h}, 8);
+}
+
 value calc_add(value a, value b) {
     if (CALC_IS_INT(a) && CALC_IS_INT(b)) {
         return calc_int((int32_t)((uint32_t)CALC_INT_VAL(a) + (uint32_t)CALC_INT_VAL(b)));

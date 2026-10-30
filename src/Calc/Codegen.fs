@@ -241,6 +241,9 @@ let private emitErrorIf (fb: FunctionBuilder) (cond: string) (runtimeFunction: s
     fb.Dedent()
     fb.Emit("}")
 
+/// 런타임의 calc_concat2 ~ calc_concat8 (문자열 조각 n 개를 한 번에 이음)
+let private maxConcat = 8
+
 let private emitCall (fb: FunctionBuilder) (name: string) (args: string list) (resultType: string) =
     let r = fb.Fresh()
     let argTypes = args |> List.map (fun _ -> "i64") |> String.concat ", "
@@ -463,6 +466,12 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
         emitIf fb (isInt x)
             (fun () -> taggedSum "arith.addi" "arith.subi" x y)
             (fun () -> emitCall fb "calc_add" [ x; y ] "i64")
+    // string 연쇄: 조각을 왼쪽부터 계산한 뒤 calc_concatN 한 번 (길이를 더해 한 번 할당). 8 개가 넘으면 앞 8 개를 먼저 이음
+    | CPrim (PConcat, pieces) ->
+        let rec concat (values: string list) =
+            if values.Length <= maxConcat then emitCall fb (sprintf "calc_concat%d" values.Length) values "i64"
+            else concat (emitCall fb (sprintf "calc_concat%d" maxConcat) (List.take maxConcat values) "i64" :: List.skip maxConcat values)
+        concat (pieces |> List.map (emitExpr fb env))
     | CPrim (PSubtract, [ a; b ]) -> taggedAddSub "arith.subi" "arith.addi" a b
     | CPrim (PMultiply, [ a; b ]) -> intOp "arith.muli" a b
     | CPrim ((PDivide | PModulo) as op, [ a; b ]) ->
@@ -1010,6 +1019,8 @@ let private declarations =
       "llvm.func @calc_error_index() attributes {passthrough = [\"noreturn\", \"nounwind\"]}"
       "llvm.func @calc_make_data(i64, i64) -> i64"
       "llvm.func @calc_rev_append(i64, i64) -> i64"
+      for n in 2..maxConcat do
+          sprintf "llvm.func @calc_concat%d(%s) -> i64" n (String.concat ", " (List.replicate n "i64"))
       "llvm.func @calc_data_payload(i64) -> i64"
       "llvm.func @calc_error_overflow() attributes {passthrough = [\"noreturn\", \"nounwind\"]}"
       "llvm.func @calc_add(i64, i64) -> i64"

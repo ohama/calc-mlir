@@ -88,6 +88,15 @@ value calc_add(value a, value b);       /* int 덧셈 (32비트에서 한 바퀴
 value calc_eq(value a, value b);        /* 구조적 비교, 결과는 bool 값 */
 int32_t calc_compare(value a, value b); /* -1, 0, 1 */
 
+/* 문자열 조각 2 ~ 8 개를 한 번 할당해 이음 */
+value calc_concat2(value a, value b);
+value calc_concat3(value a, value b, value c);
+value calc_concat4(value a, value b, value c, value d);
+value calc_concat5(value a, value b, value c, value d, value e);
+value calc_concat6(value a, value b, value c, value d, value e, value f);
+value calc_concat7(value a, value b, value c, value d, value e, value f, value g);
+value calc_concat8(value a, value b, value c, value d, value e, value f, value g, value h);
+
 /* "Error: Match failure: <값>" (Eval.formatValue 형식) 을 출력하고 종료 */
 void calc_match_failure(value v);
 

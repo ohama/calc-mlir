@@ -414,6 +414,19 @@ let private runCases =
           "let a = Array.create 4 (Some true) in a.[0] <- None; println (a, Array.create 2 [true], Array.create 2 (true, 1))", ("([|None; Some true; Some true; Some true|], [|[true]; [true]|], [|(true, 1); (true, 1)|])\n", "", 0), "bool 이 아닌 원소는 보통 배열"
           "let a = Array.create 300000 true in let junk = map (fun x -> (x, x)) (range 1 300000) in a.[299999] <- false; println (a.[0], a.[299999], length junk)", ("(true, false, 300000)\n", "", 0), "GC 가 훑지 않는 bool 배열이 수거 뒤에도 그대로"
         ]
+      "문자열 연결 (string 으로 정해진 + 연쇄와 포맷을 한 번에 할당)",
+        [
+          "let s = \"a\" + \"b\" + \"c\" in println (s, \"x\" + (\"y\" + \"z\"), \"\" + \"\" + \"\", toString 1 + \"-\" + toString 2)", ("(\"abc\", \"xyz\", \"\", \"1-2\")\n", "", 0), "string 연쇄: 왼쪽 결합, 오른쪽 괄호, 빈 문자열, toString 조각"
+          "let f a b c = a + b + c in let g a b c = a + (b + c) in println (f \"p\" \"q\" \"r\", g \"x\" \"y\" \"z\")", ("(\"pqr\", \"xyz\")\n", "", 0), "함수 인자의 연쇄 (a + b + c, a + (b + c))"
+          "let g (a: string) b = a + b in println (g \"1\" \"2\", sprintf \"%d-%s-%b-%A\" 3 \"s\" true [1; 2], sprintf \"%s\" \"only\", sprintf \"plain\")", ("(\"12\", \"3-s-true-[1; 2]\", \"only\", \"plain\")\n", "", 0), "포맷: %d %s %b %A, 조각 하나, 지정자 없음"
+          "println (\"1\" + \"2\" + \"3\" + \"4\" + \"5\" + \"6\" + \"7\" + \"8\" + \"9\" + \"10\" + \"11\" + \"12\" + \"13\" + \"14\" + \"15\" + \"16\" + \"17\" + \"18\")", ("123456789101112131415161718\n", "", 0), "조각 18개 (8개씩 나눠 이음)"
+          "let t = (print \"a\"; \"x\") + (print \"b\"; \"y\") + ((print \"c\"; \"z\") + (print \"d\"; \"w\")) in println t", ("abcdxyzw\n", "", 0), "조각을 왼쪽부터 계산 (괄호 안의 연쇄도)"
+          "println (\"😀\" + \"é\" + \"\\n\" + \"\\t\" + \"end\", length (\"ab\" + \"cd\" + \"e\"), \"é\" + \"😀\" = \"é😀\")", ("(\"😀é\\n\\tend\", 5, true)\n", "", 0), "code unit 이 BMP 밖인 글자와 이스케이프"
+          "let total = ref 0 in for i = 1 to 200000 do total := !total + length (sprintf \"%d:%d\" i (i * 2) + \"!\" + toString i) done; println !total", ("3722240\n", "", 0), "반복 안의 sprintf 와 연쇄 20만 번"
+          "printfn \"%d and %s\" 5 \"x\"; printf \"%A|\" (Some \"q\"); println \"\"", ("5 and x\nSome \"q\"|\n", "", 0), "printfn, printf"
+          "exception E of string in println (try raise (E (\"a\" + \"b\" + \"c\")) with E s -> s + \"!\" + s)", ("abc!abc\n", "", 0), "예외 인자와 handler 의 연쇄"
+          "let names = map (fun i -> \"n\" + toString i + \";\") (range 1 5) in println (names, fold (fun acc s -> acc + s) \"\" names)", ("([\"n1;\"; \"n2;\"; \"n3;\"; \"n4;\"; \"n5;\"], \"n1;n2;n3;n4;n5;\")\n", "", 0), "map 의 함수와 fold 로 모으기"
+        ]
       "런타임의 빠른 경로 (int 의 toString 과 출력, int sort, prelude 의 Array 반복문)",
         [
           "println (toString 0, toString (-2147483647 - 1), toString 2147483647, toString (-5), toString 10, sprintf \"%d|%d\" (-12) 340, $\"{-7}\")", ("(\"0\", \"-2147483648\", \"2147483647\", \"-5\", \"10\", \"-12|340\", \"-7\")\n", "", 0), "toString 과 sprintf 의 int: 0, 음수, Int32 의 끝"
@@ -676,13 +689,31 @@ let tests =
                 for f in [ "calc_compare"; "calc_add"; "calc_eq" ] do
                     Expect.isFalse (fib.Contains("llvm.call @" + f + "(")) f
                 let mixed = typed "let g (s: string) = s + \"!\" in (1 + 2, 1 = 2, g \"a\", \"a\" < \"b\", true = false)"
-                Expect.isTrue (mixed.Contains "llvm.call @calc_add(") "string 의 + 는 런타임"
+                Expect.isTrue (mixed.Contains "llvm.call @calc_concat2(") "string 의 + 는 런타임의 연결"
                 Expect.isTrue (mixed.Contains "llvm.call @calc_compare(") "string 의 < 는 런타임"
                 Expect.isTrue (mixed.Contains "llvm.call @calc_eq(") "bool 의 = 는 즉시값 경로와 런타임"
                 let poly = typed "let eq x y = x = y in (eq 1 1, eq \"a\" \"b\")"
                 Expect.isTrue (poly.Contains "llvm.call @calc_eq(") "다형 함수 안의 = 는 태그를 보고 고름"
                 // 타입 검사를 하지 않은 식은 지금처럼 태그를 봄
                 Expect.isTrue ((Codegen.emitProgram (Program.parse "let f x y = x < y in f 1 2")).Contains "llvm.call @calc_compare(") ""
+            }
+            // 타입 추론이 string 으로 정한 + 연쇄와 포맷이 펼친 식은 조각을 모아 calc_concatN 한 번 (Infer.stringAdds)
+            test "문자열 연쇄는 한 번에 연결" {
+                let typed (input: string) =
+                    let ast = Program.load input
+                    Infer.typecheck ast |> ignore
+                    Codegen.emitProgram ast
+                let count (text: string) (pattern: string) = text.Split(pattern).Length - 1
+                let chain = typed "let a = toString 1 in let b = toString 2 in a + b + \"!\" + (b + a)"
+                Expect.equal (count chain "llvm.call @calc_concat5(") 1 "a + b + \"!\" + (b + a) 는 조각 다섯 개"
+                Expect.isFalse (chain.Contains "llvm.call @calc_add(") "중간 문자열 없음"
+                let format = typed "sprintf \"%d-%s:%b\" 1 \"s\" true"
+                Expect.isTrue (format.Contains "llvm.call @calc_concat5(") "포맷의 조각 다섯 개 (포맷의 함수는 클로저와 direct 함수 두 곳)"
+                Expect.isFalse (format.Contains "llvm.call @calc_add(") "포맷도 중간 문자열 없음"
+                let long = typed (String.concat " + " [ for i in 1..10 -> sprintf "\"%d\"" i ])
+                Expect.equal (count long "llvm.call @calc_concat8(") 1 "8 개가 넘으면 앞 8 개를 먼저"
+                Expect.equal (count long "llvm.call @calc_concat3(") 1 "그 결과와 남은 두 개"
+                Expect.isTrue ((Codegen.emitProgram (Program.parse "let f x y = x + y in f \"a\" \"b\"")).Contains "llvm.call @calc_add(") "타입 검사를 하지 않은 식은 태그를 봄"
             }
             test "클로저 칸, ref, 배열 접근에는 서로 다른 TBAA 태그, 오류 함수는 noreturn" {
                 let mlir = Codegen.emitProgram (Program.parse "let a = Array.create 3 0 in let r = ref 0 in let f i = a.[i] <- !r; r := i in f 1")

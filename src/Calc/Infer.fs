@@ -963,6 +963,14 @@ let intOperations (expr: Expr) : HashSet<obj> =
     | true, ints -> ints
     | _ -> HashSet<obj>(HashIdentity.Reference)
 
+let private stringAddTable = System.Runtime.CompilerServices.ConditionalWeakTable<Expr, HashSet<obj>>()
+
+/// expr 를 타입 검사했을 때 피연산자가 string 으로 정해진 + 노드 (문자열 연결). 컴파일러가 연쇄를 한 번에 할당하는 데 씀
+let stringAdds (expr: Expr) : HashSet<obj> =
+    match stringAddTable.TryGetValue expr with
+    | true, adds -> adds
+    | _ -> HashSet<obj>(HashIdentity.Reference)
+
 /// 식 전체의 타입과, 모든 값을 덮지 못하는 패턴 매칭의 경고. 타입이 맞지 않으면 TypeError
 let typecheckWithWarnings (expr: Expr) : Type * Warning list =
     let st =
@@ -981,11 +989,14 @@ let typecheckWithWarnings (expr: Expr) : Type * Warning list =
     applyDefaults st t
     // 피연산자가 int 로 정해진 연산. 다형 함수 안의 = (generalize 한 변수)와 아직 정해지지 않은 int-or-string 은 넣지 않음
     let ints = HashSet<obj>(HashIdentity.Reference)
+    let stringAdds = HashSet<obj>(HashIdentity.Reference)
     for node, operand in st.Operands do
-        match prune operand with
-        | TyCon ("int", []) -> ints.Add node |> ignore
+        match prune operand, node with
+        | TyCon ("int", []), _ -> ints.Add node |> ignore
+        | TyCon ("string", []), (:? Expr as e) when (match e with Add _ -> true | _ -> false) -> stringAdds.Add node |> ignore
         | _ -> ()
     intOperationTable.AddOrUpdate(expr, ints)
+    stringAddTable.AddOrUpdate(expr, stringAdds)
     let discarded =
         [ for t, position in st.Discarded do
               match prune t with

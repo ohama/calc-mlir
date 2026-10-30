@@ -335,7 +335,7 @@ llvm.func @calc_main() -> i64 {
   %v2 = llvm.ptrtoint %v1 : !llvm.ptr to i64           // 값 = 전역의 주소 (8-byte alignment)
   %v3 = llvm.mlir.addressof @str_1 : !llvm.ptr
   %v4 = llvm.ptrtoint %v3 : !llvm.ptr to i64
-  %v5 = llvm.call @calc_add(%v2, %v4) : (i64, i64) -> i64   // 런타임이 태그와 헤더로 연결을 고름
+  %v5 = llvm.call @calc_concat2(%v2, %v4) : (i64, i64) -> i64   // 타입 추론이 string 으로 정한 + (아래)
   llvm.return %v5 : i64
 }
 ```
@@ -344,6 +344,11 @@ llvm.func @calc_main() -> i64 {
 - **출력:** 런타임이 UTF-8로 바꿉니다. 짝이 없는 surrogate code unit은 U+FFFD가 됩니다.
 - **상수:** 전역이라 GC가 관리하지 않습니다.
 - **`+`의 결과:** `GC_MALLOC_ATOMIC`으로 할당합니다. 블록 안에 포인터가 없으므로 GC가 내용을 훑지 않습니다.
+- **연쇄를 한 번에 (0.62.0부터):** 타입 추론이 피연산자를 string으로 정한 `+` 노드는 `Infer.stringAdds`로 나옵니다(int의 `Infer.intOperations`와 같은 방식). `Lower`는 그런 `+`가 이어진 식을 펴서 조각 목록 하나(`PConcat`)로 만들고, Codegen은 조각을 왼쪽부터 계산한 뒤 `calc_concatN`을 한 번 부릅니다. 런타임은 길이를 더해 한 번 할당하고 차례로 복사합니다.
+  - **조각 순서:** `a + (b + c)`도 `a, b, c`입니다. 원래 식도 `a`, `b`, `c` 순서로 계산하므로 같습니다.
+  - **조각 수:** 런타임에 `calc_concat2`부터 `calc_concat8`까지 있습니다. 8개가 넘으면 앞 8개를 먼저 잇고 그 결과를 첫 조각으로 다시 셉니다. 조각 배열을 스택에 만들어 넘기지 않는 것은, 반복문(`scf.while`) 안의 `alloca`가 반복마다 스택을 키우기 때문입니다.
+  - **그대로인 것:** 타입 검사를 하지 않은 식의 `+`는 전처럼 `calc_add`가 태그를 봅니다. 인터프리터는 바뀌지 않았습니다.
+  - **효과:** `"item " + toString i + " of " + …` 같은 일곱 조각 2백만 번이 0.17초에서 0.08초, `sprintf "%d-%d:%s"` 2백만 번이 0.11초에서 0.06초가 되었습니다.
 - **출력 형식:** `Eval.formatValue`와 같습니다. 따옴표로 감싸고 `\\ \" \n \t \r`만 이스케이프합니다.
 
 ## 8. 리스트와 패턴 매칭 (단계 5)
@@ -541,7 +546,8 @@ $"a{x}"
 - **타입:** `Infer`는 펼친 코드를 추론하지 않고 포맷 문자열에서 바로 타입을 만듭니다(`%d`는 `int`, `%A`는 새 type variable). 펼친 코드는 `%A`의 인자를 `toString`으로 바꾸므로, 추론하면 `%d`와 `%A`를 구분할 수 없습니다.
 - **범위:** 펼친 코드는 `toString`, `print`, `println`이 내장 함수인 범위에서 낮춥니다(`Lower`의 `scope`가 빈 집합). 사용자가 `toString`을 가려도 포맷의 결과는 같습니다. 인터프리터도 펼친 코드를 처음 환경(`Eval.builtins`)에서 평가합니다.
 - **`sprintf`를 가린 경우:** `Lower`와 `Infer`는 `sprintf`가 아직 내장 함수일 때만 포맷으로 다룹니다. `Infer`는 처음 환경의 `sprintf`에 보통 타입 대신 표시(`$format:sprintf`)를 넣어 둡니다. 사용자가 같은 이름을 묶으면 그 표시가 사라집니다.
-- **C 런타임:** 바뀐 것이 없습니다. 모듈의 선언에서도 `sprintf`, `printf`, `printfn`은 뺍니다.
+- **C 런타임:** 포맷만을 위한 함수는 없습니다. 모듈의 선언에서도 `sprintf`, `printf`, `printfn`은 뺍니다.
+- **연결 (0.62.0부터):** 펼친 코드의 `+`는 모두 문자열 연결입니다(조각이 문자열 리터럴, `toString`의 결과, `%s`의 인자). 펼친 식은 타입 추론을 거치지 않으므로, `Lower`가 펼칠 때 그 `+`를 string으로 표시합니다(`State.MarkStringAdds`). 그래서 7장의 연쇄처럼 `calc_concatN` 한 번이 됩니다.
 
 ## 15. 알려진 함수의 direct call
 
