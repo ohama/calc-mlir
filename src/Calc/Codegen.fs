@@ -262,7 +262,7 @@ let private emitCall (fb: FunctionBuilder) (name: string) (args: string list) (r
     r
 
 /// 이미 있는 객체의 칸 slot 에 값 v 를 쓴 뒤의 write barrier (세대 구분 GC). v 가 포인터(태그 0 이나 2, (v & 5) = 0)일 때만
-/// 런타임을 부름. Boehm 런타임에서는 아무것도 하지 않음
+/// 런타임을 부름
 let private emitWriteBarrier (fb: FunctionBuilder) (slot: string) (v: string) =
     let bits = emitOp fb "arith.andi" v (emitConst fb "i64" 5L) "i64"
     let isPointer = fb.Fresh()

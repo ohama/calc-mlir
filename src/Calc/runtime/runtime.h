@@ -20,8 +20,7 @@ typedef int64_t value;
 #define CALC_IS_PTR(v) (((v) & CALC_TAG_MASK) == 0)
 
 /* 리스트의 칸: 헤더 없는 [head, tail] 16바이트 블록. 값은 블록 주소 | 2 (tail 은 cons 또는 CALC_NIL).
-   헤더를 두면 24바이트라 Boehm GC 에서 32바이트를 씀. 주소 + 2 를 가리키는 포인터는 calc_init 이
-   GC_register_displacement 로 알림 */
+   GC 는 cons 만 담는 블록에 두고 포인터의 태그로 cons 임을 앎 (gc.c) */
 #define CALC_TAG_CONS 2
 #define CALC_IS_CONS(v) (((v) & CALC_TAG_MASK) == CALC_TAG_CONS)
 #define CALC_HEAD(v) (((value *)((v) - CALC_TAG_CONS))[0])
@@ -38,7 +37,7 @@ typedef int64_t value;
 #define CALC_KIND_RECORD 7  /* [헤더, 필드 이름들("x;y", const char *), 값...]. 값은 선언한 순서 */
 #define CALC_KIND_ARRAY 8   /* [헤더, 원소...]. 원소 수 = 헤더의 단어 수. a.[i] <- v 가 원소를 바꿈 */
 #define CALC_KIND_BOOL_ARRAY 9 /* bool 배열: [헤더, 원소마다 바이트 하나(0 또는 1)...]. 원소 수 = 헤더의 단어 수 자리.
-                                  포인터가 없어 GC 가 훑지 않음 (GC_MALLOC_ATOMIC). 원소가 bool 이면 Array.create,
+                                  포인터가 없어 GC 가 훑지 않음 (calc_alloc_atomic). 원소가 bool 이면 Array.create,
                                   Array.ofList 가 이것을 만듦 (타입 검사를 통과했으므로 원소 하나가 bool 이면 모두 bool) */
 #define CALC_HEADER(v) (((int64_t *)(v))[0])
 #define CALC_KIND(v) (CALC_HEADER(v) & 0xff)
@@ -70,16 +69,16 @@ typedef struct {
 #define CALC_FALSE ((value)3)
 
 void calc_init(void);
-/* 할당 (GC 는 할당할 때만 일어남). CALC_GC_GEN 이면 gc.c 의 세대 구분 GC, 아니면 Boehm GC (runtime.c).
+/* 할당 (GC 는 할당할 때만 일어남). gc.c 의 세대 구분 GC (docs/generational-gc-design.md).
    calc_alloc: 헤더가 있는 블록. 부른 쪽이 다음 할당 전에 헤더를 씀 (세대 구분 GC 는 블록을 헤더로 차례로 읽음)
    calc_alloc_atomic: 안에 포인터가 없는 블록 (문자열, bool 배열)
    calc_alloc_cons: 헤더 없는 cons 칸 16바이트 */
 void *calc_alloc(int64_t bytes);
 void *calc_alloc_atomic(int64_t bytes);
 void *calc_alloc_cons(void);
-/* write barrier: 이미 있는 객체의 칸(ref, 배열 원소, 리스트의 tail, 클로저 칸)에 포인터 값을 쓴 뒤 부름. Boehm 이면 아무것도 안 함 */
+/* write barrier: 이미 있는 객체의 칸(ref, 배열 원소, 리스트의 tail, 클로저 칸)에 포인터 값을 쓴 뒤 부름 */
 void calc_write_barrier(value *slot, value v);
-/* 런타임 전역의 값 칸을 root 로 등록 (Boehm 은 data 영역을 훑으므로 아무것도 안 함) */
+/* 런타임 전역의 값 칸을 root 로 등록 */
 void calc_gc_add_root(value *slot);
 /* "Error: <message>" 를 표준 에러로 출력하고 종료 코드 1 로 끝냄 (인터프리터와 같은 형식) */
 void calc_error(const char *message);

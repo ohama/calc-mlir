@@ -25,7 +25,7 @@
                      │ mlir-opt       prog.mlir      → prog.llvm.mlir    │
                      │ mlir-translate prog.llvm.mlir → prog.ll (LLVM IR) │
                      │ clang -O2 -c   prog.ll → prog.o                   │
-                     │ clang          prog.o + runtime.o + -lgc → 실행 파일│
+                     │ clang          prog.o + runtime.o → 실행 파일     │
                      └────────────────────────────────────────────────────┘
 ```
 
@@ -161,7 +161,7 @@ define i32 @main() {                      ; (다)가 C 의 main 심볼이 됨
 
 ```
 clang -O2 -Wno-override-module -c prog.ll -o prog.o
-clang prog.o $TMPDIR/calc-runtime-<해시>.o $TMPDIR/calc-builtins-<해시>.o -L/opt/homebrew/opt/bdw-gc/lib -lgc \
+clang prog.o $TMPDIR/calc-runtime-<해시>.o $TMPDIR/calc-builtins-<해시>.o $TMPDIR/calc-gc-<해시>.o \
       -Wl,-stack_size,0x20000000 -o discount
 ```
 
@@ -201,7 +201,7 @@ ret
 
 빌드하면 `runtime.c`와 `runtime.h`가 `Calc.dll` 옆의 `runtime/` 폴더로 복사됩니다. `Toolchain.find`는 이 파일을 `AppContext.BaseDirectory/runtime/runtime.c`에서 찾습니다. `ProjectReference`를 따라 테스트 프로젝트 출력 폴더에도 복사되므로, 테스트도 같은 코드로 찾습니다.
 
-처음 `--compile`할 때 `clang -O2 -c`로 런타임의 `.c` 파일(`runtime.c`, `builtins.c`)을 컴파일해서 임시 폴더에 `calc-<파일>-<해시>.o`로 둡니다. 해시는 런타임의 모든 `.c`·`.h` 파일, `clang` 경로, GC 위치로 만들고, 같은 해시의 파일이 있으면 다시 씁니다. 다른 프로세스와 동시에 만들 수 있으므로 임시 이름으로 만든 뒤 옮깁니다.
+처음 `--compile`할 때 `clang -O2 -c`로 런타임의 `.c` 파일(`runtime.c`, `builtins.c`, `gc.c`)을 컴파일해서 임시 폴더에 `calc-<파일>-<해시>.o`로 둡니다. 해시는 런타임의 모든 `.c`·`.h` 파일과 `clang` 경로로 만들고, 같은 해시의 파일이 있으면 다시 씁니다. 다른 프로세스와 동시에 만들 수 있으므로 임시 이름으로 만든 뒤 옮깁니다.
 
 ### 링크: 선언과 정의를 이름으로 맞춤
 
@@ -219,13 +219,13 @@ runtime.c   int32_t calc_compare(value a, value b) {...}  (정의, value = int64
 T _main  T _calc_main                                   ← 생성한 코드
 T _calc_init  T _calc_print_result  T _calc_compare
 T _calc_add  T _calc_eq  T _calc_error ...              ← runtime.c (실행 파일 안)
-U _GC_init  U _GC_malloc  U _printf  U _fprintf  U _exit ← 실행할 때 동적 라이브러리에서
+T _calc_alloc  T _calc_write_barrier ...                ← gc.c (실행 파일 안)
+U _printf  U _fprintf  U _exit  U _mmap                ← 실행할 때 libSystem 에서
 ```
 
-동적 라이브러리(`otool -L discount`):
+동적 라이브러리(`otool -L discount`). 0.65.2까지는 Homebrew의 `libgc.1.dylib`도 있었습니다.
 
 ```
-/opt/homebrew/opt/bdw-gc/lib/libgc.1.dylib
 /usr/lib/libSystem.B.dylib
 ```
 
@@ -240,7 +240,6 @@ U _GC_init  U _GC_malloc  U _printf  U _fprintf  U _exit ← 실행할 때 동�
 
 | 한계 | 결과 | 생각해 볼 해결책 |
 |---|---|---|
-| 실행 파일이 Homebrew의 `libgc.1.dylib`에 동적으로 의존 | `bdw-gc`가 없는 기기에서는 실행되지 않음 | `libgc.a` 정적 링크 |
 | MLIR 선언(`Codegen.fs`의 문자열)과 `runtime.h`를 맞추는 검사가 없음 | 인자 타입이 어긋나도 링크는 성공하고, 실행 중 값이 틀림. 지금은 differential testing만 잡음 | 선언을 한 곳에서 만들기, 또는 헤더와 비교하는 테스트 |
 | 런타임 호출은 최적화를 막음 | 위 어셈블리에서 `calc_compare` 호출이 남음 | 타입별 specialization(설계 단계 9) |
 | 함수 호출은 모두 클로저를 거침 | `go (n - 1) acc`처럼 이름이 정해진 함수도 커링된 클로저를 하나씩 적용하고, 중간 클로저를 할당함 | 알려진 함수 direct call, uncurrying(설계 단계 9, `TODO.md`) |
@@ -293,7 +292,7 @@ llvm.func @calc_main() -> i64 {
 }
 ```
 
-- **클로저 블록:** `[헤더, 코드 포인터, 캡처한 값...]`이고 `calc_alloc`(Boehm GC)으로 할당합니다. 해제 코드는 없습니다. 인자가 여럿인 함수의 바깥 클로저는 마지막 칸에 direct 함수 포인터를 하나 더 두고, 헤더의 32비트 위에 인자 수를 적습니다(15장).
+- **클로저 블록:** `[헤더, 코드 포인터, 캡처한 값...]`이고 `calc_alloc`으로 할당합니다. 해제 코드는 없습니다. 인자가 여럿인 함수의 바깥 클로저는 마지막 칸에 direct 함수 포인터를 하나 더 두고, 헤더의 32비트 위에 인자 수를 적습니다(15장).
 - **값으로서의 클로저:** 블록 주소를 그대로 `i64`로 씁니다. 8-byte aligned라 하위 3비트가 `000`이고, 런타임은 이것으로 정수·불리언과 구분합니다.
 - **헤더:** 런타임이 헤더의 종류(1)를 보고 함수 값을 `<fun>`으로 출력합니다. 함수끼리 `=`로 비교하면 인터프리터와 같은 타입 오류로 끝냅니다.
 - **`let rec f x = ...`:** 본문의 `f`는 `%closure` 자신(`llvm.ptrtoint %closure`)입니다. 자기 자신을 캡처하지 않으므로 순환 참조를 만들 필요가 없습니다.
@@ -343,7 +342,7 @@ llvm.func @calc_main() -> i64 {
 - **저장:** code unit은 .NET `string`과 같은 UTF-16입니다. 그래서 비교(`String.CompareOrdinal`)가 code unit 순서로 인터프리터와 같습니다. 예를 들어 `"😀" < "\uFFFF"`는 `true`입니다.
 - **출력:** 런타임이 UTF-8로 바꿉니다. 짝이 없는 surrogate code unit은 U+FFFD가 됩니다.
 - **상수:** 전역이라 GC가 관리하지 않습니다.
-- **`+`의 결과:** `GC_MALLOC_ATOMIC`으로 할당합니다. 블록 안에 포인터가 없으므로 GC가 내용을 훑지 않습니다.
+- **`+`의 결과:** `calc_alloc_atomic`으로 할당합니다. 블록 안에 포인터가 없으므로 GC가 내용을 훑지 않습니다.
 - **연쇄를 한 번에 (0.62.0부터):** 타입 추론이 피연산자를 string으로 정한 `+` 노드는 `Infer.stringAdds`로 나옵니다(int의 `Infer.intOperations`와 같은 방식). `Lower`는 그런 `+`가 이어진 식을 펴서 조각 목록 하나(`PConcat`)로 만들고, Codegen은 조각을 왼쪽부터 계산한 뒤 `calc_concatN`을 한 번 부릅니다. 런타임은 길이를 더해 한 번 할당하고 차례로 복사합니다.
   - **조각 순서:** `a + (b + c)`도 `a, b, c`입니다. 원래 식도 `a`, `b`, `c` 순서로 계산하므로 같습니다.
   - **조각 수:** 런타임에 `calc_concat2`부터 `calc_concat8`까지 있습니다. 8개가 넘으면 앞 8개를 먼저 잇고 그 결과를 첫 조각으로 다시 셉니다. 조각 배열을 스택에 만들어 넘기지 않는 것은, 반복문(`scf.while`) 안의 `alloca`가 반복마다 스택을 키우기 때문입니다.
@@ -648,7 +647,7 @@ let s = ref 0 in for i = 1 to 10 do s := !s + i done; !s
   ```
 
 - **런타임:** 결과 출력(`calc_buffer_value`)은 `ref 1`, `ref (Some 1)`처럼 생성자와 같은 괄호 규칙으로 출력하고, `calc_eq`는 내용을 비교합니다. 인터프리터의 `Eval.formatValue`, `Eval.valueEquals`와 같습니다.
-- **GC:** Boehm GC는 세대별이 아니므로 기존 블록의 칸에 새 블록의 포인터를 써도 write barrier가 필요 없습니다.
+- **GC:** `:=`는 쓴 뒤 write barrier를 부릅니다. 쓰는 값이 포인터(태그 0이나 2)일 때만 `calc_write_barrier`를 부르고, 오래된 ref에 젊은 객체를 쓰면 GC가 칸을 기록합니다(0.65.0부터, [generational-gc-design.md](generational-gc-design.md)).
 - **반복문:** 파서가 `while`, `for`를 `$while`, `$for`라는 `let rec` 함수로 바꿉니다([grammar.md](grammar.md) "mutable reference와 반복문"). 인터프리터는 이 함수를 그대로 씁니다.
   - **컴파일러 (0.57.0부터):** `Lower`가 이 모양을 알아보고 Core의 `CWhile`, `CFor`로 바꿉니다. Codegen은 지금 함수 안의 `scf.while`을 만듭니다. 반복 몸체를 최상위 함수로 만들지 않으므로 클로저가 없고, 바깥 변수는 SSA 값 그대로입니다.
   - **`for`의 끝:** `for`는 `(i, 계속할지)`를 반복이 넘기고, 몸체 뒤에 `i`가 끝값 앞일 때만 `i ± 1`을 계산합니다. 그래서 끝값이 int의 끝이어도 넘치지 않습니다(파서의 `$for`와 같은 규칙).
@@ -675,7 +674,7 @@ type p = { x: int; y: int } in let a = { y = 2; x = 1 } in { a with x = a.y }
 - **표현:** 블록 `[헤더, 원소...]`이고, 헤더는 `8 | (n << 8)`입니다(`CALC_KIND_ARRAY`). 길이는 헤더의 단어 수입니다.
 - **bool 배열 (0.60.0부터):** 원소가 bool이면 `[헤더 9 | (n << 8), 바이트 n개]`입니다(`CALC_KIND_BOOL_ARRAY`). 원소마다 바이트 하나(0 또는 1)라서 8바이트 원소보다 메모리가 1/8입니다.
   - **만드는 곳:** 런타임의 `Array.create`와 `Array.ofList`가 원소 값을 보고 정합니다. 타입 검사를 통과했으므로 원소 하나가 bool이면 모두 bool입니다. 리터럴은 `Array.ofList`를 거치고, prelude의 `init`, `map`, `copy`는 첫 원소로 `Array.create`합니다. 빈 배열은 어느 종류여도 됩니다(`=`는 길이와 원소로 비교).
-  - **GC:** 안에 포인터가 없으므로 `GC_MALLOC_ATOMIC`으로 할당합니다. GC가 내용을 훑지 않습니다.
+  - **GC:** 안에 포인터가 없으므로 `calc_alloc_atomic`으로 할당합니다. GC가 내용을 훑지 않습니다.
   - **접근:** 생성 코드는 헤더의 종류를 보고 바이트(`i8` load/store, bool 값 `(b << 3) | 3`과 바꿈) 또는 단어로 읽고 씁니다. 헤더 읽기에는 따로 TBAA 태그(`#calc_tbaa_header`)를 붙입니다. 헤더는 런타임이 만든 뒤 바뀌지 않습니다. 런타임 함수는 `calc_array_get`/`calc_array_set`으로 두 종류를 다룹니다.
   - **효과:** 체 1억이 0.65초에서 0.41초, 최대 메모리가 804MB에서 103MB가 되었습니다. int 배열의 반복은 종류 검사가 더해졌지만 그대로입니다(0.83초).
 - **내장 함수:** 리터럴 `[| … |]`, `a.[i]`, `a.[i] <- v`는 파서가 사용자가 쓸 수 없는 이름의 내장 함수(`[||]`, `.[]`, `.[]<-`) 호출로 만듭니다. 그래서 Lower와 Codegen은 보통 내장 함수처럼 다룹니다.
@@ -684,10 +683,10 @@ type p = { x: int; y: int } in let a = { y = 2; x = 1 } in { a with x = a.y }
 - **범위 검사:** 생성 코드가 원소 수(헤더의 단어 수)와 비교하고, 범위 밖이면 `calc_error_index`가 인터프리터와 같은 문장(`Index was outside the bounds of the array.`)으로 끝냅니다. 음수 인덱스는 부호 없는 수로 비교해 한 번에 잡습니다. 값으로 쓴 `.[]`는 런타임 함수 `calc_builtin_array_get`/`set`을 부릅니다.
 - **prelude:** `Array.init`, `map`, `iter`, `fold`, `copy`는 prelude의 `module Array`에 Calc 코드로 있습니다. prelude도 파싱한 뒤 `Modules.resolve`로 펼치므로 `Array.init` 같은 이름의 선언이 됩니다. 프로그램의 `Array.init`은 선언하지 않은 모듈의 이름이라 바뀌지 않고, `Prelude.wrap`이 이름으로 찾아 붙입니다.
   - **반복문으로 채움 (0.61.0부터):** `init`과 `map`은 `f`의 첫 결과로 `Array.create`한 뒤 `for`로 나머지를 채우고, `fold`는 ref 하나로 돕니다. 전에는 `Array.ofList (map f (range 0 (n - 1)))`처럼 리스트를 거쳐서 원소마다 리스트 칸을 두세 개 만들었습니다. `f`를 앞 원소부터 부르는 순서는 같습니다. 3백만 개의 `init`, `map`, `fold`가 실행 파일에서 0.14초(238MB)에서 0.01초(48MB), 인터프리터에서 1.39초에서 0.72초가 되었습니다.
-- **GC:** Boehm GC는 세대별이 아니므로 원소를 바꿀 때 write barrier가 필요 없습니다(mutable reference와 같음).
+- **GC:** 단어 배열의 원소를 바꾼 뒤 write barrier를 부릅니다(mutable reference와 같음). bool 배열은 포인터가 없어 필요 없습니다.
 
 ## 관련 문서
 
 - [compiler-design.md](compiler-design.md): 설계 결정(D1–D10), value representation, 단계별 계획
-- [build.md](build.md): 도구 설치(`brew install llvm bdw-gc`), `CALC_LLVM_BIN`과 `CALC_GC_PREFIX`, 옵션
+- [build.md](build.md): 도구 설치(`brew install llvm`), `CALC_LLVM_BIN`, GC 환경 변수, 옵션
 - [testing.md](testing.md): 컴파일러 differential testing

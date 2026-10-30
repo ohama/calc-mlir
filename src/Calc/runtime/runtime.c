@@ -1,9 +1,6 @@
 #define _GNU_SOURCE /* vasprintf (Linux). 첫 #include 보다 앞이어야 함 */
 #include "runtime.h"
 
-#ifndef CALC_GC_GEN
-#include <gc.h>
-#endif
 #include <setjmp.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -12,7 +9,7 @@
 
 static value calc_raised; /* raise 한 예외 값. _longjmp 한 뒤 calc_try 가 읽음 */
 
-#ifdef CALC_GC_GEN
+/* 메모리 관리는 gc.c 의 세대 구분 GC */
 void calc_gc_init(void);
 void calc_gc_print_stats(void);
 
@@ -21,44 +18,6 @@ void calc_init(void) {
     calc_gc_add_root(&calc_raised);
     atexit(calc_gc_print_stats);
 }
-#else
-/* free space divisor 1: 수거 뒤 살아 있는 크기만큼 비워 둘 때까지 힙을 늘림 (기본 3). 수거가 드물어져서
-   할당이 많은 프로그램이 25% 남짓 빨라지고, 최대 메모리는 2배 안쪽으로 늘어남 */
-/* interior pointer 를 끔: 켜 두면 객체 끝을 가리키는 포인터를 위해 1바이트를 더 붙여서 16바이트 요청이 32바이트가 됨.
-   힙의 값은 블록의 처음(블록) 또는 처음 + 2(cons)를 가리킴. 스택과 레지스터의 interior pointer 는 설정과 상관없이 인정됨 */
-void calc_init(void) {
-    GC_set_all_interior_pointers(0);
-    GC_INIT();
-    GC_register_displacement(CALC_TAG_CONS);
-    GC_set_free_space_divisor(1);
-}
-
-/* 작은 블록은 GC_malloc_many 로 같은 크기를 한꺼번에 받아 두고 나눠 줌. GC_malloc 은 부를 때마다 스레드별 free list 를
-   pthread_getspecific 으로 찾음. 받아 둔 블록은 이 정적 배열에서 닿으므로 GC 가 거두지 않음 (프로그램은 스레드 하나) */
-#define CALC_SMALL_WORDS 8
-static void *calc_free_lists[CALC_SMALL_WORDS + 1];
-
-void *calc_alloc(int64_t bytes) {
-    size_t words = ((size_t)bytes + 7) >> 3;
-    if (words == 0) words = 1;
-    if (words <= CALC_SMALL_WORDS) {
-        void *p = calc_free_lists[words];
-        if (p == NULL) {
-            p = GC_malloc_many(words << 3);
-            if (p == NULL) calc_error("out of memory");
-        }
-        calc_free_lists[words] = GC_NEXT(p);
-        GC_NEXT(p) = NULL;
-        return p;
-    }
-    return GC_MALLOC((size_t)bytes);
-}
-
-void *calc_alloc_atomic(int64_t bytes) { return GC_MALLOC_ATOMIC((size_t)bytes); }
-void *calc_alloc_cons(void) { return calc_alloc(2 * sizeof(value)); }
-void calc_write_barrier(value *slot, value v) { (void)slot; (void)v; }
-void calc_gc_add_root(value *slot) { (void)slot; }
-#endif
 
 void calc_error(const char *message) {
     fflush(stdout);

@@ -13,30 +13,27 @@ Calc 언어를 인터프리터(`Eval`) 대신 **네이티브 실행 파일로 �
 - **목표**: `calc --compile out -e "<식>"`이 실행 파일 `out`을 만들고, `./out`이 인터프리터와 **같은 결과와 같은 오류 메시지**를 출력합니다.
 - **기준 semantics는 인터프리터(`Eval`)** 입니다. 컴파일러는 새 의미를 만들지 않습니다. 동작이 다르면 컴파일러 버그입니다.
 - 타입 추론(`Infer.typecheck`)을 통과한 프로그램만 컴파일합니다. 그래서 생성 코드는 실행 중 타입 오류를 다루지 않아도 됩니다.
-- **범위 밖** (처음에는): 따로 컴파일한 모듈의 링크, 디버그 정보, Windows/Linux 지원(macOS arm64 먼저), 정확한(precise) GC.
+- **범위 밖** (처음에는): 따로 컴파일한 모듈의 링크, 디버그 정보, Windows/Linux 지원(macOS arm64 먼저), 정확한(precise) GC. GC는 0.66.0부터 직접 만든 세대 구분 GC입니다(D5).
 
 ## 2. 준비: 필요한 도구 설치
 
 ```sh
-brew install llvm bdw-gc
+brew install llvm
 ```
 
 | 도구 | 확인한 버전 | 용도 |
 |---|---|---|
 | Homebrew LLVM (`mlir-opt`, `mlir-translate`, `clang`, `llc`, `opt`) | 22.1.7 | MLIR lowering, LLVM IR 변환, 링크 |
-| Boehm GC (`bdw-gc`) | 8.2.12 | 런타임의 메모리 할당과 garbage collection (`GC_MALLOC`) |
 | .NET SDK | 10.0 | 컴파일러 자체 (기존과 같음) |
 
 - Homebrew LLVM은 macOS 기본 `clang`과 겹치지 않도록 **PATH에 들어가지 않습니다**(keg-only). 컴파일러는 다음 순서로 도구 위치를 찾습니다.
   1. 환경 변수 `CALC_LLVM_BIN`
   2. `/opt/homebrew/opt/llvm/bin`
   3. `PATH`
-- Boehm GC도 같은 방식으로 `CALC_GC_PREFIX`를 먼저 보고, 없으면 `/opt/homebrew/opt/bdw-gc`를 씁니다.
 - 설치 확인:
 
   ```sh
   /opt/homebrew/opt/llvm/bin/mlir-opt --version     # Homebrew LLVM version 22.1.7
-  ls /opt/homebrew/opt/bdw-gc/include/gc.h
   ```
 
 **MLIR C API는 쓰지 않습니다.** Homebrew의 `libMLIR.dylib`에는 C API 심볼(`mlirContextCreate` 등)이 없습니다(`nm`으로 확인). C API를 쓰려면 LLVM을 소스에서 직접 빌드해야 합니다. 그래서 MLIR을 **텍스트로 출력**하고 명령줄 도구로 처리합니다(4장 D1).
@@ -52,7 +49,7 @@ brew install llvm bdw-gc
   → mlir-opt                  (외부)  scf/cf/arith → llvm 방언으로 낮추기
   → mlir-translate            (외부)  llvm 방언 → LLVM IR (.ll)
   → clang -c                  (외부)  오브젝트 (.o)
-  → clang + runtime.o + libgc (외부)  실행 파일 (runtime.o 는 한 번 컴파일해서 캐시)
+  → clang + runtime.o         (외부)  실행 파일 (runtime.o 는 한 번 컴파일해서 캐시)
 ```
 
 ```sh
@@ -60,8 +57,8 @@ mlir-opt prog.mlir --convert-scf-to-cf --convert-cf-to-llvm --convert-arith-to-l
          --reconcile-unrealized-casts -o prog.llvm.mlir
 mlir-translate --mlir-to-llvmir prog.llvm.mlir -o prog.ll
 clang -O2 -Wno-override-module -c prog.ll -o prog.o
-clang -O2 -c runtime.c -I/opt/homebrew/opt/bdw-gc/include -o runtime.o     # 한 번만 (캐시). builtins.c 도 같음
-clang prog.o runtime.o builtins.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack_size,0x20000000 -o prog
+clang -O2 -c runtime.c -o runtime.o     # 한 번만 (캐시). builtins.c, gc.c 도 같음
+clang prog.o runtime.o builtins.o gc.o -Wl,-stack_size,0x20000000 -o prog
 ```
 
 ### 새 명령줄 옵션
@@ -132,13 +129,13 @@ clang prog.o runtime.o builtins.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack
 
 | 종류 | 필드 |
 |---|---|
-| `STRING` | 길이, UTF-16 code unit 배열. 헤더는 `2 \| (뒤따르는 단어 수 << 8)`. 상수는 8-byte aligned 전역(`llvm.mlir.global`, GC 대상 아님), 연결 결과는 `GC_MALLOC_ATOMIC`(안에 포인터가 없어 GC가 내용을 훑지 않음) |
+| `STRING` | 길이, UTF-16 code unit 배열. 헤더는 `2 \| (뒤따르는 단어 수 << 8)`. 상수는 8-byte aligned 전역(`llvm.mlir.global`, GC 대상 아님), 연결 결과는 `calc_alloc_atomic`(안에 포인터가 없어 GC가 내용을 훑지 않음) |
 | `CONS` | 0.52.0까지는 head, tail과 헤더 `3 \| (2 << 8)`. 지금은 헤더가 없는 `[head, tail]` 블록이고 값의 태그 `2`가 cons임을 나타냅니다. 24바이트 블록은 Boehm GC에서 32바이트를 써서, 헤더를 없애면 리스트 메모리가 반이 됩니다. 이를 위해 `calc_init`이 interior pointer를 끄고(`GC_set_all_interior_pointers(0)`, 16바이트 요청이 32바이트로 올라가지 않음) 주소 + 2를 `GC_register_displacement(2)`로 알립니다. 스택과 레지스터의 interior pointer는 이 설정과 상관없이 인정됩니다. `[]`는 블록이 아니라 immediate value `5` |
 | `TUPLE` | 원소 n개. 헤더 `4 \| (n << 8)` |
 | `DATA` | 인자. 헤더 `5 \| (인자 단어 수 << 8) \| (생성자 번호 << 32)`. 단어 수 1은 튜플이 아닌 인자 하나이고, 2 이상이면 튜플 인자의 원소를 블록에 편 것입니다(`Node (l, v, r)`은 `[헤더, l, v, r]` 블록 하나). 인자 전체를 묶는 패턴(`Node p`)은 런타임의 `calc_data_payload`가 튜플을 다시 만들고, 실행 중에 튜플인 인자(`map Node xs`)는 `calc_make_data`가 폅니다. 인자 없는 생성자는 블록이 아니라 즉시값입니다(위 표). **생성자 번호**는 생성자 이름(C 문자열 전역)의 주소에서 런타임의 `calc_name_none` 주소를 뺀 값입니다. 생성한 코드와 런타임이 한 실행 파일에 링크되므로 32비트에 들어가고, `None`은 0입니다. 런타임은 번호로 이름을 찾아 출력하고, 같은 생성자인지는 번호로 비교합니다. 0.58.0까지는 `[헤더, 이름 포인터, 인자...]`였고 인자 없는 생성자는 전역 상수 블록이었습니다 |
 | `CLOSURE` | 코드 포인터, 캡처한 값들 (인자가 여럿인 함수는 끝에 direct 함수 포인터, 헤더에 인자 수) |
 | `REF` | 내용. 헤더 `6 \| (1 << 8)`. `r := v`가 내용을 바꿈 (0.35.0) |
-| `BOOL_ARRAY` | bool 원소 n개를 바이트 하나씩(0 또는 1). 헤더 `9 \| (n << 8)`. 원소가 bool이면 `Array.create`, `Array.ofList`가 만들고 `GC_MALLOC_ATOMIC`으로 할당 (0.60.0부터) |
+| `BOOL_ARRAY` | bool 원소 n개를 바이트 하나씩(0 또는 1). 헤더 `9 \| (n << 8)`. 원소가 bool이면 `Array.create`, `Array.ofList`가 만들고 `calc_alloc_atomic`으로 할당 (0.60.0부터) |
 | `ARRAY` | 원소 n개. 헤더 `8 \| (n << 8)`. 원소 읽기와 쓰기는 생성 코드가 범위를 검사하고 바로 load/store함(0.50.0부터. 범위 밖이면 `calc_error_index`). 값으로 쓴 `.[]`는 런타임 함수 `calc_builtin_array_get`/`set` |
 | `RECORD` | 필드 이름들(`"x;y"` C 문자열 전역의 포인터), 값 n개(선언한 순서). 헤더 `7 \| ((1 + n) << 8)`. 이름은 결과 출력에만 씀 (0.36.0) |
 
@@ -146,7 +143,7 @@ clang prog.o runtime.o builtins.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack
 
 - **polymorphism이 그냥 동작합니다.** `let id x = x`는 어떤 타입이든 `i64` 하나를 받으므로 코드가 하나면 됩니다. monomorphization(MLton, Roc 방식)은 클로저와 함께 구현하기 어렵습니다. 그래서 최적화 단계로 미룹니다.
 - **실행 중에 값의 종류를 알 수 있습니다.** `toString : 'a -> string`, polymorphic `=`, `sort`, 결과 출력(`formatValue`)은 타입 정보 없이 값만 보고 동작해야 합니다. OCaml처럼 int와 bool을 같은 표현으로 두면 `toString true`가 `"1"`이 됩니다. 그래서 둘의 태그를 나눴습니다.
-- **Boehm GC와 맞습니다.** conservative GC는 8-byte aligned 값을 포인터로 보고 따라갑니다. int와 bool은 하위 비트가 1이라 포인터와 겹치지 않습니다.
+- **GC가 힙을 정확하게 볼 수 있습니다.** 태그가 0이나 2인 값만 포인터입니다. int와 bool은 하위 비트가 1이라 포인터와 겹치지 않습니다(D5).
 - **32비트 int의 의미가 그대로 유지됩니다.** 태그를 떼고 `i32`로 계산한 뒤(한 바퀴 돎) 다시 붙입니다.
   - **`+`와 `-` (0.56.0부터):** 태그를 떼지 않습니다. `(8x+1) ± (8y+1) ∓ 1 = 8(x±y)+1`을 64비트에서 계산한 뒤 35비트에서 부호를 넓힙니다(`shl 29`, `ashr 29`, arm64에서 `sbfx` 하나).
   - **같은 결과인 이유:** 낮은 35비트가 `(x±y)`의 낮은 32비트와 태그이므로, 결과는 32비트에서 한 바퀴 돈 값에 태그를 붙인 것과 같습니다.
@@ -166,14 +163,13 @@ clang prog.o runtime.o builtins.o -L/opt/homebrew/opt/bdw-gc/lib -lgc -Wl,-stack
 - **호출** `f a`: 클로저의 0번 칸에서 코드 포인터를 꺼내 `llvm.call %code(%f, %a)`로 indirect call합니다.
 - 여러 인자 호출 `add 1 2`는 중간 클로저를 만듭니다. 느리지만 단순합니다. 이름에 묶은 함수(`let add a b = …`)에 인자를 모두 주는 호출은 0.34.0부터 인자를 모두 받는 함수를 direct call합니다. 0.58.0부터는 모르는 함수(`f acc x`)도 클로저의 인자 수가 맞으면 클로저에 담긴 direct 함수를 부릅니다([compiler-architecture.md](compiler-architecture.md) 15장).
 
-### D5. 메모리: Boehm GC
+### D5. 메모리: 세대 구분 GC (0.66.0부터)
 
-- 런타임의 `calc_alloc(bytes)`가 블록을 줍니다. 생성 코드는 해제 코드를 만들지 않습니다.
-  - **작은 블록(8단어까지):** `GC_malloc_many`로 같은 크기를 한꺼번에 받아 두고 하나씩 나눠 줍니다. `GC_malloc`은 부를 때마다 스레드별 free list를 `pthread_getspecific`으로 찾기 때문입니다.
-  - **더 큰 블록:** `GC_MALLOC`을 씁니다.
-  - **수거 빈도:** `calc_init`이 `GC_set_free_space_divisor(1)`로 수거를 드물게 합니다. 기본값 3보다 힙을 크게 잡아서, 할당이 많은 프로그램이 25% 남짓 빨라지고 최대 메모리는 2배 안쪽으로 늘어납니다.
-- 확인한 결과: 64바이트 블록 1천만 개(약 640MB)를 할당하는 C 프로그램의 최대 상주 메모리가 3MB였습니다. garbage collection이 동작합니다.
-- 참조 카운트(Roc, Lean)나 정확한 GC는 범위 밖입니다. 표현(D3)은 나중에 정확한 GC로 바꿀 수 있게 헤더를 둡니다.
+- 런타임의 `calc_alloc`, `calc_alloc_atomic`, `calc_alloc_cons`가 블록을 줍니다. 생성 코드는 해제 코드를 만들지 않습니다.
+- **collector (`runtime/gc.c`):** mostly-copying 세대 구분 GC입니다. 젊은 객체는 nursery(1MB에서 16MB까지 커짐)에 bump 할당하고, minor GC가 살아남은 것을 old space로 복사합니다. stack과 레지스터는 conservative하게 보고, 그것이 가리키는 nursery 블록은 옮기지 않고 old space로 넘깁니다. 힙은 tagged 값이라 정확하게 봅니다. old space는 mark-sweep입니다.
+- **write barrier:** 이미 있는 객체에 쓰는 곳(`:=`, 배열 쓰기, `let rec … and …`의 클로저 칸, 런타임의 리스트 tail 고치기)에서 `calc_write_barrier`를 부릅니다.
+- **0.65.2까지:** Boehm GC(`bdw-gc`)였습니다. 작은 블록은 `GC_malloc_many`로 받아 두고, `GC_set_free_space_divisor(1)`로 수거를 드물게 했습니다. 바꾼 이유와 측정은 [generational-gc-design.md](generational-gc-design.md)에 있습니다.
+- 참조 카운트(Roc, Lean)나 정확한 GC(stack map)는 범위 밖입니다.
 
 ### D6. 코드 생성은 타입 없이, 런타임 태그로 분기
 
@@ -433,7 +429,7 @@ llvm.func @main() -> i32 {
 | 문자열 UTF-16 | 인터프리터와 같은 결과를 위해 선택. 메모리 두 배, C에서 다루기 번거로움 |
 | 깊은 재귀 | 스택 크기 옵션으로 시작. tail call은 `musttail`(0.31.0), 인자 수가 다른 함수 사이까지 `tailcc`(0.34.0)로 보장 |
 | conservative GC | 정수처럼 보이는 포인터 때문에 GC가 메모리를 덜 회수할 수 있음. 태그로 대부분 피함 |
-| macOS 전용 경로 | `CALC_LLVM_BIN`, `CALC_GC_PREFIX`로 다른 환경을 지원. CI는 범위 밖 |
+| macOS 전용 경로 | `CALC_LLVM_BIN`으로 다른 환경을 지원. CI는 범위 밖 |
 | 사용자 dialect | C++ 빌드가 필요. 표준 dialect만으로 단계 8까지 가능한지 먼저 확인 |
 
 ## 참고 자료

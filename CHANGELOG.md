@@ -4,6 +4,15 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.66.0] - 2026-10-30
+
+### 변경
+- 컴파일러: 세대 구분 GC(`runtime/gc.c`)가 기본이고 하나뿐인 메모리 관리입니다. Boehm GC 경로와 빌드 스위치 `CALC_GC`, `CALC_GC_PREFIX`를 뺐습니다.
+  - 실행 파일이 `libgc`에 의존하지 않습니다(`otool -L`에는 `libSystem`만 있음). 도구는 `brew install llvm`만 있으면 됩니다.
+  - 실행할 때 쓰는 `CALC_GC_STATS`, `CALC_GC_NURSERY_KB`, `CALC_GC_STRESS`는 그대로입니다.
+  - Boehm 대비 효과는 0.65.0~0.65.2와 같습니다(msort 2백만 개 0.53초 → 0.37초, 영속 트리 백만 개 0.94초 → 0.70초).
+- 테스트: `세대 구분 GC` 묶음은 기본 빌드로 실행합니다 (총 1242개).
+
 ## [0.65.2] - 2026-10-30
 
 ### 변경

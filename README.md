@@ -87,7 +87,7 @@ dotnet run --project src/Calc
 ```
 
 ```
-calc 0.65.2 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
+calc 0.66.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
 # let add a b = a + b;;
 val add : int -> int -> int = <fun>
 # add 1 2;;
@@ -153,7 +153,7 @@ Error: parse error: unexpected '+' (line 1, column 5)
 │   ├── Prelude.fs            # 프로그램 앞에 표준 라이브러리 정의를 붙임
 │   ├── prelude.calc          # Calc 로 쓴 표준 라이브러리 (map, fold, head, ...)
 │   ├── Repl.fs               # REPL
-│   ├── runtime/              # 컴파일한 프로그램의 C 런타임 (Boehm GC, 내장 함수, Unicode 표)
+│   ├── runtime/              # 컴파일한 프로그램의 C 런타임 (세대 구분 GC, 내장 함수, Unicode 표)
 │   ├── Parser.fsy            # fsyacc 문법 → Parser.fs (빌드 시 생성)
 │   ├── Lexer.fsl             # fslex 규칙 → Lexer.fs (빌드 시 생성)
 │   ├── LayoutFilter.fs       # indentation 문법: 렉서와 파서 사이에서 가상 토큰을 넣음

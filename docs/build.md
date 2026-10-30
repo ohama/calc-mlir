@@ -75,7 +75,7 @@ dotnet src/Calc/bin/Debug/net10.0/Calc.dll --expr "2 + 3"
 | 옵션 | 짧은 형식 | 설명 |
 |---|---|---|
 | `--expr <expr>` | `-e <expr>` | 주어진 식을 계산합니다. `--expr=<expr>` 형식도 됩니다. 생략하면 표준 입력에서 읽습니다. |
-| `--version` | `-v` | 버전을 출력하고 종료합니다 (예: `calc 0.65.2`). |
+| `--version` | `-v` | 버전을 출력하고 종료합니다 (예: `calc 0.66.0`). |
 | `--no-typecheck` | | 타입 추론을 건너뛰고 바로 평가합니다. 타입은 평가 중에 동적으로 검사됩니다. |
 | `--emit-mlir` | | 평가하지 않고, 컴파일러가 만든 MLIR을 출력합니다. |
 | `--compile <path>` | | 평가하지 않고, 네이티브 실행 파일을 `<path>`에 만듭니다. `--compile=<path>` 형식도 됩니다. |
@@ -146,7 +146,7 @@ rm -f src/Calc/{Lexer,Parser}.fs{,i}
 
 ```
 $ dotnet run --project src/Calc
-calc 0.65.2 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
+calc 0.66.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
 # let rec fact n =
     if n = 0 then 1 else n * fact (n - 1);;
 val fact : int -> int = <fun>
@@ -183,7 +183,7 @@ Error: Type mismatch: expected int but got bool (line 1, column 5)
 ### 준비
 
 ```sh
-brew install llvm bdw-gc
+brew install llvm
 ```
 
 Homebrew LLVM은 PATH에 넣지 않아도 됩니다. 컴파일러가 도구를 찾는 순서는 다음과 같습니다.
@@ -192,12 +192,11 @@ Homebrew LLVM은 PATH에 넣지 않아도 됩니다. 컴파일러가 도구를 �
 2. `/opt/homebrew/opt/llvm/bin`
 3. `PATH`
 
-Boehm GC 위치는 `CALC_GC_PREFIX`(기본 `/opt/homebrew/opt/bdw-gc`)로 바꿀 수 있습니다. 도구가 없으면 무엇이 없는지와 설치 방법을 출력합니다.
+도구가 없으면 무엇이 없는지와 설치 방법을 출력합니다.
 
-**메모리 관리 고르기 (0.65.0부터, 시험 단계):** 실행 파일은 기본으로 Boehm GC를 씁니다. `CALC_GC=gen`이면 런타임의 세대 구분 GC(`runtime/gc.c`)를 씁니다. 이때 실행 파일은 `libgc`에 의존하지 않고, `bdw-gc`가 없어도 컴파일할 수 있습니다([generational-gc-design.md](generational-gc-design.md)).
+**메모리 관리:** 실행 파일은 런타임의 세대 구분 GC(`runtime/gc.c`)를 씁니다(0.66.0부터. 0.65.x에서는 `CALC_GC=gen`으로 고르는 시험 단계, 그 전에는 Boehm GC). 실행 파일은 `libSystem` 말고는 동적 라이브러리에 의존하지 않습니다([generational-gc-design.md](generational-gc-design.md)).
 
 ```bash
-CALC_GC=gen calc --compile=prog prog.calc
 CALC_GC_STATS=1 ./prog          # 끝날 때 minor/major GC 횟수, 복사한 양, pin 한 블록 수를 표준 에러로
 CALC_GC_NURSERY_KB=256 ./prog   # nursery 크기 (기본은 1MB 에서 minor GC 마다 두 배, 16MB 까지)
 CALC_GC_STRESS=10 ./prog        # 할당 10번마다 minor GC (테스트용)
@@ -217,7 +216,7 @@ dotnet run --project src/Calc -- --emit-mlir -e "42"     # 생성한 MLIR 보기
 1. `mlir-opt`: scf/cf/arith → llvm dialect
 2. `mlir-translate`: LLVM IR
 3. `clang -c`: 오브젝트 파일
-4. `clang`: 링크. C 런타임 오브젝트와 `-lgc`를 함께 링크합니다.
+4. `clang`: 링크. C 런타임 오브젝트(`runtime.o`, `builtins.o`, `gc.o`)와 함께 링크합니다.
 
 C 런타임(`runtime/runtime.c`, `builtins.c`)은 한 번만 컴파일해서 임시 폴더에 `calc-<파일>-<해시>.o`로 둡니다. 해시는 런타임의 모든 `.c`·`.h` 파일, `clang` 경로, GC 위치로 만들어서, 이 중 하나가 바뀌면 다시 컴파일합니다.
 

@@ -147,7 +147,7 @@ Result: 11
 dotnet run --project tests/Calc.Tests -- --filter "Compile"
 ```
 
-- `brew install llvm bdw-gc`가 되어 있지 않으면 이 테스트들은 실패가 아니라 **Skipped**로 표시됩니다.
+- `brew install llvm`이 되어 있지 않으면 이 테스트들은 실패가 아니라 **Skipped**로 표시됩니다.
 - differential testing은 기대값을 따로 적지 않습니다. 같은 식을 `Eval.eval`로 실행한 결과(`Eval.formatValue`)와 실행 파일의 출력을 비교합니다. 컴파일러가 지원하는 기능이 늘어나면 비교하는 예제도 자동으로 늘어납니다.
 - 실행 중 오류가 나는 예제(`1 / 0` 등)는 표준 에러(`Error: <인터프리터와 같은 메시지>`)와 종료 코드 1까지 비교합니다.
 - 기대하는 표준 출력은 `calc prog.calc`와 같습니다. `print`가 출력한 것 다음에 결과 값을 출력하고, 결과가 `()`면 결과 줄이 없습니다. 인터프리터 쪽은 `Eval.evalWithOutput`으로 출력을 받습니다.
@@ -160,11 +160,10 @@ dotnet run --project tests/Calc.Tests -- --filter "Compile"
   - 그래서 입력마다 따로 실행한 것과 같은 결과를 비교합니다.
 - **묶음 빌드를 쓰는 이유:** 입력마다 실행 파일을 만들면 macOS에서 새 실행 파일의 첫 실행에 약 0.3초가 걸립니다. 거기에 외부 도구 실행과 .NET 프로세스 생성까지 더해져 전체가 1분 30초 걸렸습니다. 지금은 전체 `dotnet test`가 약 5초입니다.
 - **단독 실행 파일:** `calc --compile`과 같은 경로(생성한 `@main`이 있는 단독 실행 파일)는 `단독 실행 파일` 테스트 3개가 확인합니다.
-- **세대 구분 GC:** `세대 구분 GC (CALC_GC=gen)` 묶음은 기본 설정과 상관없이 새 collector로 빌드합니다. 수거가 여러 번 일어나고 이미 있는 객체에 쓰는 프로그램 12개를 기본 설정, nursery 256KB, 할당 100번마다 minor GC 세 가지로 실행합니다. 전체 테스트를 새 collector로 돌리려면 환경 변수를 줍니다. 실행 파일은 환경 변수를 물려받습니다.
+- **세대 구분 GC:** `세대 구분 GC` 묶음은 수거가 여러 번 일어나고 이미 있는 객체에 쓰는 프로그램 12개를 기본 설정, nursery 256KB, 할당 100번마다 minor GC 세 가지로 실행합니다. 전체 테스트를 GC stress로 돌리려면 환경 변수를 줍니다. 실행 파일은 환경 변수를 물려받습니다.
 
   ```sh
-  CALC_GC=gen dotnet test
-  CALC_GC=gen CALC_GC_STRESS=10 dotnet test   # 할당 10번마다 minor GC (약 30초)
+  CALC_GC_STRESS=10 dotnet test   # 할당 10번마다 minor GC (약 1분)
   ```
 
   stress 간격을 3처럼 아주 짧게 하면 긴 리스트를 만드는 테스트 1개가 `Error: out of memory`로 끝납니다. GC마다 pin 한 블록이 old space로 넘어가고, 그 블록에 살아 있는 칸이 하나씩 흩어져 남기 때문입니다([generational-gc-design.md](generational-gc-design.md) 14장).
@@ -210,7 +209,7 @@ dotnet run --project tests/Calc.Tests -- --filter "Compile"
 | 명령 | 기대 출력 | 종료 코드 |
 |---|---|---|
 | `--help`, `-h` | `USAGE: calc [--help] [--expr=<expr>] [--version] [--no-typecheck]`로 시작하는 사용법 | 0 |
-| `--version`, `-v` | `calc 0.65.2` (`Calc.fsproj`의 `<Version>`) | 0 |
+| `--version`, `-v` | `calc 0.66.0` (`Calc.fsproj`의 `<Version>`) | 0 |
 | `-e "(2+3)*4"` | `Result: 20` | 0 |
 | `--expr=7/2` | `Result: 3` | 0 |
 | `--expr "-5 + 2"` | `Result: -3` (`-`로 시작하는 식도 값으로 처리됨) | 0 |

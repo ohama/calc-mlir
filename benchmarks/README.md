@@ -13,4 +13,4 @@ CALC=dist/calc python3 benchmarks/run.py
 
 예제 설명, 결과, 분석은 [docs/benchmarks.md](../docs/benchmarks.md)에 있습니다.
 
-`gc-model/`은 세대 구분 GC 설계의 1단계 C 모델입니다. `sh benchmarks/gc-model/run.sh`가 새 collector와 Boehm을 비교합니다([docs/generational-gc-design.md](../docs/generational-gc-design.md) 11장).
+`gc-model/`은 세대 구분 GC 설계의 1단계 C 모델입니다. `sh benchmarks/gc-model/run.sh`가 새 collector와 Boehm(`brew install bdw-gc`가 필요)을 비교합니다([docs/generational-gc-design.md](../docs/generational-gc-design.md) 11장).

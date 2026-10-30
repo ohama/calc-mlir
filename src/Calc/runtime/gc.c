@@ -1,10 +1,9 @@
-/* 세대 구분 GC (CALC_GC=gen 으로 빌드할 때. 기본은 Boehm, runtime.c): mostly-copying nursery + 옮기지 않는 old space
+/* 세대 구분 GC: mostly-copying nursery + 옮기지 않는 old space
    (docs/generational-gc-design.md 4장, 11장. benchmarks/gc-model/gcm.c 의 모델과 같은 구조).
    - 모든 블록(32KB)은 미리 잡아 둔 한 영역에서 나옴. 블록마다 상태를 표(meta)에 둠
    - nursery: 일반 블록과 cons 블록에 따로 bump. 다시 쓸 때 0 으로 채움
    - minor GC: stack 과 레지스터가 가리키는 nursery 블록은 pin 해서 그 자리에서 old 로 넘김. 나머지 살아 있는 것은 복사
    - old space: 크기별 블록(free list), 큰 객체(블록 여러 개), 넘겨받은 nursery 블록. major GC 는 mark-sweep */
-#ifdef CALC_GC_GEN
 #include "runtime.h"
 
 #include <pthread.h>
@@ -618,4 +617,3 @@ void calc_gc_print_stats(void) {
             (long long)stat_minor, (long long)stat_major, (long long)(stat_copied_bytes >> 20), (long long)stat_pinned_blocks,
             (long long)(stat_old_bytes_peak >> 20), (long long)fresh_block, (long long)((fresh_block * BLOCK_BYTES) >> 20));
 }
-#endif

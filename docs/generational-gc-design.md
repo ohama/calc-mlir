@@ -236,7 +236,7 @@ pin 한 nursery 블록은 안의 객체를 모두 훑어야 합니다. 헤더 �
 | 2. 런타임에 넣기 (끝남, 12장) | 1단계의 collector를 `runtime/gc.c`로. 할당 함수, 런타임 전역 root 등록, 런타임과 Codegen의 barrier(포인터일 때 런타임 호출). 빌드 스위치 `CALC_GC=gen`, 기본은 Boehm | 전체 테스트가 두 모드와 GC stress 모드에서 통과 |
 | 3. barrier 다듬기 (끝남, 13장) | 같은 칸을 한 번만 기록, remembered set을 늘림. 펼쳐 넣기와 int 쓰기의 barrier 빼기는 측정해 보고 하지 않음 | 측정, 전체 테스트 |
 | 4. 측정과 조정 (끝남, 14장) | 넘겨받은 cons 블록 다시 쓰기, nursery를 1MB에서 키우기 | 1장의 프로그램이 Boehm보다 빠르고, `benchmarks/`가 느려지지 않음 |
-| 5. 기본값으로 | Boehm 경로와 `-lgc`를 뺌. 문서(`compiler-design.md` D5, `compiler-architecture.md`) | 릴리스 |
+| 5. 기본값으로 (끝남, 15장) | Boehm 경로와 `-lgc`를 뺌. 문서(`compiler-design.md` D5, `compiler-architecture.md`) | 릴리스 |
 
 단계마다 릴리스할 수 있게 나눴습니다. 2단계까지는 새 collector가 선택 사항이라 기존 동작에 영향이 없습니다.
 
@@ -254,7 +254,7 @@ pin 한 nursery 블록은 안의 객체를 모두 훑어야 합니다. 헤더 �
 
 ## 9. 정해야 할 것
 
-- **Boehm 경로를 언제까지 남길지:** 5단계에서 빼는 것으로 적었습니다. 남기면 비교와 문제 확인에 좋지만 런타임에 두 경로가 생깁니다.
+- **Boehm 경로를 언제까지 남길지:** 5단계에서 뺐습니다(15장). 비교가 필요하면 C 모델(`benchmarks/gc-model/run.sh`)이 Boehm과 비교합니다.
 - **1단계의 끝나는 조건:** 7장의 수는 bump 상한(1.2절)과 지금 값의 중간쯤으로 잡았습니다. 더 높게 잡으면 E를 같이 시험합니다.
 - **생성 코드에 할당 펼쳐 넣기:** bump 할당은 몇 줄이라 펼쳐 넣을 수 있습니다. 0.53.0에서는 효과가 없었지만, bump가 되면 다시 잴 가치가 있습니다. 4단계에서 봅니다.
 
@@ -414,4 +414,11 @@ nursery를 처음부터 16MB로 잡으면, 할당이 적은 프로그램도 최�
 - **시간:** 잰 프로그램 모두 Boehm과 같거나 빠릅니다.
 - **메모리:** 할당이 많은 작은 프로그램은 nursery만큼 늘어납니다. 큰 프로그램은 비슷하거나 적습니다.
 - **알려진 한계:** 아주 잦은 pinning에서의 단편화(14.1). 기본 설정에서는 재 본 프로그램에서 나타나지 않았습니다.
+
+## 15. 5단계: 기본값으로
+
+- **바꾼 것:** 런타임의 Boehm 경로(`runtime.c`의 `GC_*` 호출, `#include <gc.h>`)와 빌드 스위치 `CALC_GC`를 뺐습니다. `gc.c`는 언제나 컴파일됩니다. Toolchain은 `-lgc`, `-I`/`-L`의 Boehm 경로, `CALC_GC_PREFIX`, `bdw-gc` 확인을 뺐습니다.
+- **결과:** 실행 파일의 동적 라이브러리는 `/usr/lib/libSystem.B.dylib` 하나입니다. 도구는 `brew install llvm`만 있으면 됩니다. `docs/compiler-architecture.md` 5장의 한계 "실행 파일이 Homebrew의 `libgc.1.dylib`에 동적으로 의존"이 없어졌습니다.
+- **테스트:** 전체 1242개가 기본 설정과 `CALC_GC_STRESS=10`에서 통과합니다. `세대 구분 GC` 묶음은 그대로 세 가지 설정(기본, nursery 256KB, 할당 100번마다 minor GC)으로 실행합니다.
+- **남은 일:** 아주 잦은 pinning에서의 단편화(14.1, 드문드문한 블록의 객체를 major GC가 옮기기), 넘겨받은 일반 블록 다시 쓰기, 생성 코드에 할당 펼쳐 넣기(9장).
 
