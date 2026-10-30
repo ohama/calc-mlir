@@ -161,8 +161,8 @@ define i32 @main() {                      ; (다)가 C 의 main 심볼이 됨
 
 ```
 clang -O2 -Wno-override-module -c prog.ll -o prog.o
-clang prog.o $TMPDIR/calc-runtime-<해시>.o $TMPDIR/calc-builtins-<해시>.o $TMPDIR/calc-gc-<해시>.o \
-      -Wl,-stack_size,0x20000000 -o discount
+/usr/bin/clang prog.o $TMPDIR/calc-runtime-<해시>.o $TMPDIR/calc-builtins-<해시>.o $TMPDIR/calc-gc-<해시>.o \
+      -Wl,-stack_size,0x20000000 -o discount      # 링크는 Apple clang (Homebrew clang 은 libLTO 를 읽느라 느림)
 ```
 
 이 문서의 처음 판(0.17.0)에서는 `clang -O2 prog.ll runtime.c ...` 한 번으로 컴파일과 링크를 했습니다. 지금은 런타임을 한 번만 컴파일해 둡니다(4장).

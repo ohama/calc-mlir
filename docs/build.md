@@ -30,9 +30,9 @@ Build succeeded.
 dotnet build src/Calc -c Release
 ```
 
-### 빠른 실행 파일 (ReadyToRun)
+### 설치: 빠른 실행 파일 (ReadyToRun)
 
-`dotnet build`의 결과는 실행할 때마다 JIT이 메서드를 컴파일합니다. 빈 프로그램에서도 1,500개쯤입니다(prelude를 파싱하는 파서의 메서드가 그중 600개). ReadyToRun으로 publish하면 미리 컴파일해 둡니다. 실행할 컴퓨터의 런타임 식별자(RID)를 줍니다.
+개발하지 않고 쓰기만 할 때는 이 방법을 권장합니다. `dotnet build`의 결과는 실행할 때마다 JIT이 메서드를 컴파일합니다. 빈 프로그램에서도 1,500개쯤입니다(prelude를 파싱하는 파서의 메서드가 그중 600개). ReadyToRun으로 publish하면 미리 컴파일해 둡니다. 실행할 컴퓨터의 런타임 식별자(RID)를 줍니다.
 
 ```sh
 dotnet publish src/Calc -c Release -r osx-arm64 -p:PublishReadyToRun=true -o dist   # Linux x64 는 -r linux-x64
@@ -40,8 +40,9 @@ dotnet publish src/Calc -c Release -r osx-arm64 -p:PublishReadyToRun=true -o dis
 ```
 
 - **효과:** 빈 프로그램이 0.071초에서 0.035초가 됩니다. 첫 실행의 JIT 데우기도 줄어 `benchmarks/fib.calc`는 0.15초에서 0.11초가 됩니다(Apple M4 Max). 자세한 수치는 [benchmarks.md](benchmarks.md)에 있습니다.
+- **컴파일 시간:** `calc --compile`도 빨라집니다. `benchmarks/bst.calc`가 0.29초에서 0.19초입니다. 파싱, 타입 추론, MLIR 생성이 100ms에서 30ms가 됩니다(0.66.1부터).
 - **크기:** `Calc.dll`이 0.9MB에서 2.3MB가 됩니다.
-- **같은 동작:** 결과와 `--compile`은 같습니다. 테스트는 `dotnet build` 결과로 돕니다.
+- **같은 동작:** 결과와 `--compile`은 같습니다. 테스트와 `dotnet run`은 `dotnet build` 결과로 돕니다. 소스를 고친 뒤에는 publish를 다시 합니다.
 
 ## 실행
 
@@ -75,7 +76,7 @@ dotnet src/Calc/bin/Debug/net10.0/Calc.dll --expr "2 + 3"
 | 옵션 | 짧은 형식 | 설명 |
 |---|---|---|
 | `--expr <expr>` | `-e <expr>` | 주어진 식을 계산합니다. `--expr=<expr>` 형식도 됩니다. 생략하면 표준 입력에서 읽습니다. |
-| `--version` | `-v` | 버전을 출력하고 종료합니다 (예: `calc 0.66.0`). |
+| `--version` | `-v` | 버전을 출력하고 종료합니다 (예: `calc 0.66.1`). |
 | `--no-typecheck` | | 타입 추론을 건너뛰고 바로 평가합니다. 타입은 평가 중에 동적으로 검사됩니다. |
 | `--emit-mlir` | | 평가하지 않고, 컴파일러가 만든 MLIR을 출력합니다. |
 | `--compile <path>` | | 평가하지 않고, 네이티브 실행 파일을 `<path>`에 만듭니다. `--compile=<path>` 형식도 됩니다. |
@@ -146,7 +147,7 @@ rm -f src/Calc/{Lexer,Parser}.fs{,i}
 
 ```
 $ dotnet run --project src/Calc
-calc 0.66.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
+calc 0.66.1 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
 # let rec fact n =
     if n = 0 then 1 else n * fact (n - 1);;
 val fact : int -> int = <fun>
@@ -216,9 +217,24 @@ dotnet run --project src/Calc -- --emit-mlir -e "42"     # 생성한 MLIR 보기
 1. `mlir-opt`: scf/cf/arith → llvm dialect
 2. `mlir-translate`: LLVM IR
 3. `clang -c`: 오브젝트 파일
-4. `clang`: 링크. C 런타임 오브젝트(`runtime.o`, `builtins.o`, `gc.o`)와 함께 링크합니다.
+4. 링크: C 런타임 오브젝트(`runtime.o`, `builtins.o`, `gc.o`)와 함께 링크합니다. macOS에서는 Apple clang(`/usr/bin/clang`)으로 링크합니다. Homebrew clang은 LTO를 쓰지 않아도 링커에 Homebrew의 `libLTO.dylib`을 넘겨서 ld가 그것을 읽느라 20ms쯤 더 걸립니다.
 
-C 런타임(`runtime/runtime.c`, `builtins.c`)은 한 번만 컴파일해서 임시 폴더에 `calc-<파일>-<해시>.o`로 둡니다. 해시는 런타임의 모든 `.c`·`.h` 파일, `clang` 경로, GC 위치로 만들어서, 이 중 하나가 바뀌면 다시 컴파일합니다.
+네 단계는 셸 하나(`/bin/sh -c`)가 차례로 실행합니다. .NET에서 프로세스를 하나 만드는 데 11ms 남짓 들기 때문입니다. 단계가 실패하면 그 도구의 이름, 종료 코드, 표준 에러로 `Error: <도구> failed (exit n)`를 출력합니다(0.66.1부터).
+
+C 런타임(`runtime/runtime.c`, `builtins.c`, `gc.c`)은 한 번만 컴파일해서 임시 폴더에 `calc-<파일>-<해시>.o`로 둡니다. 해시는 런타임의 모든 `.c`·`.h` 파일과 `clang` 경로로 만들어서, 이 중 하나가 바뀌면 다시 컴파일합니다.
+
+`CALC_TIMINGS=1`이면 단계마다 걸린 시간을 표준 에러로 출력합니다. 이때는 시간을 재려고 외부 도구를 하나씩 따로 실행합니다.
+
+```sh
+$ CALC_TIMINGS=1 calc --compile=prog benchmarks/bst.calc
+  parse + prelude    34.0 ms
+  typecheck          22.4 ms
+  lower + codegen    44.8 ms
+  mlir-opt           33.4 ms
+  mlir-translate     24.4 ms
+  clang              42.9 ms
+  clang              28.1 ms
+```
 
 `upper`, `lower`, `trim`이 쓰는 Unicode 표(`runtime/unicode.h`)는 .NET에서 생성합니다. .NET을 올린 뒤 테스트 `Unicode 표`가 실패하면 다시 만듭니다.
 

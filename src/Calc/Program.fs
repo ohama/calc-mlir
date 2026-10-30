@@ -80,9 +80,9 @@ type CompileMode =
 /// 타입 추론을 통과한 프로그램만 컴파일 (docs/compiler-design.md 1장)
 let compile (mode: CompileMode) (input: string) =
     try
-        let ast = load input
-        typecheckAndWarn input ast |> ignore
-        let mlir = Codegen.emitProgram ast
+        let ast = Toolchain.timed "parse + prelude" (fun () -> load input)
+        Toolchain.timed "typecheck" (fun () -> typecheckAndWarn input ast |> ignore)
+        let mlir = Toolchain.timed "lower + codegen" (fun () -> Codegen.emitProgram ast)
         match mode with
         | EmitMlir ->
             printf "%s" mlir

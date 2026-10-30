@@ -4,6 +4,16 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.66.1] - 2026-10-30
+
+### 변경
+- 컴파일 시간: `calc --compile`이 `benchmarks/bst.calc`에서 0.31초에서 0.29초, fib에서 0.29초에서 0.25초가 되었습니다.
+  - 외부 도구 넷(`mlir-opt`, `mlir-translate`, `clang -c`, 링크)을 셸 하나가 차례로 실행합니다. .NET에서 프로세스를 만드는 비용(하나에 11ms 남짓)이 네 번에서 한 번이 되었습니다. 실패하면 전처럼 도구 이름, 종료 코드, 표준 에러를 출력합니다.
+  - macOS에서는 Apple clang(`/usr/bin/clang`)으로 링크합니다. Homebrew clang은 링커에 Homebrew의 `libLTO.dylib`을 넘겨서 링크가 49ms에서 28ms가 되었습니다.
+  - ReadyToRun으로 publish한 calc는 0.19초입니다(파싱, 타입 추론, MLIR 생성의 JIT이 줄어듦).
+- 새 환경 변수 `CALC_TIMINGS=1`: 컴파일 단계마다 걸린 시간을 표준 에러로 출력합니다.
+- 문서: README와 `docs/build.md`가 ReadyToRun으로 publish한 실행 파일(`dist/calc`)을 설치 방법으로 권장합니다. 테스트와 `dotnet run`은 그대로입니다.
+
 ## [0.66.0] - 2026-10-30
 
 ### 변경

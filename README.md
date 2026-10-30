@@ -70,6 +70,17 @@ dotnet build    # 솔루션 전체 빌드 (Calc + Calc.Tests)
 dotnet test     # 테스트 실행
 ```
 
+### 설치
+
+쓰려면 ReadyToRun으로 publish한 실행 파일을 권장합니다. 미리 컴파일해 두어서 시작과 `--compile`이 빠릅니다(`benchmarks/bst.calc`의 컴파일이 0.29초에서 0.19초). `-r`에는 컴퓨터의 런타임 식별자(RID)를 줍니다.
+
+```sh
+dotnet publish src/Calc -c Release -r osx-arm64 -p:PublishReadyToRun=true -o dist   # Intel Mac 은 osx-x64, Linux x64 는 linux-x64
+./dist/calc examples/hello.calc
+```
+
+아래 예는 개발할 때처럼 `dotnet run`으로 실행합니다. `dotnet run --project src/Calc --` 대신 `./dist/calc`를 써도 같습니다.
+
 ### 실행
 
 ```sh
@@ -87,7 +98,7 @@ dotnet run --project src/Calc
 ```
 
 ```
-calc 0.66.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
+calc 0.66.1 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
 # let add a b = a + b;;
 val add : int -> int -> int = <fun>
 # add 1 2;;
