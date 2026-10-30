@@ -88,6 +88,9 @@ type CFunction =
       /// 인자가 여럿인 함수의 바깥 클로저: 인자를 모두 받는 direct 함수와 그 인자 수. 클로저의 마지막 칸에 direct 함수를 두고
       /// 헤더에 인자 수를 적음. 모르는 함수에 인자를 그 수만큼 주는 호출(f a b)은 중간 클로저 없이 direct 함수를 부름
       Direct: (string * int) option
+      /// 1 이면 값 하나(i64). k (2~4) 면 튜플 원소 k 개를 struct 로 돌려줌 (튜플 블록을 만들지 않음). 이름으로 부르는
+      /// direct 함수만 k 가 될 수 있고, 클로저로 부르는 함수는 항상 1
+      Returns: int
       Body: CExpr }
 
 type CProgram = { Functions: CFunction list; Main: CExpr }

@@ -414,6 +414,28 @@ let private runCases =
           "let a = Array.create 4 (Some true) in a.[0] <- None; println (a, Array.create 2 [true], Array.create 2 (true, 1))", ("([|None; Some true; Some true; Some true|], [|[true]; [true]|], [|(true, 1); (true, 1)|])\n", "", 0), "bool 이 아닌 원소는 보통 배열"
           "let a = Array.create 300000 true in let junk = map (fun x -> (x, x)) (range 1 300000) in a.[299999] <- false; println (a.[0], a.[299999], length junk)", ("(true, false, 300000)\n", "", 0), "GC 가 훑지 않는 bool 배열이 수거 뒤에도 그대로"
         ]
+      "튜플을 돌려주는 함수 (direct 함수가 struct 로 돌려줌)",
+        [
+          "let divmod a b = (a / b, a % b) in println (divmod 17 5, (match divmod 9 2 with (q, r) -> q * 10 + r), map (divmod 7) [1; 2; 3])", ("((3, 2), 41, [(7, 0); (3, 1); (2, 1)])\n", "", 0), "결과를 바로 match 하는 곳과 값으로 쓰는 곳"
+          "let rec sumPairs xs s n = match xs with [] -> (s, n) | x :: rest -> sumPairs rest (s + x) (n + 1) in println (sumPairs (range 1 1000000) 0 0)", ("(1784293664, 1000000)\n", "", 0), "끝이 자기 재귀인 함수 (백만 번, tail call)"
+          "let rec fib2 n = if n = 0 then (0, 1) else (match fib2 (n - 1) with (a, b) -> (b, (a + b) % 1000003)) in let (a, b) = fib2 30 in println (a, b, fib2 5)", ("(832040, 346266, (5, 8))\n", "", 0), "재귀 호출의 결과를 match 한 뒤 튜플, let (a, b) = …"
+          "let tri x = (x, x * 2, x * 3) in let quad x = (x, x, x, x) in println ((match tri 3 with (a, b, c) -> a + b + c), (match quad 2 with (a, _, _, d) -> a + d), tri 1, quad 0)", ("(18, 4, (1, 2, 3), (0, 0, 0, 0))\n", "", 0), "원소 셋과 넷, _ 패턴"
+          "let five x = (x, x, x, x, x) in println ((match five 1 with (a, _, _, _, e) -> a + e), five 2)", ("(2, (2, 2, 2, 2, 2))\n", "", 0), "원소 다섯은 struct 로 돌려주지 않음"
+          "let f x = if x > 0 then (x, \"pos\") else (0 - x, \"neg\") in println (f 3, f (-4), (match f 5 with (n, s) -> s + toString n))", ("((3, \"pos\"), (4, \"neg\"), \"pos5\")\n", "", 0), "if 의 두 끝, 문자열 원소"
+          "let k = 10 in let g x = (print x; (x + k, x - k)) in println (match g 1 with (a, b) -> a * b)", ("1-99\n", "", 0), "캡처한 값과 부수 효과의 순서"
+          "let rec even n acc = if n = 0 then (true, acc) else odd (n - 1) (acc + 1) and odd n acc = if n = 0 then (false, acc) else even (n - 1) (acc + 1) in println (even 1000001 0, odd 4 0)", ("((false, 1000001), (false, 4))\n", "", 0), "서로 부르는 함수는 struct 로 돌려주지 않음 (백만 번, tail call)"
+          "let p = (1, 2) in let id2 x = if x then p else (3, 4) in println (id2 true, id2 false)", ("((1, 2), (3, 4))\n", "", 0), "변수로 끝나는 함수는 그대로"
+          "let rec f n = if n = 0 then (0, 0) else let f = fun m -> (m, m) in f n in println (f 3, f 0)", ("((3, 3), (0, 0))\n", "", 0), "자기 이름을 가린 안쪽 함수"
+          "let swap p = match p with (a, b) -> (b, a) in let r = ref (1, 2) in for i = 1 to 5 do r := swap !r done; println (!r, (match swap (swap (3, 4)) with (a, b) -> a - b))", ("((2, 1), -1)\n", "", 0), "튜플 인자 펴기와 함께, ref 에 넣는 결과"
+          "let pair a b = (a, b) in let apply2 h x y = h x y in println (apply2 pair 1 \"x\", fold (fun acc p -> match p with (a, b) -> acc + a * b) 0 (map (fun i -> pair i i) [1; 2; 3]), (pair 1) 2)", ("((1, \"x\"), 14, (1, 2))\n", "", 0), "값으로 넘긴 함수, fold, partial application"
+          "let m x = match x with 0 -> (0, \"zero\") | n when n < 0 -> (n, \"neg\") | n -> (n, \"pos\") in println (m 0, m (-1), m 2, (match m 7 with (_, s) -> s))", ("((0, \"zero\"), (-1, \"neg\"), (2, \"pos\"), \"pos\")\n", "", 0), "가드와 분기 셋"
+          "let g x = try (x / 1, x) with _ -> (0, 0) in println (match g 5 with (a, b) -> a + b)", ("10\n", "", 0), "try 로 끝나는 함수는 그대로"
+          "let h x = let t = (x, x) in t in println (match h 4 with (a, b) -> a * b)", ("16\n", "", 0), "let 으로 묶은 튜플로 끝나는 함수는 그대로"
+          "let rec loop i acc = if i = 0 then acc else (match acc with (a, b) -> loop (i - 1) (b, a + b)) in println (loop 10 (0, 1))", ("(55, 89)\n", "", 0), "튜플 인자를 match 한 뒤 재귀"
+          "let mk n = (n, [n], Some n) in println ((match mk 2 with (a, xs, o) -> (a, xs, o)), mk 3)", ("((2, [2], Some 2), (3, [3], Some 3))\n", "", 0), "원소가 리스트와 option"
+          "let rec walk n = if n = 0 then (1, 2) else walk (n - 1) in println (walk 1000000)", ("(1, 2)\n", "", 0), "끝이 자기 재귀뿐인 함수 (백만 번)"
+          "let rec w4 n a = if n = 0 then (a, n, a + 1, 7) else w4 (n - 1) (a + 1) in let rec w3 n = if n = 0 then (1, 2, 3) else w3 (n - 1) in println (w4 3000000 0, w3 3000000, (match w4 10 0 with (a, b, c, d) -> a + b + c + d))", ("((3000000, 0, 3000001, 7), (1, 2, 3), 28)\n", "", 0), "원소 셋과 넷을 돌려주는 자기 재귀 (3백만 번)"
+        ]
       "튜플 인자 펴기 (direct 함수가 원소를 따로 받음)",
         [
           "let rec go i p = match p with (a, b) -> if i = 0 then a else go (i - 1) (b, (a + b) % 1000003) in println (go 1000000 (0, 1))", ("3\n", "", 0), "재귀 호출에 튜플 리터럴: 튜플을 만들지 않음"
@@ -754,6 +776,20 @@ let tests =
                 Expect.isTrue (passed.Contains "@lambda_0_tupled(%closure: !llvm.ptr, %arg0: i64, %arg1: i64)") "튜플을 받는 함수"
                 Expect.isTrue (passed.Contains "llvm.mlir.addressof @lambda_0_tupled") "클로저의 마지막 칸"
                 Expect.isFalse (used.Contains "_tupled") "인자 하나짜리 함수는 만들지 않음"
+            }
+            // 끝이 모두 튜플 리터럴(또는 자기 재귀)인 함수: direct 함수가 struct 로 돌려주고, 결과를 바로 match 하는 곳은 블록을 만들지 않음
+            test "튜플을 돌려주는 direct 함수는 struct" {
+                let mlir = Codegen.emitProgram (Program.parse "let divmod a b = (a / b, a % b) in let r = (match divmod 7 2 with (q, m) -> q + m) in (r, divmod 9 4)")
+                Expect.isTrue (mlir.Contains "@lambda_0_direct(%closure: !llvm.ptr, %arg0: i64, %arg1: i64) -> !llvm.struct<(i64, i64)>") "direct 함수의 결과"
+                Expect.isTrue (mlir.Contains "llvm.extractvalue") "match 하는 곳은 원소를 꺼냄"
+                let start = mlir.IndexOf "@lambda_0_direct(%closure"
+                let body = mlir.Substring(start, mlir.IndexOf("\n}", start) - start)
+                Expect.isFalse (body.Contains "@calc_alloc(") "direct 함수는 튜플 블록을 만들지 않음"
+                Expect.isTrue (mlir.Contains "@lambda_0_tupled(%closure: !llvm.ptr, %arg0: i64, %arg1: i64) -> i64") "간접 호출은 튜플을 돌려주는 함수"
+                let notStruct (input: string) = Expect.isFalse ((Codegen.emitProgram (Program.parse input)).Contains "!llvm.struct") input
+                notStruct "let f x = (x, x, x, x, x) in f 1"
+                notStruct "let rec even n = if n = 0 then (true, 0) else odd (n - 1) and odd n = if n = 0 then (false, 0) else even (n - 1) in even 3"
+                notStruct "let p = (1, 2) in let f x = if x then p else (3, 4) in f true"
             }
             test "클로저 칸, ref, 배열 접근에는 서로 다른 TBAA 태그, 오류 함수는 noreturn" {
                 let mlir = Codegen.emitProgram (Program.parse "let a = Array.create 3 0 in let r = ref 0 in let f i = a.[i] <- !r; r := i in f 1")

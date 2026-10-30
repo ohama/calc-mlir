@@ -107,6 +107,15 @@ type private StringTable(prefix: string) =
     /// 바깥 클로저 함수 이름 → (direct 함수, 인자 수) (CFunction.Direct). 클로저를 만들 때 마지막 칸과 헤더에 넣음
     member val Directs = System.Collections.Generic.Dictionary<string, string * int>()
 
+    /// 결과를 struct 로 돌려주는 direct 함수 → 튜플 원소 수 (CFunction.Returns 가 2 이상)
+    member val Returns = System.Collections.Generic.Dictionary<string, int>()
+
+    /// 함수가 돌려주는 원소 수 (1 이면 i64 하나)
+    member this.ReturnsOf(funcName: string) =
+        match this.Returns.TryGetValue funcName with
+        | true, k -> k
+        | _ -> 1
+
     /// 이 프로그램의 심볼(함수, 문자열 상수) 이름 앞에 붙임. 여러 프로그램을 한 모듈에 넣을 때 이름이 겹치지 않게
     member _.Prefix = prefix
 
@@ -160,6 +169,8 @@ type private FunctionBuilder(strings: StringTable) =
         lines.Append(block).AppendLine(":") |> ignore
 
     member _.Strings = strings
+    /// 지금 만드는 함수가 돌려주는 원소 수 (CFunction.Returns). emitTail 이 llvm.return 의 모양을 정함
+    member val Returns = 1 with get, set
     member _.Indent() = depth <- depth + 1
     member _.Dedent() = depth <- depth - 1
     member _.Text = lines.ToString()
@@ -320,6 +331,28 @@ let private emitField (fb: FunctionBuilder) (v: string) (index: int) =
     fb.Emit(sprintf "%s = llvm.load %s : !llvm.ptr -> i64" r (emitSlot fb block index))
     r
 
+/// 원소 k 개의 struct 타입 (결과를 struct 로 돌려주는 함수)
+let private structType (k: int) = sprintf "!llvm.struct<(%s)>" (String.concat ", " (List.replicate k "i64"))
+
+/// struct 의 원소 k 개
+let private emitExtracts (fb: FunctionBuilder) (s: string) (k: int) =
+    [ for i in 0 .. k - 1 ->
+          let r = fb.Fresh()
+          fb.Emit(sprintf "%s = llvm.extractvalue %s[%d] : %s" r s i (structType k))
+          r ]
+
+/// 값들로 struct 를 만들어 llvm.return
+let private emitReturnStruct (fb: FunctionBuilder) (values: string list) =
+    let ty = structType values.Length
+    let undef = fb.Fresh()
+    fb.Emit(sprintf "%s = llvm.mlir.undef : %s" undef ty)
+    let s =
+        values |> List.indexed |> List.fold (fun acc (i, v) ->
+            let r = fb.Fresh()
+            fb.Emit(sprintf "%s = llvm.insertvalue %s, %s[%d] : %s" r v acc i ty)
+            r) undef
+    fb.Emit(sprintf "llvm.return %s : %s" s ty)
+
 /// [헤더, 값...] 블록을 GC 로 할당하고 채움. 값은 이미 계산한 SSA 이름 (평가 순서는 부르는 쪽이 정함)
 let rec private emitBlock (fb: FunctionBuilder) (header: int64) (values: string list) =
     emitBlockWith fb (emitConst fb "i64" header) values
@@ -407,6 +440,15 @@ let private components (pattern: Ast.Pattern) (vs: string list) =
     match pattern with
     | Ast.PTuple ps -> List.zip ps vs
     | _ -> vs |> List.map (fun v -> Ast.PWildcard, v)
+
+/// match 의 대상이 원소별로 나뉜 튜플인가: 튜플 리터럴, 또는 결과를 struct 로 돌려주는 direct 함수 호출.
+/// 분기가 모두 같은 길이의 튜플 패턴이나 _ 이면 튜플 블록 없이 원소마다 맞춤. 결과는 원소 수
+let private tupleScrutinee (strings: StringTable) (scrutinee: CExpr) cases =
+    match scrutinee with
+    | CTuple items when tupleArms items.Length cases -> Some items.Length
+    | CCallDirect (funcName, _, _) when strings.ReturnsOf funcName > 1 && tupleArms (strings.ReturnsOf funcName) cases ->
+        Some (strings.ReturnsOf funcName)
+    | _ -> None
 
 /// 식의 값을 담은 SSA 이름을 반환. env 는 변수 이름 → 그 값을 담은 SSA 이름
 let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr : string =
@@ -542,7 +584,12 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
         match applySpine expr with
         | head, args when args.Length >= 2 -> emitApplyMany fb env false head args
         | _ -> emitApply fb env "" f a
-    | CCallDirect (funcName, closure, args) -> emitCallDirect fb env "" funcName closure args
+    | CCallDirect (funcName, closure, args) ->
+        let r = emitCallDirect fb env "" funcName closure args
+        // struct 로 돌려받은 원소로 튜플 블록 (값으로 쓰는 곳)
+        match fb.Strings.ReturnsOf funcName with
+        | 1 -> r
+        | k -> emitBlock fb (tupleHeader k) (emitExtracts fb r k)
     // 런타임의 calc_try 가 _setjmp 한 뒤 본문 클로저를 부름 (setjmp 를 한 함수가 살아 있는 동안만 longjmp 할 수 있으므로 C 에서)
     | CTry (body, handler) ->
         let b = emitExpr fb env body
@@ -678,8 +725,8 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
             (fun () -> emitCall fb "calc_make_data" [ bits; pv ] "i64")
             (fun () -> emitBlockWith fb (emitOp fb "arith.ori" bits (emitConst fb "i64" (dataHeader 1)) "i64") [ pv ])
     // match (a, b) with (p, q) -> …: 튜플 블록을 만들지 않고 원소마다 패턴을 맞춤 (분기가 모두 같은 길이의 튜플 패턴이나 _)
-    | CMatch (CTuple items, cases) when tupleArms items.Length cases ->
-        let vs = items |> List.map (emitExpr fb env)
+    | CMatch (scrutinee, cases) when (tupleScrutinee fb.Strings scrutinee cases).IsSome ->
+        let vs: string list = emitTupleScrutinee fb env scrutinee
         let rec emitCases cases =
             match cases with
             | [] ->
@@ -767,6 +814,14 @@ and private emitApplyValue (fb: FunctionBuilder) (tailKind: string) (fv: string)
     r
 
 /// 알려진 함수 호출: 최상위 함수를 (클로저, 인자...) 로 직접 부름. 클로저와 인자는 왼쪽부터 계산
+/// tupleScrutinee 인 대상의 원소 값 (왼쪽부터 계산)
+and private emitTupleScrutinee (fb: FunctionBuilder) (env: Map<string, string>) (scrutinee: CExpr) =
+    match scrutinee with
+    | CTuple items -> items |> List.map (emitExpr fb env)
+    | CCallDirect (funcName, closure, args) ->
+        emitExtracts fb (emitCallDirect fb env "" funcName closure args) (fb.Strings.ReturnsOf funcName)
+    | _ -> failwith "Codegen: not a tuple scrutinee"
+
 and private emitCallDirect (fb: FunctionBuilder) (env: Map<string, string>) (tailKind: string) (funcName: string) (closure: CExpr) (args: CExpr list) =
     let cv = emitExpr fb env closure
     let values = args |> List.map (emitExpr fb env)
@@ -774,9 +829,11 @@ and private emitCallDirect (fb: FunctionBuilder) (env: Map<string, string>) (tai
     fb.Emit(sprintf "%s = llvm.inttoptr %s : i64 to !llvm.ptr" block cv)
     let r = fb.Fresh()
     let types = List.replicate values.Length "i64" |> String.concat ", "
+    let k = fb.Strings.ReturnsOf funcName
+    let result = if k = 1 then "i64" else structType k
     fb.Emit(
-        sprintf "%s = llvm.call tailcc %s@%s%s(%s) : (!llvm.ptr, %s) -> i64"
-            r tailKind fb.Strings.Prefix funcName (String.concat ", " (block :: values)) types)
+        sprintf "%s = llvm.call tailcc %s@%s%s(%s) : (!llvm.ptr, %s) -> %s"
+            r tailKind fb.Strings.Prefix funcName (String.concat ", " (block :: values)) types result)
     r
 
 /// match 분기의 조건 (i1): 패턴 검사, 가드가 있으면 패턴이 맞을 때만 가드를 계산
@@ -928,9 +985,20 @@ and private emitTail (fb: FunctionBuilder) (env: Map<string, string>) (expr: CEx
         thenBranch ()
         fb.Label elseBlock
         elseBranch ()
+    // 값 하나(i64)를 돌려줌. struct 를 돌려주는 함수면 튜플 블록에서 원소를 꺼냄 (Lower 가 고른 함수에서는 생기지 않는 경우)
+    let returnValue (v: string) =
+        if fb.Returns = 1 then fb.Emit(sprintf "llvm.return %s : i64" v)
+        else emitReturnStruct fb [ for i in 1 .. fb.Returns -> emitField fb v i ]
     match expr with
     | CLet (name, value, body) -> emitTail fb (Map.add name (emitExpr fb env value) env) body
     | CLetRecGroup (closures, body) -> emitTail fb (emitRecGroup fb env closures) body
+    // struct 를 돌려주는 함수의 끝: 튜플 리터럴은 블록 없이, 같은 크기를 돌려주는 direct 함수는 tail call
+    | CTuple items when fb.Returns = items.Length -> emitReturnStruct fb (items |> List.map (emitExpr fb env))
+    | CCallDirect (funcName, closure, args) when fb.Returns > 1 && fb.Strings.ReturnsOf funcName = fb.Returns ->
+        fb.Emit(sprintf "llvm.return %s : %s" (emitCallDirect fb env "tail " funcName closure args) (structType fb.Returns))
+    | CApply _ | CCallDirect _ when fb.Returns > 1 -> returnValue (emitExpr fb env expr)
+    // 값을 돌려주는 함수에서 struct 를 돌려주는 함수를 부름: 튜플 블록을 만들어야 하므로 tail call 이 아님 (emitExpr)
+    | CCallDirect (funcName, _, _) when fb.Strings.ReturnsOf funcName > 1 -> returnValue (emitExpr fb env expr)
     | CIf (cond, thenExpr, elseExpr) ->
         let c = untagBool fb (emitExpr fb env cond)
         branch c (fun () -> emitTail fb env thenExpr) (fun () -> emitTail fb env elseExpr)
@@ -939,8 +1007,8 @@ and private emitTail (fb: FunctionBuilder) (env: Map<string, string>) (expr: CEx
         emitApplyMany fb env true head args |> ignore
     | CApply (f, a) -> fb.Emit(sprintf "llvm.return %s : i64" (emitApply fb env "tail " f a))
     | CCallDirect (funcName, closure, args) -> fb.Emit(sprintf "llvm.return %s : i64" (emitCallDirect fb env "tail " funcName closure args))
-    | CMatch (CTuple items, cases) when tupleArms items.Length cases ->
-        let vs = items |> List.map (emitExpr fb env)
+    | CMatch (scrutinee, cases) when (tupleScrutinee fb.Strings scrutinee cases).IsSome ->
+        let vs: string list = emitTupleScrutinee fb env scrutinee
         let rec emitCases cases =
             match cases with
             | [] ->
@@ -963,11 +1031,12 @@ and private emitTail (fb: FunctionBuilder) (env: Map<string, string>) (expr: CEx
                 let cond = emitCaseCondition fb env pattern guard v
                 branch cond (fun () -> emitTail fb (emitBind fb pattern v env) body) (fun () -> emitCases rest)
         emitCases cases
-    | _ -> fb.Emit(sprintf "llvm.return %s : i64" (emitExpr fb env expr))
+    | _ -> returnValue (emitExpr fb env expr)
 
 /// 최상위 함수 하나: 입구에서 캡처한 값을 꺼내 환경을 만들고 본문을 생성
 let private emitFunction (strings: StringTable) (sb: StringBuilder) (f: CFunction) =
     let fb = FunctionBuilder(strings)
+    fb.Returns <- f.Returns
     let captured =
         f.Captured
         |> List.mapi (fun i name ->
@@ -993,7 +1062,8 @@ let private emitFunction (strings: StringTable) (sb: StringBuilder) (f: CFunctio
     // internal: 모듈 밖에서 보이지 않음. 여러 프로그램의 오브젝트를 한 실행 파일로 링크해도 이름이 겹치지 않음.
     // tailcc: tail 호출을 인자 수가 다른 함수 사이에서도 보장하는 calling convention. C 는 calc_apply 를 거쳐 부름
     let signature = parameters |> List.map (fun (_, v) -> v + ": i64") |> String.concat ", "
-    sb.AppendLine(sprintf "llvm.func internal tailcc @%s%s(%%closure: !llvm.ptr, %s) -> i64 {" strings.Prefix f.Name signature) |> ignore
+    let result = if f.Returns = 1 then "i64" else structType f.Returns
+    sb.AppendLine(sprintf "llvm.func internal tailcc @%s%s(%%closure: !llvm.ptr, %s) -> %s {" strings.Prefix f.Name signature result) |> ignore
     sb.Append(fb.Text) |> ignore
     sb.AppendLine("}").AppendLine() |> ignore
 
@@ -1056,6 +1126,7 @@ let private emitBody (sb: StringBuilder) (prefix: string) (entry: string) (expr:
     let strings = StringTable(prefix)
     for f in program.Functions do
         f.Direct |> Option.iter (fun direct -> strings.Directs[f.Name] <- direct)
+        if f.Returns > 1 then strings.Returns[f.Name] <- f.Returns
     let fb = FunctionBuilder(strings)
     let result = emitExpr fb Map.empty program.Main
     // 함수 본문을 먼저 만들어야 그 안의 문자열 상수도 모임

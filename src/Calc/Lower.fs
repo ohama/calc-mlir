@@ -63,7 +63,7 @@ type private State(ints: System.Collections.Generic.HashSet<obj>, stringAdds: Sy
         // 자유 변수 중 인자와 자기 자신을 뺀 나머지를 캡처. 정렬된 순서가 클로저의 칸 순서
         let bound = Set.ofList (param :: Option.toList self)
         let captured = Set.toList (Set.difference (freeVars body) bound)
-        functions.Add { Name = name; Params = [ param ]; Self = self; Captured = captured; Direct = direct; Body = body }
+        functions.Add { Name = name; Params = [ param ]; Self = self; Captured = captured; Direct = direct; Returns = 1; Body = body }
         CMakeClosure (name, captured)
 
     member this.AddFunction(param: string, self: string option, body: CExpr) =
@@ -71,29 +71,34 @@ type private State(ints: System.Collections.Generic.HashSet<obj>, stringAdds: Sy
 
     /// 이름에 묶을 함수의 바깥 클로저 이름과 Known. 본문의 (재귀) 호출이 쓰므로 본문을 낮추기 전에 정함.
     /// 인자가 하나면 바깥 클로저의 함수가 곧 direct 함수
-    member this.Reserve(arity: int, widths: int option list) =
+    member this.Reserve(arity: int, widths: int option list, returns: int) =
         let outer = this.FreshName()
-        let flat = widths |> List.exists Option.isSome
-        outer, { Direct = (if arity = 1 && not flat then outer else outer + "_direct"); Arity = arity; Widths = widths }
+        let special = widths |> List.exists Option.isSome || returns > 1
+        outer, { Direct = (if arity = 1 && not special then outer else outer + "_direct"); Arity = arity; Widths = widths }
 
     /// 인자 parameters 를 하나씩 받는 클로저들(값으로 쓸 때)과, 인자를 모두 받는 direct 함수.
     /// 둘은 한 번 낮춘 본문을 함께 씀. direct 함수는 바깥 클로저를 받아 같은 칸에서 캡처한 값을 꺼냄
     /// (바깥 클로저의 캡처 = 본문의 자유 변수 - 인자 - 자기 자신 = direct 함수의 캡처)
-    /// flat 이 있으면 direct 함수는 튜플 인자를 편 인자와 그 본문을 씀 (Lower.define). 모르는 함수로 부르는 쪽(emitApplyMany)은
-    /// 튜플을 펴지 않으므로, 인자가 여럿이면 튜플을 그대로 받는 함수(_tupled)를 하나 더 만들어 클로저가 그것을 알림
-    member this.AddCurried(outer: string, parameters: string list, self: string option, body: CExpr, ?flat: string list * CExpr) =
+    /// flat 이 있으면 direct 함수는 튜플 인자를 편 인자와 그 본문을 씀 (Lower.define). returns 가 2 이상이면 direct 함수는
+    /// 결과 튜플을 struct 로 돌려줌. 둘 중 하나면 모르는 함수로 부르는 쪽(emitApplyMany)이 그 함수를 부를 수 없으므로,
+    /// 인자가 여럿이면 튜플을 그대로 받고 돌려주는 함수(_tupled)를 하나 더 만들어 클로저가 그것을 알림
+    member this.AddCurried(outer: string, parameters: string list, self: string option, body: CExpr, ?flat: string list * CExpr, ?returns: int) =
+        let returns = defaultArg returns 1
         match parameters with
         | first :: rest ->
             let inner = List.foldBack (fun p acc -> this.AddFunction(p, None, acc)) rest body
-            let entry = if flat.IsSome then outer + "_tupled" else outer + "_direct"
+            let special = flat.IsSome || returns > 1
+            let entry = if special then outer + "_tupled" else outer + "_direct"
             let direct = if rest.IsEmpty then None else Some (entry, parameters.Length)
             let closure = this.AddFunctionNamed(outer, first, self, inner, ?direct = direct)
             match closure with
             | CMakeClosure (_, captured) ->
                 // 캡처한 값은 바깥 클로저와 같은 칸 (본문의 자유 변수 - 인자 - 자기 자신)
-                let add name ps b = functions.Add { Name = name; Params = ps; Self = self; Captured = captured; Direct = None; Body = b }
-                flat |> Option.iter (fun (directParams, directBody) -> add (outer + "_direct") directParams directBody)
-                if not rest.IsEmpty then add entry parameters body
+                let add name ps r b = functions.Add { Name = name; Params = ps; Self = self; Captured = captured; Direct = None; Returns = r; Body = b }
+                if special then
+                    let directParams, directBody = defaultArg flat (parameters, body)
+                    add (outer + "_direct") directParams returns directBody
+                if not rest.IsEmpty then add entry parameters 1 body
             | _ -> ()
             closure
         | [] -> failwith "Lower: function without parameters"
@@ -141,6 +146,37 @@ let private tupleParameters (parameters: string list) (inner: Expr) =
         | _ -> flats, body
     peel Map.empty inner
 
+/// 결과를 struct 로 돌려줄 수 있는 함수인가: 본문의 끝(tail position)이 모두 같은 크기(2~4)의 튜플 리터럴이거나, 자기 자신에게
+/// 인자를 모두 주는 호출 (struct 를 돌려주는 함수끼리라 tail call 이 이어짐). 결과는 튜플 크기, 아니면 1.
+/// 다른 함수 호출이나 변수로 끝나면 하지 않음: 그 값을 풀어야 해서 tail call 이 끊기고 재귀의 스택이 자람
+let private tupleResult (self: string option) (parameters: string list) (body: Expr) =
+    let widths = ResizeArray<int>()
+    let rec ends (visible: bool) (e: Expr) =
+        // 자기 이름을 다시 묶으면 그 안의 같은 이름은 자기 자신이 아님
+        let under (names: Set<string>) = visible && not (self |> Option.exists names.Contains)
+        match e with
+        | Tuple items ->
+            widths.Add items.Length
+            true
+        | App _ ->
+            match spine e with
+            | Var f, args -> visible && Some f = self && args.Length = parameters.Length
+            | _ -> false
+        | If (_, t, f) -> ends visible t && ends visible f
+        | Annot (x, _) -> ends visible x
+        | Seq (_, rest) -> ends visible rest
+        | Let (name, _, b) -> ends (under (Set.singleton name)) b
+        | LetRec (name, _, _, b) -> ends (under (Set.singleton name)) b
+        | LetRecs (bindings, b) -> ends (under (bindings |> List.map (fun (n, _, _) -> n) |> Set.ofList)) b
+        | Match (_, cases) -> cases |> List.forall (fun (p, _, b) -> ends (under (patternVars p)) b)
+        | LetPattern (p, _, b) -> ends (under (patternVars p)) b
+        | TypeDecl (_, _, _, b)
+        | RecordDecl (_, _, _, b)
+        | ExceptionDecl (_, _, b) -> ends visible b
+        | _ -> false
+    let visible = self |> Option.exists (fun s -> not (List.contains s parameters))
+    if ends visible body && widths.Count > 0 && Seq.forall ((=) widths[0]) widths && widths[0] <= 4 then widths[0] else 1
+
 /// 레코드 패턴을 선언한 순서의 모든 필드로 (쓰지 않은 필드는 _). Codegen 이 i 번째 필드를 칸 2 + i 에서 읽음
 let rec private fillRecordFields (scope: Scope) (pattern: Pattern) : Pattern =
     let fill = fillRecordFields scope
@@ -160,14 +196,15 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Scope) (
     let isBuiltin name = not (Set.contains name scope.Vars) && Eval.builtinArity.ContainsKey name
     let prim p args = CPrim (p, List.map (lower state ctors scope) args)
     // 이름에 묶을 함수의 바깥 클로저 이름과 Known (본문의 재귀 호출이 쓰므로 본문을 낮추기 전에 정함)
-    let reserve (parameters: string list) (inner: Expr) =
+    let reserve (self: string option) (parameters: string list) (inner: Expr) =
         let flats, _ = tupleParameters parameters inner
-        state.Reserve(parameters.Length, parameters |> List.map (fun p -> flats |> Map.tryFind p |> Option.map List.length))
+        state.Reserve(parameters.Length, parameters |> List.map (fun p -> flats |> Map.tryFind p |> Option.map List.length), tupleResult self parameters inner)
     // 함수를 정의함. bodyScope 는 재귀 호출을 위해 Known 을 넣은 범위. 튜플 인자를 펴면 클로저로 부르는 쪽은 전처럼
     // match 하고, direct 함수는 원소를 인자로 받아 같은 본문(한 번 낮춘 것)을 씀
     let define (outer: string) (parameters: string list) (self: string option) (bodyScope: Scope) (inner: Expr) =
         let flats, body = tupleParameters parameters inner
-        if flats.IsEmpty then state.AddCurried(outer, parameters, self, lower state ctors (bindAll parameters bodyScope) inner)
+        let returns = tupleResult self parameters inner
+        if flats.IsEmpty then state.AddCurried(outer, parameters, self, lower state ctors (bindAll parameters bodyScope) inner, returns = returns)
         else
             let elementNames p (items: Pattern list) =
                 items |> List.mapi (fun i item -> match item with PVar n -> n | _ -> sprintf "$%s_%d" p i)
@@ -186,7 +223,7 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Scope) (
                     if Set.contains p (freeVars acc) && not (Set.contains p (patternVars (PTuple items))) then
                         CLet (p, CTuple (elementNames p items |> List.map CVar), acc)
                     else acc) lowered
-            state.AddCurried(outer, parameters, self, matched, (directParams, directBody))
+            state.AddCurried(outer, parameters, self, matched, (directParams, directBody), returns)
     match expr with
     | Number n -> CInt n
     | Bool b -> CBool b
@@ -200,7 +237,7 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Scope) (
     // 이름에 묶은 함수: 이 이름에 인자를 모두 주는 호출은 direct 함수로
     | Let (name, value, body) when not (fst (lambdaChain value)).IsEmpty ->
         let parameters, inner = lambdaChain value
-        let outer, known = reserve parameters inner
+        let outer, known = reserve None parameters inner
         let closure = define outer parameters None scope inner
         CLet (name, closure, lower state ctors (know name known scope) body)
     | Let (name, value, body) -> CLet (name, lower state ctors scope value, lower state ctors (bind name scope) body)
@@ -231,7 +268,7 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Scope) (
     // fun a b -> body: 이름에 묶은 함수처럼 direct 함수도 만듦 (fold f acc xs 의 f acc x 가 중간 클로저 없이 부름)
     | Lambda _ when (fst (lambdaChain expr)).Length >= 2 ->
         let parameters, inner = lambdaChain expr
-        let outer, _ = state.Reserve(parameters.Length, List.replicate parameters.Length None)
+        let outer, _ = state.Reserve(parameters.Length, List.replicate parameters.Length None, 1)
         state.AddCurried(outer, parameters, None, lower state ctors (bindAll parameters scope) inner)
     | Lambda (param, body) -> state.AddFunction(param, None, lower state ctors (bind param scope) body)
     // let rec f x = body in e: 본문의 f 는 클로저 자신이라 캡처하지 않음. 본문의 재귀 호출도 direct 함수로
@@ -250,7 +287,7 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Scope) (
     | LetRec (name, param, body, inExpr) ->
         let rest, inner = lambdaChain body
         let parameters = param :: rest
-        let outer, known = reserve parameters inner
+        let outer, known = reserve (Some name) parameters inner
         let scope = know name known scope
         CLet (name, define outer parameters (Some name) scope inner, lower state ctors scope inExpr)
     // 함수마다 클로저. 자기 자신은 %closure, 다른 함수는 캡처한 칸 (Codegen 이 나중에 채움)
@@ -258,7 +295,7 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Scope) (
         let reserved =
             [ for name, param, body in bindings ->
                   let rest, inner = lambdaChain body
-                  let outer, known = reserve (param :: rest) inner
+                  let outer, known = reserve (Some name) (param :: rest) inner
                   name, outer, known, param :: rest, inner ]
         let groupScope = reserved |> List.fold (fun acc (name, _, known, _, _) -> know name known acc) scope
         let closures =
