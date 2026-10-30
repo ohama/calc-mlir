@@ -4,6 +4,14 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.65.2] - 2026-10-30
+
+### 변경
+- 세대 구분 GC (`CALC_GC=gen`):
+  - pin 해서 old space로 넘긴 cons 블록을 major GC가 old cons 블록으로 바꿔 죽은 칸을 다시 씁니다. 할당 3번마다 minor GC를 하는 stress에서 old space 최고치가 1.5GB에서 64MB가 되었습니다.
+  - nursery를 1MB에서 시작해 minor GC마다 두 배로, 16MB까지 키웁니다. 할당이 적은 프로그램의 최대 메모리가 16MB쯤에서 1~3MB가 되었습니다(Boehm과 같거나 적음).
+- 테스트 (총 1242개): 세대 구분 GC 묶음을 기본 설정으로도 실행
+
 ## [0.65.1] - 2026-10-30
 
 ### 변경

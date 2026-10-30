@@ -92,7 +92,10 @@ static inline int64_t header_words(value h) {
 static inline int atomic_kind(value h) { int64_t k = h & 0xff; return k == 2 || k == 9; }
 
 /* ---- nursery ---- */
-static int64_t nursery_budget = 512, base_budget = 512; /* 블록 수 (16MB) */
+/* nursery 블록 수: 1MB 에서 시작해 minor GC 마다 두 배, 16MB 까지 (할당이 적은 프로그램은 메모리를 적게) */
+#define NURSERY_START_BLOCKS 32
+#define NURSERY_FULL_BLOCKS 512
+static int64_t nursery_budget = NURSERY_START_BLOCKS, base_budget = NURSERY_START_BLOCKS, full_budget = NURSERY_FULL_BLOCKS;
 static int64_t nursery_used;
 static int64_t *nursery_blocks;
 static int64_t nursery_count;
@@ -298,6 +301,7 @@ static void __attribute__((noinline)) minor_collect(void) {
     pin_range((value *)((uintptr_t)&here & ~(uintptr_t)7), (value *)stack_base);
     /* 훑은 stack 이 크면 다음 nursery 를 키움: minor GC 마다 stack 을 다시 훑으므로, 할당량을 stack 크기의 두 배 이상으로 */
     int64_t stack_blocks = ((stack_base - (char *)&here) * 2) >> BLOCK_SHIFT;
+    if (base_budget < full_budget) base_budget = base_budget * 2 < full_budget ? base_budget * 2 : full_budget;
     nursery_budget = stack_blocks > base_budget ? stack_blocks : base_budget;
     if (nursery_budget > NURSERY_MAX_BLOCKS) nursery_budget = NURSERY_MAX_BLOCKS;
     pin_range((value *)regs, (value *)((char *)regs + sizeof regs));
@@ -515,6 +519,13 @@ static void sweep(void) {
         block_meta *m = &meta[b];
         uint64_t *bits = m->marks;
         switch (m->state) {
+        case OLD_PROMOTED_CONS:
+            /* pin 해서 넘겨받은 cons 블록은 old cons 블록과 모양이 같음 (블록 시작부터 16바이트 칸). 살아 있는 칸이 있으면
+               old cons 블록으로 바꿔서 죽은 칸을 free list 로 다시 씀 (긴 리스트의 칸 몇 개 때문에 블록이 통째로 남지 않게) */
+            if (!bits) { give_block(b); break; }
+            m->state = OLD_CONS;
+            m->slot_words = 2;
+            __attribute__((fallthrough));
         case OLD_SIZED:
         case OLD_CONS: {
             int c = m->state == OLD_CONS ? CLASSES : class_of(m->slot_words);
@@ -535,8 +546,7 @@ static void sweep(void) {
             old_bytes += live * slot;
             break;
         }
-        case OLD_PROMOTED:
-        case OLD_PROMOTED_CONS: {
+        case OLD_PROMOTED: {
             int any = 0;
             if (bits) for (int64_t i = 0; i < BLOCK_WORDS / 64; i++) if (bits[i]) { any = 1; break; }
             if (!any) give_block(b);
@@ -584,9 +594,13 @@ void calc_gc_init(void) {
     meta = mmap(NULL, (size_t)REGION_BLOCKS * sizeof(block_meta), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     fresh_block = 0;
     const char *kb = getenv("CALC_GC_NURSERY_KB");
-    if (kb) nursery_budget = atoll(kb) * 1024 / BLOCK_BYTES;
-    if (nursery_budget < 2) nursery_budget = 2;
-    if (nursery_budget > NURSERY_MAX_BLOCKS) nursery_budget = NURSERY_MAX_BLOCKS;
+    if (kb) {
+        /* 크기를 정하면 처음부터 그 크기 (키우지 않음) */
+        nursery_budget = atoll(kb) * 1024 / BLOCK_BYTES;
+        if (nursery_budget < 2) nursery_budget = 2;
+        if (nursery_budget > NURSERY_MAX_BLOCKS) nursery_budget = NURSERY_MAX_BLOCKS;
+        full_budget = nursery_budget;
+    }
     base_budget = nursery_budget;
     const char *stress = getenv("CALC_GC_STRESS");
     if (stress) stress_every = atoll(stress);

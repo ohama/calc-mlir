@@ -212,7 +212,7 @@ pin 한 nursery 블록은 안의 객체를 모두 훑어야 합니다. 헤더 �
 
 | 수 | 처음 값 | 정하는 법 |
 |---|---|---|
-| nursery 크기 | 16MB, stack이 크면 훑은 stack의 2배 | 1단계에서 정함 (11장) |
+| nursery 크기 | 1MB에서 시작해 minor GC마다 두 배, 16MB까지. stack이 크면 훑은 stack의 2배 | 1단계와 4단계에서 정함 (11장, 14장) |
 | nursery 블록 크기 | 32KB | pin 하나가 넘기는 양. 작으면 블록 표가 커짐 |
 | large object 경계 | 2KB | old space 블록 크기의 1/16 |
 | major GC 시작 | 지난 major GC 뒤 살아 있던 크기의 3배 (64MB 이상) | 1단계에서 정함 (11장) |
@@ -235,7 +235,7 @@ pin 한 nursery 블록은 안의 객체를 모두 훑어야 합니다. 헤더 �
 | 1. C 모델 (끝남, 11장) | C 모델에 collector를 붙임(nursery, minor GC, pinning, old space, major GC, write barrier) | Boehm 대비 msortm 0.33초 이하, livem 0.12초 이하, bstm 1.0초 이하. 최대 메모리는 Boehm의 1.5배 이하. 아니면 3장의 E를 다시 봄 |
 | 2. 런타임에 넣기 (끝남, 12장) | 1단계의 collector를 `runtime/gc.c`로. 할당 함수, 런타임 전역 root 등록, 런타임과 Codegen의 barrier(포인터일 때 런타임 호출). 빌드 스위치 `CALC_GC=gen`, 기본은 Boehm | 전체 테스트가 두 모드와 GC stress 모드에서 통과 |
 | 3. barrier 다듬기 (끝남, 13장) | 같은 칸을 한 번만 기록, remembered set을 늘림. 펼쳐 넣기와 int 쓰기의 barrier 빼기는 측정해 보고 하지 않음 | 측정, 전체 테스트 |
-| 4. 측정과 조정 | nursery 크기, major GC 정책, 깊은 stack(8장) | 1장의 프로그램이 Boehm보다 빠르고, `benchmarks/`가 느려지지 않음 |
+| 4. 측정과 조정 (끝남, 14장) | 넘겨받은 cons 블록 다시 쓰기, nursery를 1MB에서 키우기 | 1장의 프로그램이 Boehm보다 빠르고, `benchmarks/`가 느려지지 않음 |
 | 5. 기본값으로 | Boehm 경로와 `-lgc`를 뺌. 문서(`compiler-design.md` D5, `compiler-architecture.md`) | 릴리스 |
 
 단계마다 릴리스할 수 있게 나눴습니다. 2단계까지는 새 collector가 선택 사항이라 기존 동작에 영향이 없습니다.
@@ -374,4 +374,44 @@ barrier가 비싼 경우를 먼저 쟀습니다.
   - **빠른 길을 생성 코드에 펼쳐 넣기:** 위 가장 나쁜 경우도 Boehm과 같아져서 남은 이득이 없습니다. 펼쳐 넣으려면 블록 표의 주소를 생성 코드에 알려야 하고, Boehm 런타임에도 같은 이름이 있어야 합니다.
   - **int로 정해진 쓰기에서 barrier 빼기:** int를 쓰는 반복은 태그 검사 하나로 끝나서 시간 차이가 없었습니다(위 둘째, 셋째 줄).
 - **테스트:** 세대 구분 GC 묶음에 "minor GC 사이에 서로 다른 칸 20만 개에 씀"(remembered set이 늘어나는 경우)을 더했습니다. 전체 1242개가 Boehm, `CALC_GC=gen`, `CALC_GC_STRESS=10`에서 통과합니다.
+
+## 14. 4단계 결과: 측정과 조정
+
+### 14.1 넘겨받은 cons 블록 다시 쓰기
+
+pin 해서 old space로 넘긴 블록은 안의 객체가 모두 죽어야 돌려줬습니다. 긴 리스트의 칸 몇 개가 살아 있으면 32KB 블록이 통째로 남았습니다. stress 3(할당 3번마다 minor GC)에서 old space가 1.5GB까지 커졌습니다.
+
+- **바꾼 것:** 넘겨받은 cons 블록은 old space의 cons 블록과 모양이 같습니다(블록 시작부터 16바이트 칸). 그래서 major GC의 sweep에서 old cons 블록으로 바꿉니다. 죽은 칸은 free list로 가고, 살아 있는 칸이 없으면 블록을 돌려줍니다.
+- **결과:** 같은 프로그램의 old space 최고치가 1.5GB에서 64MB가 되었습니다.
+- **남은 것:** 실제 메모리(RSS)는 그대로 3.4GB였습니다. 살아 있는 칸이 블록마다 하나씩 흩어져 있어서, 블록의 빈 칸을 다시 써도 블록 수가 줄지 않습니다. cons를 복사할 때 free list를 bump보다 먼저 써도 같았습니다(시간도 같아서 bump를 먼저 쓰는 쪽으로 둠). 이것을 줄이려면 major GC가 드문드문한 블록의 객체를 옮겨야 합니다(stack이 가리키지 않는 것만 옮기고, 힙의 포인터를 고치는 단계를 하나 더 둠. Immix의 defragmentation과 같은 방식). 기본 설정에서는 pin 한 블록의 칸이 같은 자료 구조라 드문드문하지 않아서, 나중의 일로 남깁니다. 테스트 하나(리스트 50만 개)는 stress 3에서 여전히 `out of memory`로 끝납니다.
+- **넘겨받은 일반 블록:** 크기가 섞여 있어 크기별 블록으로 바꿀 수 없습니다. 지금처럼 객체가 모두 죽으면 돌려줍니다.
+
+### 14.2 nursery를 1MB에서 키우기
+
+nursery를 처음부터 16MB로 잡으면, 할당이 적은 프로그램도 최대 메모리가 16MB쯤 되었습니다. 이제 1MB에서 시작해 minor GC마다 두 배로, 16MB까지 키웁니다. `CALC_GC_NURSERY_KB`로 크기를 정하면 처음부터 그 크기입니다.
+
+| 프로그램 (실행 파일) | Boehm | `CALC_GC=gen` |
+|---|---|---|
+| `println 42` | 0.00초, 2MB | 0.00초, 1MB |
+| `benchmarks/` fib, queens, sieve | 2~4MB | 1~3MB |
+| `benchmarks/` msort | 0.04초, 38MB | 0.02초, 43MB |
+| `benchmarks/` bst | 0.06초, 12MB | 0.05초, 34MB |
+| `sprintf` 3백만 번 | 0.09초, 3MB | 0.06초, 17MB |
+| bst 백만 개 | 0.93초, 108MB | 0.70초, 111MB |
+| msort 2백만 개 | 0.53초, 316MB | 0.37초, 272MB |
+| live | 0.34초, 404MB | 0.15초, 204MB |
+| pipe | 0.69초, 90MB | 0.69초, 126MB |
+| tail call 아닌 `mymap` | 0.26초, 206MB | 0.19초, 178MB |
+
+할당이 많은 프로그램은 nursery가 16MB까지 커지므로 Boehm보다 10~20MB 많을 수 있습니다. 시간은 모든 프로그램에서 Boehm과 같거나 빠릅니다.
+
+### 14.3 테스트
+
+세대 구분 GC 묶음을 기본 설정(커지는 nursery)으로도 실행합니다. 전체 1242개가 Boehm, `CALC_GC=gen`, `CALC_GC_STRESS=10`에서 통과합니다.
+
+### 14.4 기본값으로 바꾸기 전에 (5단계)
+
+- **시간:** 잰 프로그램 모두 Boehm과 같거나 빠릅니다.
+- **메모리:** 할당이 많은 작은 프로그램은 nursery만큼 늘어납니다. 큰 프로그램은 비슷하거나 적습니다.
+- **알려진 한계:** 아주 잦은 pinning에서의 단편화(14.1). 기본 설정에서는 재 본 프로그램에서 나타나지 않았습니다.
 
