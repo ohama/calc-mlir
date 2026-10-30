@@ -87,7 +87,7 @@ dotnet run --project src/Calc
 ```
 
 ```
-calc 0.63.0 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
+calc 0.63.1 REPL. End each input with ;;  Exit with #quit;; or Ctrl-D.
 # let add a b = a + b;;
 val add : int -> int -> int = <fun>
 # add 1 2;;

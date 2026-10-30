@@ -430,6 +430,12 @@ let private runCases =
           "let f (p: int * string) = match p with (n, s) -> s + toString n in println (f (1, \"a\"), (f) (2, \"b\"))", ("(\"a1\", \"b2\")\n", "", 0), "타입 표기한 튜플 인자"
           "let swap p = match p with (a, b) -> (b, a) in let r = ref (1, 2) in for i = 1 to 5 do r := swap !r done; println (!r, swap (swap (3, 4)))", ("((2, 1), (3, 4))\n", "", 0), "튜플을 돌려주는 함수"
           "let rec sumPairs xs acc = match acc with (s, n) -> (match xs with [] -> (s, n) | x :: rest -> sumPairs rest (s + x, n + 1)) in println (sumPairs (range 1 100000) (0, 0))", ("(705082704, 100000)\n", "", 0), "튜플 누산기 10만 번"
+          "let step acc p = match p with (a, b) -> acc + a * b in println (fold step 0 [(1, 2); (3, 4)], fold step 10 [])", ("(14, 10)\n", "", 0), "편 함수를 fold 에 넘김 (튜플을 받는 함수로 한 번에)"
+          "let k = 7 in let f x p = match p with (a, b) -> x * 100 + a * 10 + b + k in let g h = h 1 (2, 3) in println (g f, map (f 1) [(0, 0); (1, 1)])", ("(130, [107; 118])\n", "", 0), "인자 둘을 주는 간접 호출, 캡처, partial application"
+          "let f x p = match p with (a, b) -> (print x; a + b) in let g h = h (print \"a\"; 1) (print \"b\"; (2, 3)) in println (g f)", ("ab15\n", "", 0), "간접 호출의 인자 계산 순서"
+          "let rec walk n p = match p with (a, b) -> if n = 0 then a + b else walk (n - 1) (b, a) in let apply2 h x y = h x y in println (apply2 walk 1000001 (1, 2), apply2 walk 3 (5, 6))", ("(3, 11)\n", "", 0), "편 let rec 함수를 간접 호출 (tail call 이 이어짐)"
+          "let f p q = match p with (a, b) -> (match q with (c, d) -> a * b + c * d) in let g h = h (1, 2) (3, 4) in println (g f, (fun h -> h (5, 5)) (f (1, 1)))", ("(14, 26)\n", "", 0), "튜플 인자 둘인 함수를 간접 호출과 partial application 으로"
+          "let f x p = match p with (a, b) -> fun y -> x + a + b + y in let g h = h 1 (2, 3) 4 in println (g f, f 1 (1, 1) 1)", ("(10, 4)\n", "", 0), "인자 수보다 많이 줌: 함수를 돌려주는 편 함수"
         ]
       "문자열 연결 (string 으로 정해진 + 연쇄와 포맷을 한 번에 할당)",
         [
@@ -743,6 +749,11 @@ let tests =
                 Expect.isTrue (body.Contains "call tailcc tail @lambda_0_direct(") "재귀 호출은 그대로 tail call"
                 let used = Codegen.emitProgram (Program.parse "let f p = match p with (a, b) -> a + b in let g = f in g (1, 2)")
                 Expect.isTrue (used.Contains "@lambda_0_direct(%closure: !llvm.ptr, %arg0: i64, %arg1: i64)") "인자 하나짜리 함수도 direct 함수를 따로 만듦"
+                // 인자가 여럿이면 튜플을 그대로 받는 함수도 만들어 클로저가 알림 (모르는 함수로 인자를 모두 주는 호출)
+                let passed = Codegen.emitProgram (Program.parse "let step acc p = match p with (a, b) -> acc + a * b in let g h = h 1 (2, 3) in g step")
+                Expect.isTrue (passed.Contains "@lambda_0_tupled(%closure: !llvm.ptr, %arg0: i64, %arg1: i64)") "튜플을 받는 함수"
+                Expect.isTrue (passed.Contains "llvm.mlir.addressof @lambda_0_tupled") "클로저의 마지막 칸"
+                Expect.isFalse (used.Contains "_tupled") "인자 하나짜리 함수는 만들지 않음"
             }
             test "클로저 칸, ref, 배열 접근에는 서로 다른 TBAA 태그, 오류 함수는 noreturn" {
                 let mlir = Codegen.emitProgram (Program.parse "let a = Array.create 3 0 in let r = ref 0 in let f i = a.[i] <- !r; r := i in f 1")

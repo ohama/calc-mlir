@@ -79,18 +79,21 @@ type private State(ints: System.Collections.Generic.HashSet<obj>, stringAdds: Sy
     /// 인자 parameters 를 하나씩 받는 클로저들(값으로 쓸 때)과, 인자를 모두 받는 direct 함수.
     /// 둘은 한 번 낮춘 본문을 함께 씀. direct 함수는 바깥 클로저를 받아 같은 칸에서 캡처한 값을 꺼냄
     /// (바깥 클로저의 캡처 = 본문의 자유 변수 - 인자 - 자기 자신 = direct 함수의 캡처)
-    /// flat 이 있으면 direct 함수는 튜플 인자를 편 인자와 그 본문을 씀 (Lower.defineFunction). 이때 클로저는 인자 수와
-    /// direct 함수를 알리지 않음: 모르는 함수로 부르는 쪽(emitApplyMany)은 튜플을 펴지 않으므로
+    /// flat 이 있으면 direct 함수는 튜플 인자를 편 인자와 그 본문을 씀 (Lower.define). 모르는 함수로 부르는 쪽(emitApplyMany)은
+    /// 튜플을 펴지 않으므로, 인자가 여럿이면 튜플을 그대로 받는 함수(_tupled)를 하나 더 만들어 클로저가 그것을 알림
     member this.AddCurried(outer: string, parameters: string list, self: string option, body: CExpr, ?flat: string list * CExpr) =
         match parameters with
         | first :: rest ->
             let inner = List.foldBack (fun p acc -> this.AddFunction(p, None, acc)) rest body
-            let direct = if rest.IsEmpty || flat.IsSome then None else Some (outer + "_direct", parameters.Length)
+            let entry = if flat.IsSome then outer + "_tupled" else outer + "_direct"
+            let direct = if rest.IsEmpty then None else Some (entry, parameters.Length)
             let closure = this.AddFunctionNamed(outer, first, self, inner, ?direct = direct)
-            let directParams, directBody = defaultArg flat (parameters, body)
             match closure with
-            | CMakeClosure (_, captured) when not rest.IsEmpty || flat.IsSome ->
-                functions.Add { Name = outer + "_direct"; Params = directParams; Self = self; Captured = captured; Direct = None; Body = directBody }
+            | CMakeClosure (_, captured) ->
+                // 캡처한 값은 바깥 클로저와 같은 칸 (본문의 자유 변수 - 인자 - 자기 자신)
+                let add name ps b = functions.Add { Name = name; Params = ps; Self = self; Captured = captured; Direct = None; Body = b }
+                flat |> Option.iter (fun (directParams, directBody) -> add (outer + "_direct") directParams directBody)
+                if not rest.IsEmpty then add entry parameters body
             | _ -> ()
             closure
         | [] -> failwith "Lower: function without parameters"
