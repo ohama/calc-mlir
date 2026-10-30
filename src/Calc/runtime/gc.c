@@ -287,6 +287,161 @@ static void pin_range(value *lo, value *hi) {
     }
 }
 
+/* ---- heap verifier (CALC_GC_VERIFY=n, 테스트용: n 번째 GC 마다) ----
+   root(stack, 레지스터, 런타임 전역)에서 닿는 객체를 모두 따라가며 확인 (docs/generational-gc-design.md 6장, 16장).
+   - 힙 안의 포인터는 살아 있는 객체의 시작을 가리킴 (cons 는 + 2, 태그와 블록 종류가 맞음, 빈 블록이나 빈 칸이 아님)
+   - forwarding 표시가 남은 객체가 없음. 헤더의 크기가 블록 안에 들어감
+   - minor GC 전: old 객체의 칸이 nursery 객체를 가리키면 그 칸이 remembered set 에 있음 (write barrier)
+   - minor GC 뒤: nursery 객체를 가리키는 것이 없음
+   틀리면 무엇이 어디서 틀렸는지 출력하고 abort */
+static value object_of(value v, int exact);
+enum { VERIFY_BEFORE_MINOR, VERIFY_AFTER_MINOR, VERIFY_AFTER_MAJOR };
+static const char *verify_phase_names[] = { "before minor GC", "after minor GC", "after major GC" };
+static int64_t verify_every, verify_tick, stat_verified;
+static int verify_phase;
+static uint64_t **verify_seen; /* 블록마다 단어당 bit: 이미 따라간 객체 */
+static int64_t verify_seen_blocks;
+static value **verify_stack;
+static int64_t verify_count, verify_cap;
+
+static void __attribute__((noreturn)) verify_fail(const char *what, value *slot, value v) {
+    int64_t sb = in_region((value)slot) ? block_of(slot) : -1, vb = in_region(v) ? block_of((void *)v) : -1;
+    fprintf(stderr, "gc verify failed (%s, GC #%lld): %s\n  slot %p (block %lld, state %d), value 0x%llx (block %lld, state %d)\n",
+            verify_phase_names[verify_phase], (long long)(stat_minor + stat_major), what, (void *)slot, (long long)sb,
+            sb >= 0 ? meta[sb].state : -1, (unsigned long long)v, (long long)vb, vb >= 0 ? meta[vb].state : -1);
+    abort();
+}
+
+/* 쓴 곳의 끝: 지금 bump 하는 nursery 블록은 top 을 아직 적지 않음 */
+static char *verify_top(int64_t b) {
+    if (b == gen_block) return gen_top;
+    if (b == cons_block) return cons_top;
+    return meta[b].top;
+}
+
+static int is_cons_block(int s) { return s == NURSERY_CONS || s == OLD_CONS || s == OLD_PROMOTED_CONS; }
+
+/* v 를 담은 객체의 시작 (태그 포함 모양). 없으면 0. object_of 와 같고 nursery 블록도 봄 */
+static value verify_object_of(value v) {
+    if (!in_region(v)) return 0;
+    int64_t b = block_of((void *)v);
+    char *bs = block_start(b), *top = verify_top(b);
+    switch (meta[b].state) {
+    case NURSERY_CONS: {
+        int64_t off = ((char *)v - bs) & ~(int64_t)15;
+        return bs + off < top ? (value)(bs + off) | 2 : 0;
+    }
+    case NURSERY: {
+        for (char *p = bs; p < top;) {
+            value h = ((value *)p)[0];
+            if (h == 0) return 0;
+            int64_t words = header_words(h);
+            if ((char *)v < p + words * 8) return (value)p;
+            p += ROUND16(words * 8);
+        }
+        return 0;
+    }
+    default: return object_of(v, 0);
+    }
+}
+
+static int verify_mark(value o) {
+    value *p = (value *)(o & ~7);
+    int64_t b = block_of(p);
+    if (!verify_seen[b]) verify_seen[b] = calloc(BLOCK_WORDS / 64, sizeof(uint64_t));
+    int64_t w = ((char *)p - block_start(b)) >> 3;
+    if (verify_seen[b][w >> 6] & (1ull << (w & 63))) return 0;
+    verify_seen[b][w >> 6] |= 1ull << (w & 63);
+    if (verify_count == verify_cap) {
+        verify_cap = verify_cap ? verify_cap * 2 : 4096;
+        verify_stack = realloc(verify_stack, (size_t)verify_cap * sizeof *verify_stack);
+    }
+    verify_stack[verify_count++] = (value *)o;
+    return 1;
+}
+
+static int in_fresh_large(value *o) {
+    for (int64_t i = 0; i < fresh_large_count; i++) if (fresh_large[i] == o) return 1;
+    return 0;
+}
+
+/* 힙 객체 owner 의 칸 slot 에 든 값 (owner 가 NULL 이면 런타임 전역) */
+static void verify_pointer(value *owner, value *slot) {
+    value v = *slot;
+    if (!CALC_GC_IS_PTR(v) || !in_region(v)) return; /* 즉시값, 0 (아직 채우지 않은 칸), 힙 밖 (코드 포인터, 필드 이름) */
+    int64_t b = block_of((void *)v);
+    int s = meta[b].state;
+    if (s == FREE) verify_fail("points to a free block", slot, v);
+    if (s == LARGE_CONT) verify_fail("points into the middle of a large object", slot, v);
+    if ((CALC_GC_TAG(v) == 2) != is_cons_block(s)) verify_fail("pointer tag does not match the block kind", slot, v);
+    if (verify_object_of(v) != v) verify_fail("does not point to the start of an object", slot, v);
+    value first = ((value *)(v & ~7))[0];
+    if ((first & 0xF) == FORWARDED) verify_fail("points to a forwarded object", slot, v);
+    if (first == FREE_SLOT && (s == OLD_SIZED || s == OLD_CONS)) verify_fail("points to a freed slot", slot, v);
+    int young = s == NURSERY || s == NURSERY_CONS;
+    if (young && verify_phase != VERIFY_BEFORE_MINOR) verify_fail("points into the nursery after GC", slot, v);
+    if (young && owner && !is_young_block(block_of(owner)) && !in_fresh_large((value *)((value)owner & ~7))) {
+        int64_t ob = block_of(slot);
+        int64_t w = ((char *)slot - block_start(ob)) >> 3;
+        if (!meta[ob].remembered || !(meta[ob].remembered[w >> 6] & (1ull << (w & 63))))
+            verify_fail("old object points to a young object without a write barrier", slot, v);
+    }
+    verify_mark(v);
+}
+
+static void verify_object(value *tagged) {
+    if (((value)tagged & 7) == 2) {
+        value *c = (value *)((value)tagged & ~7);
+        verify_pointer(c, &c[0]);
+        verify_pointer(c, &c[1]);
+        return;
+    }
+    value h = tagged[0];
+    int64_t kind = h & 0xff;
+    if (kind < 1 || kind > 9 || kind == 3) verify_fail("bad header", tagged, h);
+    int64_t words = header_words(h), b = block_of(tagged);
+    char *limit = meta[b].state == OLD_SIZED ? (char *)tagged + meta[b].slot_words * 8
+                : meta[b].state == LARGE ? block_start(b) + (int64_t)meta[b].nblocks * BLOCK_BYTES
+                : block_start(b) + BLOCK_BYTES;
+    if ((char *)tagged + words * 8 > limit) verify_fail("object size runs past its slot or block", tagged, h);
+    if (atomic_kind(h)) return;
+    for (int64_t i = 1; i < words; i++) verify_pointer(tagged, &tagged[i]);
+}
+
+/* stack 과 레지스터의 단어는 conservative: 객체 안 어디를 가리켜도 그 객체를 따라감 */
+static void verify_range(value *lo, value *hi) {
+    for (value *s = lo; s < hi; s++) {
+        value o = verify_object_of(*s);
+        if (o) verify_mark(o);
+    }
+}
+
+static void verify_heap(int phase, value *stack_lo, jmp_buf regs) {
+    if (!verify_every || ++verify_tick < verify_every) return;
+    verify_tick = 0;
+    verify_phase = phase;
+    stat_verified++;
+    verify_seen_blocks = fresh_block;
+    verify_seen = calloc((size_t)fresh_block + 1, sizeof *verify_seen);
+    /* minor GC 뒤에는 nursery 블록이 하나도 없음 (모두 돌려주거나 old 로 넘김) */
+    if (phase != VERIFY_BEFORE_MINOR)
+        for (int64_t b = 0; b < fresh_block; b++)
+            if (is_young_block(b)) verify_fail("nursery block was neither freed nor promoted", (value *)block_start(b), 0);
+    verify_range(stack_lo, (value *)stack_base);
+    verify_range((value *)regs, (value *)((char *)regs + sizeof(jmp_buf)));
+    for (int64_t i = 0; i < root_count; i++) {
+        value v = *roots[i];
+        if (CALC_GC_IS_PTR(v) && in_region(v)) verify_pointer(NULL, roots[i]);
+    }
+    /* 이번 minor GC 가 훑을 큰 객체와 remembered set 의 칸도 확인 */
+    if (phase == VERIFY_BEFORE_MINOR)
+        for (int64_t i = 0; i < fresh_large_count; i++) verify_mark((value)fresh_large[i]);
+    while (verify_count > 0) verify_object(verify_stack[--verify_count]);
+    for (int64_t b = 0; b < verify_seen_blocks; b++) free(verify_seen[b]);
+    free(verify_seen);
+    verify_seen = NULL;
+}
+
 static void major_collect(void);
 
 static void __attribute__((noinline)) minor_collect(void) {
@@ -297,7 +452,9 @@ static void __attribute__((noinline)) minor_collect(void) {
     jmp_buf regs;
     setjmp(regs);
     value here;
-    pin_range((value *)((uintptr_t)&here & ~(uintptr_t)7), (value *)stack_base);
+    value *stack_lo = (value *)((uintptr_t)&here & ~(uintptr_t)7);
+    verify_heap(VERIFY_BEFORE_MINOR, stack_lo, regs);
+    pin_range(stack_lo, (value *)stack_base);
     /* 훑은 stack 이 크면 다음 nursery 를 키움: minor GC 마다 stack 을 다시 훑으므로, 할당량을 stack 크기의 두 배 이상으로 */
     int64_t stack_blocks = ((stack_base - (char *)&here) * 2) >> BLOCK_SHIFT;
     if (base_budget < full_budget) base_budget = base_budget * 2 < full_budget ? base_budget * 2 : full_budget;
@@ -313,7 +470,8 @@ static void __attribute__((noinline)) minor_collect(void) {
         meta[b].pinned = 0;
         stat_pinned_blocks++;
         old_bytes += BLOCK_BYTES;
-        nursery_blocks[kept++] = b; /* 잠시 앞쪽에 모음 */
+        nursery_blocks[i] = nursery_blocks[kept]; /* 앞쪽에 모음 (자리를 바꿔서, 5 에서 나머지 블록을 모두 돌려줌) */
+        nursery_blocks[kept++] = b;
     }
     int64_t promoted = kept;
     /* 3. root: 런타임 전역, remembered set, 넘긴 블록 */
@@ -341,6 +499,7 @@ static void __attribute__((noinline)) minor_collect(void) {
     gen_block = cons_block = -1;
     gen_top = gen_limit = cons_top = cons_limit = NULL;
     if (old_bytes > stat_old_bytes_peak) stat_old_bytes_peak = old_bytes;
+    verify_heap(VERIFY_AFTER_MINOR, stack_lo, regs);
     if (old_bytes > major_threshold) major_collect();
 }
 
@@ -548,8 +707,18 @@ static void sweep(void) {
         case OLD_PROMOTED: {
             int any = 0;
             if (bits) for (int64_t i = 0; i < BLOCK_WORDS / 64; i++) if (bits[i]) { any = 1; break; }
-            if (!any) give_block(b);
-            else old_bytes += BLOCK_BYTES;
+            if (!any) { give_block(b); break; }
+            old_bytes += BLOCK_BYTES;
+            /* 남기는 블록의 죽은 객체는 이번에 돌려준 객체를 가리킬 수 있음. stack 의 오래된 단어가 나중에 그 객체를 가리키면
+               major GC 가 돌려준 칸을 따라가므로, 죽은 객체의 칸을 0 으로 지움 (헤더는 남겨 블록을 차례로 읽을 수 있게) */
+            char *bs = block_start(b);
+            for (char *p = bs; p < m->top;) {
+                value h = ((value *)p)[0];
+                if (h == 0) break;
+                int64_t words = header_words(h), w = (p - bs) >> 3;
+                if (!atomic_kind(h) && !(bits[w >> 6] & (1ull << (w & 63)))) memset(p + 8, 0, (size_t)(words - 1) * 8);
+                p += ROUND16(words * 8);
+            }
             break;
         }
         case LARGE: {
@@ -575,11 +744,13 @@ static void __attribute__((noinline)) major_collect(void) {
     jmp_buf regs;
     setjmp(regs);
     value here;
-    mark_range((value *)((uintptr_t)&here & ~(uintptr_t)7), (value *)stack_base);
+    value *stack_lo = (value *)((uintptr_t)&here & ~(uintptr_t)7);
+    mark_range(stack_lo, (value *)stack_base);
     mark_range((value *)regs, (value *)((char *)regs + sizeof regs));
     for (int64_t i = 0; i < root_count; i++) mark_value(*roots[i], 1);
     drain_marks();
     sweep();
+    verify_heap(VERIFY_AFTER_MAJOR, stack_lo, regs);
     major_threshold = old_bytes * major_factor > ((int64_t)64 << 20) ? old_bytes * major_factor : ((int64_t)64 << 20);
 }
 
@@ -605,6 +776,8 @@ void calc_gc_init(void) {
     if (stress) stress_every = atoll(stress);
     const char *mf = getenv("CALC_GC_MAJOR_FACTOR");
     if (mf) major_factor = atoll(mf);
+    const char *verify = getenv("CALC_GC_VERIFY");
+    if (verify) verify_every = atoll(verify);
     nursery_blocks = malloc((size_t)(NURSERY_MAX_BLOCKS + 2) * sizeof(int64_t)); /* nursery 가 stack 에 맞춰 커질 수 있음 */
     remembered = malloc((size_t)remembered_cap * sizeof *remembered);
     for (int c = 0; c <= CLASSES; c++) bump_block[c] = -1;
@@ -613,7 +786,7 @@ void calc_gc_init(void) {
 
 void calc_gc_print_stats(void) {
     if (!getenv("CALC_GC_STATS")) return;
-    fprintf(stderr, "gc: minor %lld, major %lld, copied %lld MB, pinned blocks %lld, old peak %lld MB, blocks used %lld (%lld MB)\n",
+    fprintf(stderr, "gc: minor %lld, major %lld, copied %lld MB, pinned blocks %lld, old peak %lld MB, blocks used %lld (%lld MB), verified %lld\n",
             (long long)stat_minor, (long long)stat_major, (long long)(stat_copied_bytes >> 20), (long long)stat_pinned_blocks,
-            (long long)(stat_old_bytes_peak >> 20), (long long)fresh_block, (long long)((fresh_block * BLOCK_BYTES) >> 20));
+            (long long)(stat_old_bytes_peak >> 20), (long long)fresh_block, (long long)((fresh_block * BLOCK_BYTES) >> 20), (long long)stat_verified);
 }

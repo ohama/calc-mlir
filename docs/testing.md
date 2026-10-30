@@ -160,10 +160,11 @@ dotnet run --project tests/Calc.Tests -- --filter "Compile"
   - 그래서 입력마다 따로 실행한 것과 같은 결과를 비교합니다.
 - **묶음 빌드를 쓰는 이유:** 입력마다 실행 파일을 만들면 macOS에서 새 실행 파일의 첫 실행에 약 0.3초가 걸립니다. 거기에 외부 도구 실행과 .NET 프로세스 생성까지 더해져 전체가 1분 30초 걸렸습니다. 지금은 전체 `dotnet test`가 약 5초입니다.
 - **단독 실행 파일:** `calc --compile`과 같은 경로(생성한 `@main`이 있는 단독 실행 파일)는 `단독 실행 파일` 테스트 3개가 확인합니다.
-- **세대 구분 GC:** `세대 구분 GC` 묶음은 수거가 여러 번 일어나고 이미 있는 객체에 쓰는 프로그램 12개를 기본 설정, nursery 256KB, 할당 100번마다 minor GC 세 가지로 실행합니다. 전체 테스트를 GC stress로 돌리려면 환경 변수를 줍니다. 실행 파일은 환경 변수를 물려받습니다.
+- **세대 구분 GC:** `세대 구분 GC` 묶음은 수거가 여러 번 일어나고 이미 있는 객체에 쓰는 프로그램 12개를 기본 설정, nursery 256KB, 할당 100번마다 minor GC 세 가지로 실행합니다. 앞의 둘은 heap verifier(`CALC_GC_VERIFY`)를 켭니다(기본은 GC마다, 256KB는 10번째 GC마다). verifier가 틀린 곳을 찾으면 실행 파일이 abort해서 종료 코드가 달라집니다. 전체 테스트를 GC stress나 verifier로 돌리려면 환경 변수를 줍니다. 실행 파일은 환경 변수를 물려받습니다.
 
   ```sh
   CALC_GC_STRESS=10 dotnet test   # 할당 10번마다 minor GC (약 1분)
+  CALC_GC_VERIFY=1 dotnet test    # 컴파일한 프로그램마다 GC 마다 heap verifier (약 3분)
   ```
 
   stress 간격을 3처럼 아주 짧게 하면 긴 리스트를 만드는 테스트 1개가 `Error: out of memory`로 끝납니다. GC마다 pin 한 블록이 old space로 넘어가고, 그 블록에 살아 있는 칸이 하나씩 흩어져 남기 때문입니다([generational-gc-design.md](generational-gc-design.md) 14장).
@@ -209,7 +210,7 @@ dotnet run --project tests/Calc.Tests -- --filter "Compile"
 | 명령 | 기대 출력 | 종료 코드 |
 |---|---|---|
 | `--help`, `-h` | `USAGE: calc [--help] [--expr=<expr>] [--version] [--no-typecheck]`로 시작하는 사용법 | 0 |
-| `--version`, `-v` | `calc 0.66.1` (`Calc.fsproj`의 `<Version>`) | 0 |
+| `--version`, `-v` | `calc 0.66.2` (`Calc.fsproj`의 `<Version>`) | 0 |
 | `-e "(2+3)*4"` | `Result: 20` | 0 |
 | `--expr=7/2` | `Result: 3` | 0 |
 | `--expr "-5 + 2"` | `Result: -3` (`-`로 시작하는 식도 값으로 처리됨) | 0 |

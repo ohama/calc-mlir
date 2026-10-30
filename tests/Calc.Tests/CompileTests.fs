@@ -42,7 +42,7 @@ and compileAndRunWith (configure: Toolchain.Tools -> Toolchain.Tools) (input: st
     finally
         File.Delete exe
 
-/// 빌드하고 GC 설정 환경 변수 env 로 실행 (CALC_GC_NURSERY_KB, CALC_GC_STRESS)
+/// 빌드하고 GC 설정 환경 변수 env 로 실행 (CALC_GC_NURSERY_KB, CALC_GC_STRESS, CALC_GC_VERIFY)
 let private compileAndRunGc (env: (string * string) list) (input: string) =
     let t = requireTools ()
     let ast = Program.load input
@@ -1116,13 +1116,14 @@ let tests =
             Expect.stringContains header (String.Join(" ", whitespace)) "Char.IsWhiteSpace"
         }
 
-        // 세대 구분 GC: 기본 설정, nursery 를 작게(256KB) 해서 수거를 자주, 그리고 할당 100번마다 minor GC (stress). 기대값은 인터프리터(calc)의 출력
+        // 세대 구분 GC: 기본 설정, nursery 를 작게(256KB) 해서 수거를 자주, 그리고 할당 100번마다 minor GC (stress). 기대값은 인터프리터(calc)의 출력.
+        // 앞의 둘은 heap verifier 를 켬 (기본은 GC 마다, 256KB 는 10번째 GC 마다. 틀리면 abort 해서 종료 코드가 달라짐)
         testList "세대 구분 GC" [
             for input, expected, name in gcCases ->
                 test name {
                     requireTools () |> ignore
-                    Expect.equal (compileAndRunGc [] input) expected "기본 (nursery 1MB 에서 16MB 까지 커짐)"
-                    Expect.equal (compileAndRunGc [ "CALC_GC_NURSERY_KB", "256" ] input) expected "nursery 256KB"
+                    Expect.equal (compileAndRunGc [ "CALC_GC_VERIFY", "1" ] input) expected "기본 (nursery 1MB 에서 16MB 까지 커짐), GC 마다 heap verifier"
+                    Expect.equal (compileAndRunGc [ "CALC_GC_NURSERY_KB", "256"; "CALC_GC_VERIFY", "10" ] input) expected "nursery 256KB, 10번째 GC 마다 heap verifier"
                     Expect.equal (compileAndRunGc [ "CALC_GC_STRESS", "100" ] input) expected "할당 100번마다 minor GC"
                 }
         ]

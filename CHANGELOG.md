@@ -4,6 +4,16 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.66.2] - 2026-10-30
+
+### 추가
+- 세대 구분 GC의 heap verifier: `CALC_GC_VERIFY=n`이면 n번째 GC마다 root에서 닿는 객체를 모두 따라가며 확인합니다. 포인터가 살아 있는 객체의 시작을 가리키는지, forwarding 표시나 빈 칸이 남지 않았는지, old 객체가 young 객체를 가리키는 칸에 write barrier가 기록했는지, minor GC 뒤에 nursery 블록이 남지 않았는지를 봅니다. 틀리면 무엇이 어디서 틀렸는지 출력하고 abort합니다.
+- 테스트: `세대 구분 GC` 묶음이 기본 설정에서는 GC마다, nursery 256KB에서는 10번째 GC마다 heap verifier를 켭니다.
+
+### 수정
+- 세대 구분 GC: minor GC가 pin 한 블록을 목록 앞쪽에 모으면서 그 자리의 nursery 블록을 목록에서 잃었습니다. 잃은 블록은 돌려주지 못한 채 nursery 상태로 남았습니다(heap verifier가 첫 GC에서 찾음). 기본 설정에서 쓴 블록이 5%쯤 줄었습니다(`benchmarks/msort.calc` 1343 → 1276). C 모델(`benchmarks/gc-model/gcm.c`)의 같은 코드도 고쳤습니다.
+- 세대 구분 GC: major GC가 남기는 pin 블록 안의 죽은 객체는 칸을 0으로 지웁니다. 그 객체는 이번에 돌려준 객체를 가리킬 수 있어서, stack의 오래된 단어가 나중에 그 객체를 가리키면 major GC가 돌려준 칸을 따라갈 수 있었습니다.
+
 ## [0.66.1] - 2026-10-30
 
 ### 변경

@@ -221,7 +221,7 @@ pin 한 nursery 블록은 안의 객체를 모두 훑어야 합니다. 헤더 �
 ## 6. 검증
 
 - **GC stress 모드:** 환경 변수(`CALC_GC_STRESS=1`)로 할당마다 minor GC, n번마다 major GC를 합니다. 전체 컴파일 테스트를 이 모드로 한 번 더 돌립니다. barrier나 root를 빠뜨리면 여기서 결과가 달라지거나 죽습니다.
-- **heap verifier:** stress 모드에서 GC마다 확인합니다.
+- **heap verifier (0.66.2부터, 16장):** stress 모드에서 GC마다 확인합니다.
   - old 객체의 모든 칸이 old 객체나, remembered set에 있는 칸을 통해서만 nursery 객체를 가리키는지
   - 모든 포인터가 살아 있는 객체의 시작(cons는 + 2)을 가리키는지
   - forwarding 표시가 남은 객체가 없는지
@@ -421,4 +421,49 @@ nursery를 처음부터 16MB로 잡으면, 할당이 적은 프로그램도 최�
 - **결과:** 실행 파일의 동적 라이브러리는 `/usr/lib/libSystem.B.dylib` 하나입니다. 도구는 `brew install llvm`만 있으면 됩니다. `docs/compiler-architecture.md` 5장의 한계 "실행 파일이 Homebrew의 `libgc.1.dylib`에 동적으로 의존"이 없어졌습니다.
 - **테스트:** 전체 1242개가 기본 설정과 `CALC_GC_STRESS=10`에서 통과합니다. `세대 구분 GC` 묶음은 그대로 세 가지 설정(기본, nursery 256KB, 할당 100번마다 minor GC)으로 실행합니다.
 - **남은 일:** 아주 잦은 pinning에서의 단편화(14.1, 드문드문한 블록의 객체를 major GC가 옮기기), 넘겨받은 일반 블록 다시 쓰기, 생성 코드에 할당 펼쳐 넣기(9장).
+
+## 16. heap verifier
+
+6장의 heap verifier를 `runtime/gc.c`에 넣었습니다. GC를 고칠 때의 안전망입니다. 만들자마자 버그 두 개를 찾았습니다.
+
+### 16.1 확인하는 것
+
+`CALC_GC_VERIFY=n`이면 n번째 GC마다(1이면 GC마다) 확인합니다. 확인하는 때는 minor GC 전, minor GC 뒤, major GC 뒤입니다. root(stack과 레지스터는 conservative하게, 런타임 전역은 정확하게)에서 닿는 객체를 모두 따라갑니다. 따라간 객체는 verifier의 bit 표에 적고, GC의 mark bit는 건드리지 않습니다.
+
+| 확인 | 빠뜨리면 생기는 일 |
+|---|---|
+| 힙의 포인터가 객체의 시작을 가리킴. 태그(cons는 2)와 블록 종류가 맞음 | 객체 안쪽을 가리키는 포인터를 GC가 헤더로 읽음 |
+| 빈 블록, 큰 객체의 중간, old space의 빈 칸(`FREE_SLOT`)을 가리키지 않음 | major GC가 산 객체를 거둠 |
+| forwarding 표시(`0xF`)가 남은 객체가 없음. 헤더의 종류가 있는 것이고 크기가 칸이나 블록 안에 들어감 | 옮긴 뒤 고치지 않은 포인터 |
+| minor GC 전: old 객체(바로 만든 큰 객체 빼고)의 칸이 nursery 객체를 가리키면 그 칸이 remembered set에 있음 | write barrier를 빠뜨림 |
+| minor GC 뒤, major GC 뒤: nursery 객체를 가리키는 것이 없고, nursery 상태의 블록이 하나도 없음 | 돌려주지 못한 블록, 옮기지 않은 객체 |
+
+틀리면 무엇이 틀렸는지, 칸과 값의 주소, 각각의 블록 번호와 상태를 출력하고 abort합니다.
+
+```
+gc verify failed (after minor GC, GC #1): nursery block was neither freed nor promoted
+  slot 0x7000008000 (block 1, state 2), value 0x0 (block -1, state -1)
+```
+
+stack의 범위는 collector가 훑은 범위(`minor_collect`, `major_collect`의 지역 변수부터)를 그대로 씁니다. verifier의 프레임은 더 깊어서, 그 아래를 훑으면 GC가 보지 않은 오래된 단어를 root로 잘못 볼 수 있기 때문입니다.
+
+### 16.2 찾은 버그
+
+- **pin 한 블록을 모으면서 nursery 블록을 잃음:** minor GC는 pin 한 블록을 `nursery_blocks`의 앞쪽에 모은 뒤(`nursery_blocks[kept++] = b`), 목록 전체를 돌며 남은 nursery 블록을 돌려줍니다. 그런데 앞쪽 자리에 있던 블록을 덮어써서, 그 블록들이 목록에서 사라졌습니다. 그 블록들은 nursery 상태로 영영 남았습니다. 메모리가 새고, 안에는 옮기고 난 객체(forwarding 표시)가 남았습니다. 자리를 바꾸게 고쳤습니다. 결과에는 영향이 없어서 테스트로는 드러나지 않았습니다. verifier는 기본 설정의 첫 GC에서 찾습니다. 처음 드러난 곳은 할당 100번마다 GC하는 설정의 영속 트리 프로그램이었습니다. 지금 쓰는 nursery 블록의 첫 객체에 forwarding 표시가 있었습니다(`bad header`). minor GC 뒤에 nursery 상태의 블록이 남았는지 확인해서 원인을 좁혔습니다. 그 확인을 verifier에 넣었습니다. C 모델(`gcm.c`)에도 같은 코드가 있어서 같이 고쳤습니다.
+
+  | | 고치기 전 | 고친 뒤 |
+  |---|---|---|
+  | `benchmarks/msort.calc` 쓴 블록 | 1343 (41MB) | 1276 (39MB) |
+  | `benchmarks/bst.calc` 쓴 블록 | 1058 (33MB) | 1013 (31MB) |
+  | C 모델 최대 메모리 msort, bst | 217MB, 120MB | 193MB, 108MB |
+
+  할당 3번마다 GC하는 설정의 큰 메모리(14.1, msort 6.4GB)는 그대로입니다. 그 경우는 블록이 거의 모두 pin 되어 이 버그와 상관이 없습니다.
+
+- **남긴 pin 블록 안의 죽은 객체:** major GC는 pin 해서 넘겨받은 일반 블록에 산 객체가 하나라도 있으면 블록을 통째로 남깁니다. 남긴 블록 안의 죽은 객체는 이번에 돌려준 객체를 가리킬 수 있습니다. 나중에 stack의 오래된 단어가 그 죽은 객체를 가리키면, 다음 major GC가 conservative하게 그 객체를 살리고 돌려준 칸을 따라갑니다. 그 칸이 다른 크기의 블록으로 다시 쓰였으면 아무 단어나 헤더로 읽게 됩니다. 코드를 읽다가 찾았습니다. sweep에서 죽은 객체의 칸을 0으로 지우게 고쳤습니다. 헤더는 남겨서 블록을 차례로 읽을 수 있게 합니다.
+
+### 16.3 테스트와 비용
+
+- **`세대 구분 GC` 묶음:** 기본 설정은 GC마다, nursery 256KB는 10번째 GC마다 verifier를 켭니다.
+- **전체 테스트:** `CALC_GC_VERIFY=1 dotnet test`가 통과합니다(약 3분). 묶음의 12개 프로그램은 할당 100번마다 GC하며 GC마다 확인하는 설정과, 할당 7번마다 GC하며 50번째 GC마다 확인하는 설정에서도 통과합니다.
+- **비용:** 한 번 확인하는 데 산 힙 전체를 따라갑니다. 영속 트리 프로그램(산 객체 10만 개)은 nursery 256KB에서 GC마다 확인하면 10초 걸립니다(확인 없이 0.02초). 그래서 테스트는 확인 간격을 둡니다.
 

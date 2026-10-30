@@ -280,7 +280,8 @@ static void __attribute__((noinline)) minor_collect(void) {
         meta[b].pinned = 0;
         stat_pinned_blocks++;
         old_bytes += BLOCK_BYTES;
-        nursery_blocks[kept++] = b; /* 잠시 앞쪽에 모음 */
+        nursery_blocks[i] = nursery_blocks[kept]; /* 앞쪽에 모음 (자리를 바꿔서, 나머지 블록을 모두 돌려줌) */
+        nursery_blocks[kept++] = b;
     }
     int64_t promoted = kept;
     /* 3. root: 런타임 전역, remembered set, 넘긴 블록 */
