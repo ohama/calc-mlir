@@ -1,6 +1,6 @@
 # 세대 구분 GC 설계
 
-컴파일러가 만든 실행 파일의 메모리 관리를 Boehm GC에서 직접 만든 세대 구분 GC로 바꾸는 설계입니다. 조사(지금 비용의 측정, 방식별 C 모델, 제약)와 추천 설계, 단계별 계획을 담습니다. 구현은 아직 하지 않았습니다.
+컴파일러가 만든 실행 파일의 메모리 관리를 Boehm GC에서 직접 만든 세대 구분 GC로 바꾸는 설계입니다. 조사(지금 비용의 측정, 방식별 C 모델, 제약)와 추천 설계, 단계별 계획, 1단계(C 모델에 붙인 collector)의 결과를 담습니다. 런타임에는 아직 넣지 않았습니다.
 
 - **요약:** stack과 레지스터는 지금처럼 conservative하게 보고, 힙은 정확하게(precise) 보는 **mostly-copying 세대 구분 GC**를 추천합니다.
   - 젊은 객체는 작은 nursery에 bump 할당합니다. minor GC가 살아남은 것을 old space로 복사합니다.
@@ -9,6 +9,7 @@
   - 생성 코드는 값을 바꾸는 세 곳(`:=`, 배열 쓰기, `let rec … and …`의 클로저 칸 채우기)에 write barrier만 더합니다. stack map은 필요 없습니다.
 - **기대 효과:** 할당이 많은 프로그램에서 Boehm이 쓰는 시간(지금 36~79%)의 상당 부분입니다. 같은 일을 하는 C 모델에서 수거 없는 bump 할당이 상한이고, msort 모델은 0.48초에서 0.21초, 짧게 사는 할당이 많은 모델은 0.28초에서 0.07초였습니다.
 - **규모:** C 런타임에 1,500~2,500줄 정도의 collector, Codegen에 write barrier, 테스트용 GC stress 모드입니다. 먼저 C 모델에 collector를 붙여 효과를 확인한 뒤(1단계) 런타임에 넣습니다.
+- **1단계 결과 (11장):** 530줄 남짓한 collector(`benchmarks/gc-model/gcm.c`)를 C 모델 다섯에 붙였습니다. 다섯 모두 Boehm보다 빨랐습니다(msort 0.50초 → 0.37초, live 0.34초 → 0.12초, bst 1.06초 → 0.91초). 최대 메모리는 bst만 조금 늘었습니다. msort는 목표(0.33초)에 조금 못 미쳤습니다.
 
 ## 1. 지금 상태
 
@@ -136,7 +137,7 @@ GC는 할당할 때만 일어납니다. 할당 함수는 모두 C 런타임에 �
 
 ### 4.1 nursery
 
-- **크기:** 처음 4MB(블록 128개)로 하고 1단계에서 정합니다. 너무 크면 cache를 벗어나고, 너무 작으면 minor GC가 잦아 stack을 자주 훑습니다.
+- **크기:** 16MB(블록 512개)입니다(1단계, 11장). 4MB보다 살아남는 비율이 낮아 복사가 줄었습니다. stack이 크면 다음 nursery를 훑은 stack의 2배로 키웁니다.
 - **두 bump 영역:** cons 블록(16바이트 객체만)과 그 밖의 블록입니다. 블록 안의 객체를 차례로 읽을 수 있어야 pin 된 블록을 훑을 수 있습니다(2.1). 그 밖의 블록은 헤더로, cons 블록은 16바이트씩 읽습니다.
 - **할당 경로:** `calc_alloc`이 `if (top + size <= limit) { p = top; top += size; return p; }`입니다. 블록이 차면 다음 블록, nursery가 차면 minor GC입니다. 0.53.0 조사에서 할당 함수를 부르는 비용은 병목이 아니었으므로 처음에는 생성 코드에 펼쳐 넣지 않습니다.
 - **블록 표:** 블록마다 상태(nursery, pin 되어 old가 됨, 비어 있음)를 둡니다. `is_young(p)`는 "nursery 주소 범위 안이고, 그 블록의 상태가 nursery"입니다.
@@ -211,10 +212,10 @@ pin 한 nursery 블록은 안의 객체를 모두 훑어야 합니다. 헤더 �
 
 | 수 | 처음 값 | 정하는 법 |
 |---|---|---|
-| nursery 크기 | 4MB | 1단계 C 모델에서 1, 2, 4, 8, 16MB |
+| nursery 크기 | 16MB, stack이 크면 훑은 stack의 2배 | 1단계에서 정함 (11장) |
 | nursery 블록 크기 | 32KB | pin 하나가 넘기는 양. 작으면 블록 표가 커짐 |
 | large object 경계 | 2KB | old space 블록 크기의 1/16 |
-| major GC 시작 | 지난 major GC 뒤 살아 있던 크기의 2배 | 지금 Boehm과 메모리를 비교 |
+| major GC 시작 | 지난 major GC 뒤 살아 있던 크기의 3배 (64MB 이상) | 1단계에서 정함 (11장) |
 | remembered set 크기 | 64K 칸 | 꽉 차면 minor GC |
 
 ## 6. 검증
@@ -231,7 +232,7 @@ pin 한 nursery 블록은 안의 객체를 모두 훑어야 합니다. 헤더 �
 
 | 단계 | 할 일 | 끝나는 조건 |
 |---|---|---|
-| 1. C 모델 | `msortm`, `livem`, `bstm`에 collector를 붙임(nursery, minor GC, pinning, old space, major GC). 쓰는 곳이 없어 barrier는 없음 | Boehm 대비 msortm 0.33초 이하, livem 0.12초 이하, bstm 1.0초 이하. 최대 메모리는 Boehm의 1.5배 이하. 아니면 3장의 E를 다시 봄 |
+| 1. C 모델 (끝남, 11장) | C 모델에 collector를 붙임(nursery, minor GC, pinning, old space, major GC, write barrier) | Boehm 대비 msortm 0.33초 이하, livem 0.12초 이하, bstm 1.0초 이하. 최대 메모리는 Boehm의 1.5배 이하. 아니면 3장의 E를 다시 봄 |
 | 2. 런타임에 넣기 | 1단계의 collector를 `runtime/gc.c`로. 할당 함수, 런타임 전역 root 등록, 런타임의 barrier. 빌드 스위치(`CALC_GC=boehm`)로 옛 Boehm 경로를 남김 | 전체 테스트가 두 모드에서 통과. GC stress 모드에서도 통과 |
 | 3. Codegen barrier | `:=`, 배열 쓰기, `emitRecGroup`. int로 정해진 `:=`는 barrier 없이 | old→young 테스트, stress 모드, MLIR 테스트 |
 | 4. 측정과 조정 | nursery 크기, major GC 정책, 깊은 stack(8장) | 1장의 프로그램이 Boehm보다 빠르고, `benchmarks/`가 느려지지 않음 |
@@ -244,11 +245,12 @@ pin 한 nursery 블록은 안의 객체를 모두 훑어야 합니다. 헤더 �
 | 위험 | 결과 | 대책 |
 |---|---|---|
 | write barrier를 빠뜨림 | 살아 있는 젊은 객체를 버림. 드물게, 늦게 드러남 | 값을 바꾸는 곳이 적음(2.4). GC stress와 heap verifier. 새로 바꾸는 곳을 만들 때의 체크리스트 |
-| 깊은 stack을 minor GC마다 훑음 | tail call이 아닌 재귀 백만 단계(stack 수십 MB)에서 minor GC마다 그만큼 읽어 느려짐 | stack 깊이에 따라 nursery를 키움(훑는 양 대비 할당량을 일정하게). 4단계에서 측정 |
+| 깊은 stack을 minor GC마다 훑음 | tail call이 아닌 재귀 백만 단계(stack 수십 MB)에서 minor GC마다 그만큼 읽어 느려짐 | 1단계에서 확인함: 다음 nursery를 훑은 stack의 2배로 키우면 Boehm보다 빠름(11장) |
 | pinning이 많음 | nursery 블록이 old space로 많이 넘어가 메모리가 늘어남 | 블록 크기를 작게. 넘겨받은 블록의 살아 있는 비율을 측정 |
 | 정수가 nursery 주소처럼 보임 | 블록 하나를 쓸데없이 넘김 | stack은 태그를 보지 않으므로(5.2) 피할 수 없음. 손해는 블록 하나이고 다음 major GC에서 돌아옴 |
 | C 런타임의 숨은 포인터 | `malloc`한 버퍼에 값을 넣으면 GC가 보지 못함 | 지금 `malloc` 버퍼(`calc_buffer`)에는 UTF-16만 있음. 새 코드에서 금지 |
-| 복사 비용이 큼 | 살아남는 비율이 높으면(msort) 복사가 mark보다 비쌀 수 있음 | 1단계에서 측정. nursery를 키우면 살아남는 비율이 낮아짐 |
+| 복사 비용이 큼 | 살아남는 비율이 높으면(msort) 복사가 mark보다 비쌀 수 있음 | 1단계에서 측정: msort 모델이 494MB를 복사하고도 Boehm보다 26% 빠름. nursery를 키우면 줄어듦(64MB에서 0.33초) |
+| pin 한 블록이 쌓임 | 블록 안의 객체가 모두 죽어야 돌려주므로, nursery가 아주 작으면 메모리가 늘어남(bst 모델, nursery 64KB에서 1.7GB) | nursery를 16MB 아래로 내리지 않음. 블록 크기를 줄이거나, 넘겨받은 블록의 빈 곳을 old space 할당에 다시 쓰는 것은 나중에 |
 
 ## 9. 정해야 할 것
 
@@ -267,3 +269,40 @@ pin 한 nursery 블록은 안의 객체를 모두 훑어야 합니다. 헤더 �
 - LLVM, "Garbage Collection Safepoints in LLVM" (statepoint, RewriteStatepointsForGC)
 - Boehm GC `gc.h`: `GC_set_manual_vdb_allowed`, `GC_enable_incremental`, `GC_end_stubborn_change`
 - OCaml의 minor heap과 `caml_modify` (remembered set과 write barrier의 예)
+
+## 11. 1단계 결과: C 모델에 붙인 collector
+
+`benchmarks/gc-model/`에 collector(`gcm.c`, 530줄 남짓)와 C 모델 다섯이 있습니다. 모델은 Calc와 같은 값 표현(tagged int, `주소 | 2`인 cons, 헤더 블록)을 쓰고, 같은 소스를 Boehm(지금 런타임과 같은 설정)과 새 collector로 각각 빌드합니다. `benchmarks/gc-model/run.sh`가 두 결과가 같은지 확인한 뒤 잽니다.
+
+### 11.1 만든 것
+
+- **영역:** 32GB를 `mmap`으로 잡아 두고 32KB 블록으로 나눕니다. 블록마다 상태(nursery, cons nursery, 크기별 old, cons old, 넘겨받은 nursery, 큰 객체)를 표에 둡니다.
+- **nursery:** 일반 블록과 cons 블록에 따로 bump 할당합니다. 다시 쓰는 블록은 0으로 채웁니다(할당했지만 아직 쓰지 않은 칸을 GC가 포인터로 읽지 않게).
+- **minor GC:** 4.2절 그대로입니다. 레지스터는 `setjmp`로 내리고, stack 시작은 `pthread_get_stackaddr_np`입니다.
+- **old space:** 크기별 블록(16~2048바이트, 16바이트 단위로 올림)과 cons 블록, 큰 객체(블록 여러 개)입니다. 빈 칸의 첫 단어는 `0x7F`로 표시해서, conservative 포인터가 빈 칸을 가리켜도 객체로 보지 않습니다.
+- **major GC:** stack은 conservative, 힙은 정확하게 mark하고 sweep합니다. 크기별 블록은 빈 칸으로 free list를 다시 만들고, 넘겨받은 nursery 블록은 객체가 모두 죽었을 때만 돌려줍니다.
+- **write barrier:** 4.4절 그대로입니다. remembered set이 차면 쓰기 전에 minor GC를 합니다(쓰는 값이 stack에 살아 있어 pin 되도록).
+
+### 11.2 결과
+
+5번 잰 중앙값입니다(`run.sh`, nursery 16MB).
+
+| C 모델 | Boehm | 새 collector | 1단계 목표 |
+|---|---|---|---|
+| msort: cons 2백만 개 merge sort | 0.50초, 298MB | 0.37초, 217MB | 0.33초 (못 미침) |
+| live: 2백만 개를 붙잡은 채 `Some (n, [n])` 2천만 번 | 0.34초, 437MB | 0.12초, 165MB | 0.12초 (닿음) |
+| bst: 영속 트리 백만 개 넣고 찾기 | 1.06초, 108MB | 0.91초, 120MB | 1.0초 (닿음) |
+| mut: 큰 배열과 ref에 새 리스트를 3백만 번 씀 (write barrier) | 0.20초, 85MB | 0.08초, 73MB | |
+| deep: 백만 단계 재귀 바닥에서 2천만 번 할당 | 0.25초, 364MB | 0.10초, 246MB | |
+
+- **정확성:** 다섯 모델 모두 nursery 64KB, 1MB, 16MB에서 Boehm과 결과가 같습니다. 64KB는 블록 둘이라 GC가 아주 자주 일어나는 stress 조건입니다.
+- **msort:** minor GC 108번에 494MB를 복사합니다. 리스트가 merge 한 단계 동안 살아 있어서 대부분 old space로 넘어가고, major GC가 10번 돕니다. nursery 64MB에서는 0.33초였습니다. 목표에는 조금 못 미치지만 Boehm보다 26% 빠르고 메모리도 적어서 2단계로 넘어갈 만하다고 봅니다.
+
+### 11.3 시험하며 바꾼 것
+
+| 바꾼 것 | 전 | 후 |
+|---|---|---|
+| nursery 4MB → 16MB | msort 0.51초, live 0.14초, bst 0.94초 | 0.42초, 0.12초, 0.93초. 메모리도 셋 다 줄어듦 |
+| major GC 배율 2 → 3 | msort 0.42초, 170MB | 0.39초, 217MB |
+| cons를 복사할 때 free list보다 bump를 먼저 | msort 0.40초 | 0.37초 (복사한 리스트가 메모리에 차례로 놓임) |
+| 다음 nursery를 훑은 stack의 2배로 | deep 0.30초 (minor GC 77번마다 stack 수십 MB를 훑음, Boehm 0.25초) | 0.10초 (minor GC 8번) |
