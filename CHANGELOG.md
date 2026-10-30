@@ -4,6 +4,18 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [Unreleased]
+
+### 추가
+- 세대 구분 GC의 defragmentation: major GC가 mark한 뒤 산 객체가 25% 이하인 old 블록(크기별 블록, cons 블록, pin 해서 넘겨받은 블록)의 객체를 다른 블록으로 옮기고, 산 객체와 root의 포인터를 고친 뒤 빈 블록을 돌려줍니다. stack과 레지스터가 가리키는 블록은 옮기지 않습니다. 고른 블록이 32개보다 적으면 하지 않습니다.
+  - 할당 3번마다 minor GC(`CALC_GC_STRESS=3`)에서 `benchmarks/msort.calc`의 최대 메모리가 6.4GB에서 131MB(25.7초 → 7.1초), `benchmarks/bst.calc`가 4.6GB에서 69MB가 되었습니다. `CALC_GC_STRESS=3 dotnet test`가 통과합니다(전에는 긴 리스트를 만드는 테스트가 메모리 부족으로 끝남).
+  - 기본 설정에서는 시간이 같고, 영속 트리 백만 개의 최대 메모리가 95MB에서 89MB가 되었습니다.
+  - 환경 변수 `CALC_GC_DEFRAG`(옮길 블록의 산 객체 비율 상한, %, 0이면 하지 않음), `CALC_GC_DEFRAG_MIN`(최소 블록 수).
+- 테스트: `세대 구분 GC` 묶음의 stress 설정이 major GC마다 옮길 수 있는 블록을 모두 옮깁니다.
+
+### 수정
+- 테스트: `세대 구분 GC` 묶음이 바깥의 `CALC_GC_*` 환경 변수를 지우고 자기 설정만 씁니다. 0.66.2부터 이 묶음이 heap verifier를 켜서, `CALC_GC_STRESS=10 dotnet test`가 stress와 verifier를 함께 켜고 끝나지 않을 만큼 느렸습니다.
+
 ## [0.66.2] - 2026-10-30
 
 ### 추가

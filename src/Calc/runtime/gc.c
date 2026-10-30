@@ -32,6 +32,8 @@ enum { FREE = 0, NURSERY, NURSERY_CONS, OLD_SIZED, OLD_CONS, OLD_PROMOTED, OLD_P
 typedef struct {
     uint8_t state;
     uint8_t pinned;
+    uint8_t stack_ref;   /* major GC: stack 이나 레지스터가 이 블록을 가리킴 (옮기지 않음) */
+    uint8_t evacuate;    /* major GC: 객체를 옮겨 비우는 블록 */
     uint16_t slot_words; /* OLD_SIZED, OLD_CONS 의 칸 크기 */
     uint32_t nblocks;    /* LARGE: 블록 수 */
     char *top;           /* NURSERY*, OLD_PROMOTED*, OLD_SIZED: 쓴 곳의 끝 */
@@ -68,6 +70,7 @@ static void give_block(int64_t b) {
     if (meta[b].remembered) { free(meta[b].remembered); meta[b].remembered = NULL; }
     meta[b].state = FREE;
     meta[b].pinned = 0;
+    meta[b].evacuate = 0;
     if (free_count == free_cap) {
         free_cap = free_cap ? free_cap * 2 : 1024;
         free_blocks = realloc(free_blocks, (size_t)free_cap * sizeof(int64_t));
@@ -668,7 +671,145 @@ static void drain_marks(void) {
     }
 }
 
-static void mark_range(value *lo, value *hi) { for (value *s = lo; s < hi; s++) mark_value(*s, 0); }
+/* stack 과 레지스터: conservative 하게 mark 하고, 가리키는 블록은 옮기지 않게 표시 (객체 끝 바로 다음을 가리키는 포인터도 있으므로 앞 블록도) */
+static void mark_range(value *lo, value *hi) {
+    for (value *s = lo; s < hi; s++) {
+        value v = *s;
+        if (in_region(v)) meta[block_of((void *)v)].stack_ref = 1;
+        if (in_region(v - 1)) meta[block_of((void *)(v - 1))].stack_ref = 1;
+        mark_value(v, 0);
+    }
+}
+
+/* ---- defragmentation (major GC 의 evacuation) ----
+   pin 이 잦으면 old space 의 크기별 블록과 넘겨받은 블록마다 산 객체가 몇 개씩 흩어져 남아 블록을 돌려주지 못함 (14.1, 17장).
+   mark 한 뒤 산 객체가 적은 블록(크기별 블록, cons 블록, 넘겨받은 일반 블록)을 골라 객체를 다른 블록으로 옮기고, 산 객체와 root 의 포인터를 고친 다음, sweep 이 빈 블록을 돌려줌.
+   stack 과 레지스터는 고칠 수 없으므로 그것이 가리키는 블록은 옮기지 않음. major GC 는 minor GC 바로 뒤라 nursery 와
+   remembered set 은 비어 있음 */
+static int64_t defrag_live_percent = 25; /* 산 칸이 이 비율 이하인 블록을 옮김 (CALC_GC_DEFRAG, 0 이면 하지 않음) */
+static int64_t defrag_min_blocks = 32;   /* 고른 블록이 이보다 적으면 하지 않음 (CALC_GC_DEFRAG_MIN) */
+static int64_t stat_evacuated_blocks, stat_evacuated_bytes;
+
+static int64_t live_slots(int64_t b) {
+    uint64_t *bits = meta[b].marks;
+    int64_t n = 0;
+    if (bits) for (int64_t i = 0; i < BLOCK_WORDS / 64; i++) n += __builtin_popcountll(bits[i]);
+    return n;
+}
+
+/* pin 해서 넘겨받은 일반 블록에서 mark 된 객체가 차지하는 바이트 */
+static int64_t promoted_live_bytes(int64_t b) {
+    char *bs = block_start(b);
+    int64_t n = 0;
+    for (char *p = bs; p < meta[b].top;) {
+        value h = ((value *)p)[0];
+        if (h == 0) break;
+        int64_t bytes = ROUND16(header_words(h) * 8), w = (p - bs) >> 3;
+        if (meta[b].marks[w >> 6] & (1ull << (w & 63))) n += bytes;
+        p += bytes;
+    }
+    return n;
+}
+
+static int evacuation_candidate(int64_t b) {
+    block_meta *m = &meta[b];
+    if (m->stack_ref || !m->marks) return 0;
+    if (m->state == OLD_PROMOTED) return promoted_live_bytes(b) * 100 <= BLOCK_BYTES * defrag_live_percent;
+    if (m->state != OLD_SIZED && m->state != OLD_CONS) return 0;
+    int c = m->state == OLD_CONS ? CLASSES : class_of(m->slot_words);
+    if (b == bump_block[c]) return 0;
+    int64_t capacity = BLOCK_BYTES / (m->slot_words * 8);
+    return live_slots(b) * 100 <= capacity * defrag_live_percent;
+}
+
+/* 산 객체의 칸이 옮긴 객체를 가리키면 새 주소로 */
+static inline void fix_slot(value *slot) {
+    value v = *slot;
+    if (!CALC_GC_IS_PTR(v) || !in_region(v) || !meta[block_of((void *)v)].evacuate) return;
+    value first = ((value *)(v & ~7))[0];
+    *slot = (first & ~(value)0xF) | CALC_GC_TAG(v);
+}
+
+static void fix_object(value *p, int cons) {
+    if (cons) { fix_slot(&p[0]); fix_slot(&p[1]); return; }
+    value h = p[0];
+    if (atomic_kind(h)) return;
+    int64_t words = header_words(h);
+    for (int64_t i = 1; i < words; i++) fix_slot(&p[i]);
+}
+
+static void evacuate(void) {
+    if (!defrag_live_percent) return;
+    int64_t count = 0;
+    for (int64_t b = 0; b < fresh_block; b++) if (evacuation_candidate(b)) count++;
+    if (count < defrag_min_blocks) return;
+    for (int64_t b = 0; b < fresh_block; b++) if (evacuation_candidate(b)) meta[b].evacuate = 1;
+    /* 옮길 곳은 bump 로만 (free list 의 빈 칸은 옮길 블록에도 있음. free list 는 sweep 이 다시 만듦) */
+    for (int c = 0; c <= CLASSES; c++) free_lists[c] = NULL;
+    for (int64_t b = 0; b < fresh_block; b++) {
+        block_meta *m = &meta[b];
+        if (!m->evacuate) continue;
+        if (m->state == OLD_PROMOTED) {
+            /* 크기가 섞인 블록: 헤더로 차례로 읽으며 mark 된 객체를 크기별 블록으로 */
+            char *bs = block_start(b);
+            for (char *p = bs; p < m->top;) {
+                value h = ((value *)p)[0];
+                if (h == 0) break;
+                int64_t words = header_words(h), w = (p - bs) >> 3;
+                if (m->marks[w >> 6] & (1ull << (w & 63))) {
+                    value *q = old_alloc_class(class_of(words)); /* nursery 에서 온 객체는 LARGE_WORDS 이하 */
+                    memcpy(q, p, (size_t)words * 8);
+                    int64_t qb = block_of(q), qw = ((char *)q - block_start(qb)) >> 3;
+                    mark_bits(qb)[qw >> 6] |= 1ull << (qw & 63);
+                    ((value *)p)[0] = (value)q | FORWARDED;
+                    stat_evacuated_bytes += words * 8;
+                }
+                p += ROUND16(words * 8);
+            }
+            memset(m->marks, 0, BLOCK_WORDS / 8);
+            stat_evacuated_blocks++;
+            continue;
+        }
+        int cons = m->state == OLD_CONS;
+        int c = cons ? CLASSES : class_of(m->slot_words);
+        int64_t slot = m->slot_words * 8;
+        char *bs = block_start(b);
+        for (int64_t i = 0; i < BLOCK_WORDS / 64; i++) {
+            for (uint64_t x = m->marks[i]; x; x &= x - 1) {
+                value *p = (value *)(bs + ((i * 64 + __builtin_ctzll(x)) << 3));
+                value *q = old_alloc_class(c);
+                memcpy(q, p, (size_t)slot);
+                int64_t qb = block_of(q), qw = ((char *)q - block_start(qb)) >> 3;
+                mark_bits(qb)[qw >> 6] |= 1ull << (qw & 63);
+                p[0] = (value)q | FORWARDED;
+                stat_evacuated_bytes += slot;
+            }
+        }
+        memset(m->marks, 0, BLOCK_WORDS / 8); /* sweep 이 블록을 돌려줌 */
+        stat_evacuated_blocks++;
+    }
+    /* 산 객체(mark bit 이 있는 것)와 root 의 포인터를 고침. 옮긴 객체는 새 블록에서 mark 되어 있어 같이 고쳐짐 */
+    for (int64_t b = 0; b < fresh_block; b++) {
+        block_meta *m = &meta[b];
+        if (!m->marks) continue;
+        char *bs = block_start(b);
+        switch (m->state) {
+        case OLD_SIZED: case OLD_CONS: case OLD_PROMOTED: case OLD_PROMOTED_CONS: {
+            int cons = m->state == OLD_CONS || m->state == OLD_PROMOTED_CONS;
+            for (int64_t i = 0; i < BLOCK_WORDS / 64; i++)
+                for (uint64_t x = m->marks[i]; x; x &= x - 1)
+                    fix_object((value *)(bs + ((i * 64 + __builtin_ctzll(x)) << 3)), cons);
+            break;
+        }
+        case LARGE:
+            if (m->marks[0] & 1) fix_object((value *)bs, 0);
+            b += m->nblocks - 1;
+            break;
+        default: break;
+        }
+    }
+    for (int64_t i = 0; i < root_count; i++) fix_slot(roots[i]);
+}
 
 static void sweep(void) {
     for (int c = 0; c <= CLASSES; c++) free_lists[c] = NULL;
@@ -676,6 +817,8 @@ static void sweep(void) {
     for (int64_t b = 0; b < fresh_block; b++) {
         block_meta *m = &meta[b];
         uint64_t *bits = m->marks;
+        m->stack_ref = 0;
+        m->evacuate = 0;
         switch (m->state) {
         case OLD_PROMOTED_CONS:
             /* pin 해서 넘겨받은 cons 블록은 old cons 블록과 모양이 같음 (블록 시작부터 16바이트 칸). 살아 있는 칸이 있으면
@@ -749,6 +892,7 @@ static void __attribute__((noinline)) major_collect(void) {
     mark_range((value *)regs, (value *)((char *)regs + sizeof regs));
     for (int64_t i = 0; i < root_count; i++) mark_value(*roots[i], 1);
     drain_marks();
+    evacuate();
     sweep();
     verify_heap(VERIFY_AFTER_MAJOR, stack_lo, regs);
     major_threshold = old_bytes * major_factor > ((int64_t)64 << 20) ? old_bytes * major_factor : ((int64_t)64 << 20);
@@ -776,6 +920,10 @@ void calc_gc_init(void) {
     if (stress) stress_every = atoll(stress);
     const char *mf = getenv("CALC_GC_MAJOR_FACTOR");
     if (mf) major_factor = atoll(mf);
+    const char *defrag = getenv("CALC_GC_DEFRAG");
+    if (defrag) defrag_live_percent = atoll(defrag);
+    const char *defrag_min = getenv("CALC_GC_DEFRAG_MIN");
+    if (defrag_min) defrag_min_blocks = atoll(defrag_min);
     const char *verify = getenv("CALC_GC_VERIFY");
     if (verify) verify_every = atoll(verify);
     nursery_blocks = malloc((size_t)(NURSERY_MAX_BLOCKS + 2) * sizeof(int64_t)); /* nursery 가 stack 에 맞춰 커질 수 있음 */
@@ -786,7 +934,8 @@ void calc_gc_init(void) {
 
 void calc_gc_print_stats(void) {
     if (!getenv("CALC_GC_STATS")) return;
-    fprintf(stderr, "gc: minor %lld, major %lld, copied %lld MB, pinned blocks %lld, old peak %lld MB, blocks used %lld (%lld MB), verified %lld\n",
+    fprintf(stderr, "gc: minor %lld, major %lld, copied %lld MB, pinned blocks %lld, old peak %lld MB, blocks used %lld (%lld MB), evacuated %lld blocks (%lld MB), verified %lld\n",
             (long long)stat_minor, (long long)stat_major, (long long)(stat_copied_bytes >> 20), (long long)stat_pinned_blocks,
-            (long long)(stat_old_bytes_peak >> 20), (long long)fresh_block, (long long)((fresh_block * BLOCK_BYTES) >> 20), (long long)stat_verified);
+            (long long)(stat_old_bytes_peak >> 20), (long long)fresh_block, (long long)((fresh_block * BLOCK_BYTES) >> 20), (long long)stat_evacuated_blocks,
+            (long long)(stat_evacuated_bytes >> 20), (long long)stat_verified);
 }

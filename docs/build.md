@@ -201,6 +201,7 @@ Homebrew LLVM은 PATH에 넣지 않아도 됩니다. 컴파일러가 도구를 �
 CALC_GC_STATS=1 ./prog          # 끝날 때 minor/major GC 횟수, 복사한 양, pin 한 블록 수를 표준 에러로
 CALC_GC_NURSERY_KB=256 ./prog   # nursery 크기 (기본은 1MB 에서 minor GC 마다 두 배, 16MB 까지)
 CALC_GC_STRESS=10 ./prog        # 할당 10번마다 minor GC (테스트용)
+CALC_GC_DEFRAG=50 ./prog        # 산 객체가 50% 이하인 블록을 major GC 가 옮겨 비움 (기본 25, 0 이면 하지 않음)
 CALC_GC_VERIFY=1 ./prog         # GC 마다 heap verifier (테스트용, n 이면 n번째 GC 마다). 틀리면 무엇이 틀렸는지 출력하고 abort
 ```
 
