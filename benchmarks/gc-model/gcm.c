@@ -78,7 +78,7 @@ static uint64_t *mark_bits(int64_t b) {
 static inline int64_t header_words(value h) {
     int64_t kind = h & 0xff;
     int64_t n = (uint64_t)h >> 8;
-    if (kind == 5) n &= 0xffffff;               /* data: 위쪽 32비트는 생성자 번호 */
+    if (kind == 5 || kind == 1) n &= 0xffffff;  /* data 는 위쪽 32비트에 생성자 번호, 클로저는 인자 수 (direct 함수가 있는 클로저) */
     if (kind == 9) return 1 + (n + 7) / 8;      /* bool 배열: n 은 바이트 수 */
     return 1 + n;
 }

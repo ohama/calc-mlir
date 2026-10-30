@@ -1,13 +1,27 @@
 #define _GNU_SOURCE /* vasprintf (Linux). 첫 #include 보다 앞이어야 함 */
 #include "runtime.h"
 
+#ifndef CALC_GC_GEN
 #include <gc.h>
+#endif
 #include <setjmp.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+static value calc_raised; /* raise 한 예외 값. _longjmp 한 뒤 calc_try 가 읽음 */
+
+#ifdef CALC_GC_GEN
+void calc_gc_init(void);
+void calc_gc_print_stats(void);
+
+void calc_init(void) {
+    calc_gc_init();
+    calc_gc_add_root(&calc_raised);
+    atexit(calc_gc_print_stats);
+}
+#else
 /* free space divisor 1: 수거 뒤 살아 있는 크기만큼 비워 둘 때까지 힙을 늘림 (기본 3). 수거가 드물어져서
    할당이 많은 프로그램이 25% 남짓 빨라지고, 최대 메모리는 2배 안쪽으로 늘어남 */
 /* interior pointer 를 끔: 켜 두면 객체 끝을 가리키는 포인터를 위해 1바이트를 더 붙여서 16바이트 요청이 32바이트가 됨.
@@ -40,6 +54,12 @@ void *calc_alloc(int64_t bytes) {
     return GC_MALLOC((size_t)bytes);
 }
 
+void *calc_alloc_atomic(int64_t bytes) { return GC_MALLOC_ATOMIC((size_t)bytes); }
+void *calc_alloc_cons(void) { return calc_alloc(2 * sizeof(value)); }
+void calc_write_barrier(value *slot, value v) { (void)slot; (void)v; }
+void calc_gc_add_root(value *slot) { (void)slot; }
+#endif
+
 void calc_error(const char *message) {
     fflush(stdout);
     fprintf(stderr, "Error: %s\n", message);
@@ -65,7 +85,7 @@ value calc_bool(int b) { return b ? CALC_TRUE : CALC_FALSE; }
 
 /* 새 문자열 블록. 안에 포인터가 없으므로 GC 가 내용을 훑지 않는 ATOMIC 할당 */
 calc_string *calc_new_string(int64_t length) {
-    calc_string *s = GC_MALLOC_ATOMIC(sizeof(calc_string) + (size_t)length * sizeof(uint16_t));
+    calc_string *s = calc_alloc_atomic(sizeof(calc_string) + (size_t)length * sizeof(uint16_t));
     s->header = CALC_KIND_STRING | ((1 + (2 * length + 7) / 8) << 8);
     s->length = length;
     return s;
@@ -102,11 +122,14 @@ value calc_array_get(value a, int64_t i) {
 
 void calc_array_set(value a, int64_t i, value v) {
     if (CALC_KIND(a) == CALC_KIND_BOOL_ARRAY) CALC_BOOL_BYTES(a)[i] = (uint8_t)CALC_BOOL_VAL(v);
-    else CALC_FIELD(a, 1 + i) = v;
+    else {
+        CALC_FIELD(a, 1 + i) = v;
+        calc_write_barrier(&CALC_FIELD(a, 1 + i), v);
+    }
 }
 
 value calc_cons(value head, value tail) {
-    value *block = calc_alloc(2 * sizeof(value));
+    value *block = calc_alloc_cons();
     block[0] = head;
     block[1] = tail;
     return (value)block | CALC_TAG_CONS;
@@ -321,7 +344,6 @@ typedef struct calc_handler {
 } calc_handler;
 
 static calc_handler *calc_handlers = NULL;
-static value calc_raised; /* raise 한 예외 값. _longjmp 한 뒤 calc_try 가 읽음 */
 
 /* setjmp 를 부른 함수가 살아 있는 동안만 longjmp 할 수 있으므로, 본문은 이 함수 안에서 부름.
    _setjmp 와 _longjmp 는 시그널 마스크를 저장하지 않아서 setjmp 보다 빠름. setjmp 뒤에 바꾸는 지역 변수가 없음 */

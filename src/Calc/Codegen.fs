@@ -261,6 +261,18 @@ let private emitCall (fb: FunctionBuilder) (name: string) (args: string list) (r
     fb.Emit(sprintf "%s = llvm.call @%s(%s) : (%s) -> %s" r name (String.concat ", " args) argTypes resultType)
     r
 
+/// 이미 있는 객체의 칸 slot 에 값 v 를 쓴 뒤의 write barrier (세대 구분 GC). v 가 포인터(태그 0 이나 2, (v & 5) = 0)일 때만
+/// 런타임을 부름. Boehm 런타임에서는 아무것도 하지 않음
+let private emitWriteBarrier (fb: FunctionBuilder) (slot: string) (v: string) =
+    let bits = emitOp fb "arith.andi" v (emitConst fb "i64" 5L) "i64"
+    let isPointer = fb.Fresh()
+    fb.Emit(sprintf "%s = arith.cmpi eq, %s, %s : i64" isPointer bits (emitConst fb "i64" 0L))
+    fb.Emit(sprintf "scf.if %s {" isPointer)
+    fb.Indent()
+    fb.Emit(sprintf "llvm.call @calc_write_barrier(%s, %s) : (!llvm.ptr, i64) -> ()" slot v)
+    fb.Dedent()
+    fb.Emit("}")
+
 /// 클로저 블록의 index 번째 단어 주소 (0: 헤더, 1: 코드 포인터, 2~: 캡처한 값)
 let private emitSlot (fb: FunctionBuilder) (block: string) (index: int) =
     let r = fb.Fresh()
@@ -644,7 +656,7 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
         let hv = emitExpr fb env h
         let tv = emitExpr fb env t
         let block = fb.Fresh()
-        fb.Emit(sprintf "%s = llvm.call @calc_alloc(%s) : (i64) -> !llvm.ptr" block (emitConst fb "i64" 16L))
+        fb.Emit(sprintf "%s = llvm.call @calc_alloc_cons() : () -> !llvm.ptr" block)
         fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" hv block)
         fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" tv (emitSlot fb block 1))
         let address = fb.Fresh()
@@ -691,14 +703,18 @@ let rec private emitExpr (fb: FunctionBuilder) (env: Map<string, string>) expr :
                 fb.Emit(sprintf "llvm.store %s, %s {tbaa = [#calc_tbaa_array]} : i8, !llvm.ptr" b (emitByteAddress fb block index))
                 emitConst fb "i64" unitValue)
             (fun () ->
-                fb.Emit(sprintf "llvm.store %s, %s {tbaa = [#calc_tbaa_array]} : i64, !llvm.ptr" vv (emitWordAddress fb block index))
+                let slot = emitWordAddress fb block index
+                fb.Emit(sprintf "llvm.store %s, %s {tbaa = [#calc_tbaa_array]} : i64, !llvm.ptr" vv slot)
+                emitWriteBarrier fb slot vv
                 emitConst fb "i64" unitValue)
     | CBuiltin (":=", [ r; v ]) ->
         let rv = emitExpr fb env r
         let vv = emitExpr fb env v
         let block = fb.Fresh()
         fb.Emit(sprintf "%s = llvm.inttoptr %s : i64 to !llvm.ptr" block rv)
-        fb.Emit(sprintf "llvm.store %s, %s {tbaa = [#calc_tbaa_ref]} : i64, !llvm.ptr" vv (emitSlot fb block 1))
+        let slot = emitSlot fb block 1
+        fb.Emit(sprintf "llvm.store %s, %s {tbaa = [#calc_tbaa_ref]} : i64, !llvm.ptr" vv slot)
+        emitWriteBarrier fb slot vv
         emitConst fb "i64" unitValue
     // append (reverse xs) ys: 거꾸로 만든 리스트를 다시 복사하지 않고 xs 의 원소를 ys 앞에 하나씩 붙임 (칸 n 개)
     | CBuiltin ("append", [ CBuiltin ("reverse", [ xs ]); ys ]) ->
@@ -880,7 +896,10 @@ and private emitRecGroup (fb: FunctionBuilder) (env: Map<string, string>) (closu
         captured
         |> List.iteri (fun i c ->
             let v = if groupNames.Contains c then groupEnv[c] else emitExpr fb env (CVar c)
-            fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" v (emitSlot fb block (2 + i))))
+            let slot = emitSlot fb block (2 + i)
+            fb.Emit(sprintf "llvm.store %s, %s : i64, !llvm.ptr" v slot)
+            // 앞서 만든 클로저는 그 뒤의 할당에서 수거되어 old 가 되었을 수 있음
+            emitWriteBarrier fb slot v)
     groupEnv
 
 /// 패턴이 값 v 와 일치하는지 (i1). 하위 패턴은 앞이 일치할 때만 검사하고, 필드도 그때 읽음
@@ -1083,6 +1102,10 @@ let private declarations =
       "#calc_tbaa_header = #llvm.tbaa_tag<base_type = #calc_tbaa_header_type, access_type = #calc_tbaa_header_type, offset = 0>"
       "llvm.func @calc_init()"
       "llvm.func @calc_alloc(i64) -> !llvm.ptr"
+      "llvm.func @calc_alloc_cons() -> !llvm.ptr"
+      // GC 의 기록만 바꿈: LLVM 이 반복 안의 다른 읽기를 반복 밖으로 뺄 수 있게 (minor GC 가 객체를 옮겨도 레지스터의 값이
+      // 가리키는 객체는 pin 되어 그대로라 결과가 같음)
+      "llvm.func @calc_write_barrier(!llvm.ptr, i64) attributes {memory_effects = #llvm.memory_effects<other = none, argMem = none, inaccessibleMem = readwrite, errnoMem = none, targetMem0 = none, targetMem1 = none>, no_unwind}"
       "llvm.func @calc_print_result(i64)"
       // 오류 함수는 exit 로 끝나므로 noreturn: 반복 안의 범위 검사 실패 호출이 메모리를 바꾼다고 보지 않게 함
       "llvm.func @calc_error_divide_by_zero() attributes {passthrough = [\"noreturn\", \"nounwind\"]}"

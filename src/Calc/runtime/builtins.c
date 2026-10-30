@@ -3,7 +3,6 @@
 #include "runtime.h"
 #include "unicode.h"
 
-#include <gc.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,7 +21,10 @@ typedef struct {
 static void push(list_builder *b, value x) {
     value cell = calc_cons(x, CALC_NIL);
     if (b->last == CALC_NIL) b->head = cell;
-    else TAIL(b->last) = cell;
+    else {
+        TAIL(b->last) = cell;
+        calc_write_barrier(&TAIL(b->last), cell); /* 앞 칸이 그 사이의 수거로 old 가 되었을 수 있음 */
+    }
     b->last = cell;
 }
 
@@ -213,10 +215,19 @@ value calc_builtin_toInt(value s) {
 
 static int compare_for_sort(const void *a, const void *b) { return calc_compare(*(const value *)a, *(const value *)b); }
 
+/* 정렬용 임시 단어 n 개. 블록에 헤더를 두어야 세대 구분 GC 가 블록을 차례로 읽을 수 있으므로 헤더 뒤의 주소를 돌려줌.
+   atomic 이면 문자열과 같은 종류(안을 보지 않음), 아니면 배열 */
+static value *scratch(int64_t n, int atomic) {
+    if (n < 1) n = 1;
+    value *block = atomic ? calc_alloc_atomic(8 * (1 + n)) : calc_alloc(8 * (1 + n));
+    block[0] = (atomic ? CALC_KIND_STRING : CALC_KIND_ARRAY) | (n << 8);
+    return block + 1;
+}
+
 /* 원소가 모두 int 일 때: tagged int 는 값 그대로 비교해도 순서가 같아 calc_compare 를 부르지 않음.
    qsort 는 비교마다 함수 포인터를 부르므로 아래에서 위로 merge sort (stable) */
 static void sort_ints(value *items, int64_t n) {
-    value *a = items, *t = GC_MALLOC_ATOMIC((size_t)(n > 0 ? n : 1) * sizeof(value));
+    value *a = items, *t = scratch(n, 1);
     for (int64_t w = 1; w < n; w *= 2) {
         for (int64_t lo = 0; lo < n; lo += 2 * w) {
             int64_t mid = lo + w < n ? lo + w : n, hi = lo + 2 * w < n ? lo + 2 * w : n;
@@ -249,6 +260,7 @@ value calc_builtin_append(value xs, value ys) {
     for (xs = TAIL(xs); xs != CALC_NIL; xs = TAIL(xs)) {
         value cell = calc_cons(HEAD(xs), ys);
         TAIL(last) = cell;
+        calc_write_barrier(&TAIL(last), cell);
         last = cell;
     }
     return first;
@@ -264,7 +276,7 @@ value calc_builtin_range(value a, value b) {
 /* int 끼리 또는 string 끼리 (calc_compare). 같다고 비교되는 원소는 내용도 같으므로 안정 정렬이 아니어도 결과가 같음 */
 value calc_builtin_sort(value xs) {
     int64_t n = calc_list_length(xs);
-    value *items = GC_MALLOC((size_t)(n > 0 ? n : 1) * sizeof(value));
+    value *items = scratch(n, 0);
     int all_int = 1;
     for (int64_t i = 0; i < n; i++, xs = TAIL(xs)) { items[i] = HEAD(xs); all_int &= CALC_IS_INT(items[i]); }
     if (all_int) sort_ints(items, n);
@@ -313,7 +325,7 @@ value calc_builtin_raise(value exn) { calc_raise(exn); }
 static value new_array(int64_t length, value example) {
     if (length < 0) length = 0;
     if (length > 0 && CALC_IS_BOOL(example)) {
-        int64_t *block = GC_MALLOC_ATOMIC(8 + (size_t)length);
+        int64_t *block = calc_alloc_atomic(8 + length);
         if (block == NULL) calc_error("out of memory");
         block[0] = CALC_KIND_BOOL_ARRAY | (length << 8);
         return (value)block;

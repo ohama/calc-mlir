@@ -4,6 +4,18 @@
 버전 번호는 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 버전은 `src/Calc/Calc.fsproj`의 `<Version>`에서 관리합니다.
 
+## [0.65.0] - 2026-10-30
+
+### 추가
+- 컴파일러: 세대 구분 GC (시험 단계, `CALC_GC=gen`으로 빌드). 기본은 지금처럼 Boehm GC입니다([docs/generational-gc-design.md](docs/generational-gc-design.md)).
+  - 젊은 객체는 nursery(16MB)에 bump 할당합니다. minor GC가 살아남은 것을 old space로 복사합니다. stack과 레지스터는 conservative하게 보고, 그것이 가리키는 블록은 옮기지 않고 old space로 넘깁니다. old space는 mark-sweep입니다.
+  - 이미 있는 객체에 쓰는 곳에 write barrier를 둡니다. 생성 코드는 `:=`, 배열 쓰기, `let rec … and …`의 클로저 칸, 런타임은 리스트의 tail 고치기와 배열 쓰기입니다. 쓰는 값이 포인터일 때만 런타임을 부릅니다. Boehm 런타임에서는 아무것도 하지 않습니다.
+  - cons는 cons만 담는 블록에 할당합니다(`calc_alloc_cons`).
+  - `CALC_GC=gen`이면 실행 파일이 `libgc`에 의존하지 않습니다.
+  - Boehm 대비: msort 2백만 개 0.53초 → 0.37초, 영속 트리 백만 개 0.94초 → 0.70초, 큰 데이터를 붙잡은 채 2천만 번 할당 0.35초 → 0.15초. 배열, 체, 할당이 적은 프로그램은 같습니다.
+  - 실행할 때 `CALC_GC_STATS=1`(통계), `CALC_GC_NURSERY_KB`(nursery 크기), `CALC_GC_STRESS=n`(할당 n번마다 minor GC, 테스트용)을 씁니다.
+- 테스트 12개 추가 (총 1241개): 세대 구분 GC 묶음 11개(nursery 256KB와 할당 100번마다 minor GC), 생성한 MLIR의 write barrier와 cons 할당
+
 ## [0.64.0] - 2026-10-30
 
 ### 변경

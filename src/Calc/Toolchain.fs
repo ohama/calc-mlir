@@ -10,6 +10,8 @@ type Tools =
       MlirTranslate: string
       Clang: string
       GcPrefix: string
+      /// 메모리 관리: "boehm" (기본, Boehm GC 를 링크) 또는 "gen" (runtime/gc.c 의 세대 구분 GC). 환경 변수 CALC_GC
+      Gc: string
       /// 빌드 출력 폴더로 복사된 runtime/runtime.c
       Runtime: string
       /// 생성한 코드를 컴파일하는 clang 의 최적화 수준. 기본은 -O2.
@@ -42,10 +44,14 @@ let find () : Result<Tools, string> =
         | null | "" -> "/opt/homebrew/opt/bdw-gc"
         | prefix -> prefix
     let runtime = Path.Combine(AppContext.BaseDirectory, "runtime", "runtime.c")
+    let gc =
+        match Environment.GetEnvironmentVariable "CALC_GC" with
+        | "gen" -> "gen"
+        | _ -> "boehm"
     let missing =
         [ for name in [ "mlir-opt"; "mlir-translate"; "clang" ] do
               if (tool name).IsNone then name
-          if not (File.Exists(Path.Combine(gcPrefix, "include", "gc.h"))) then "bdw-gc (gc.h)"
+          if gc = "boehm" && not (File.Exists(Path.Combine(gcPrefix, "include", "gc.h"))) then "bdw-gc (gc.h)"
           if not (File.Exists runtime) then "runtime/runtime.c" ]
     match missing with
     | [] ->
@@ -54,6 +60,7 @@ let find () : Result<Tools, string> =
               MlirTranslate = (tool "mlir-translate").Value
               Clang = (tool "clang").Value
               GcPrefix = gcPrefix
+              Gc = gc
               Runtime = runtime
               OptimizationLevel = "-O2" }
     | names ->
@@ -102,7 +109,7 @@ let private runtimeObjects (tools: Tools) =
         |> Array.filter (fun f -> f.EndsWith ".c" || f.EndsWith ".h")
         |> Array.sort
     let key =
-        String.concat "\n" [ yield! files |> Array.map File.ReadAllText; tools.Clang; tools.GcPrefix ]
+        String.concat "\n" [ yield! files |> Array.map File.ReadAllText; tools.Clang; tools.GcPrefix; tools.Gc ]
         |> Text.Encoding.UTF8.GetBytes
         |> Security.Cryptography.SHA256.HashData
         |> Convert.ToHexString
@@ -112,7 +119,13 @@ let private runtimeObjects (tools: Tools) =
           if not (File.Exists cached) then
               // 다른 프로세스와 동시에 만들 수 있으므로 임시 이름으로 만든 뒤 옮김 (같은 폴더라 원자적)
               let temp = cached + "." + Guid.NewGuid().ToString("N")
-              run tools.Clang [ "-O2"; "-c"; source; "-I" + Path.Combine(tools.GcPrefix, "include"); "-o"; temp ]
+              run tools.Clang
+                  [ "-O2"
+                    "-c"
+                    source
+                    if tools.Gc = "gen" then "-DCALC_GC_GEN" else "-I" + Path.Combine(tools.GcPrefix, "include")
+                    "-o"
+                    temp ]
               File.Move(temp, cached, true)
           yield cached ]
 
@@ -120,8 +133,9 @@ let private link (tools: Tools) (objects: string list) (output: string) =
     run tools.Clang
         [ yield! objects
           yield! runtimeObjects tools
-          yield "-L" + Path.Combine(tools.GcPrefix, "lib")
-          yield "-lgc"
+          if tools.Gc = "boehm" then
+              yield "-L" + Path.Combine(tools.GcPrefix, "lib")
+              yield "-lgc"
           // 깊은 재귀: 메인 스레드 스택을 512MB 로 (인터프리터의 큰 스택 스레드와 같은 크기, macOS ld)
           yield "-Wl,-stack_size,0x20000000"
           yield "-o"

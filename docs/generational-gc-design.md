@@ -233,8 +233,8 @@ pin 한 nursery 블록은 안의 객체를 모두 훑어야 합니다. 헤더 �
 | 단계 | 할 일 | 끝나는 조건 |
 |---|---|---|
 | 1. C 모델 (끝남, 11장) | C 모델에 collector를 붙임(nursery, minor GC, pinning, old space, major GC, write barrier) | Boehm 대비 msortm 0.33초 이하, livem 0.12초 이하, bstm 1.0초 이하. 최대 메모리는 Boehm의 1.5배 이하. 아니면 3장의 E를 다시 봄 |
-| 2. 런타임에 넣기 | 1단계의 collector를 `runtime/gc.c`로. 할당 함수, 런타임 전역 root 등록, 런타임의 barrier. 빌드 스위치(`CALC_GC=boehm`)로 옛 Boehm 경로를 남김 | 전체 테스트가 두 모드에서 통과. GC stress 모드에서도 통과 |
-| 3. Codegen barrier | `:=`, 배열 쓰기, `emitRecGroup`. int로 정해진 `:=`는 barrier 없이 | old→young 테스트, stress 모드, MLIR 테스트 |
+| 2. 런타임에 넣기 (끝남, 12장) | 1단계의 collector를 `runtime/gc.c`로. 할당 함수, 런타임 전역 root 등록, 런타임과 Codegen의 barrier(포인터일 때 런타임 호출). 빌드 스위치 `CALC_GC=gen`, 기본은 Boehm | 전체 테스트가 두 모드와 GC stress 모드에서 통과 |
+| 3. barrier 다듬기 | 빠른 길을 생성 코드에 펼쳐 넣기, int로 정해진 `:=`와 배열 쓰기는 barrier 없이 | MLIR 테스트, 측정 |
 | 4. 측정과 조정 | nursery 크기, major GC 정책, 깊은 stack(8장) | 1장의 프로그램이 Boehm보다 빠르고, `benchmarks/`가 느려지지 않음 |
 | 5. 기본값으로 | Boehm 경로와 `-lgc`를 뺌. 문서(`compiler-design.md` D5, `compiler-architecture.md`) | 릴리스 |
 
@@ -306,3 +306,53 @@ pin 한 nursery 블록은 안의 객체를 모두 훑어야 합니다. 헤더 �
 | major GC 배율 2 → 3 | msort 0.42초, 170MB | 0.39초, 217MB |
 | cons를 복사할 때 free list보다 bump를 먼저 | msort 0.40초 | 0.37초 (복사한 리스트가 메모리에 차례로 놓임) |
 | 다음 nursery를 훑은 stack의 2배로 | deep 0.30초 (minor GC 77번마다 stack 수십 MB를 훑음, Boehm 0.25초) | 0.10초 (minor GC 8번) |
+
+## 12. 2단계 결과: 런타임에 넣기
+
+### 12.1 바꾼 것
+
+- **런타임:** `runtime/gc.c`가 1단계의 collector입니다(`CALC_GC_GEN`일 때만 컴파일). 할당 함수는 `calc_alloc`, `calc_alloc_atomic`, `calc_alloc_cons`이고, `calc_write_barrier`와 `calc_gc_add_root`가 있습니다. Boehm 쪽(`runtime.c`)은 같은 이름의 함수를 지금처럼 Boehm으로 구현하고, barrier와 root 등록은 아무것도 하지 않습니다.
+- **런타임 전역:** `calc_raised`(raise 한 예외 값)를 root로 등록합니다.
+- **런타임의 barrier:** 리스트를 앞에서부터 만들 때 tail을 고치는 곳(`push`, `append`)과 `calc_array_set`입니다. `sort`의 임시 버퍼는 헤더가 있는 블록으로 바꿨습니다(블록을 헤더로 차례로 읽어야 하므로).
+- **old space에 바로 만든 큰 객체:** 다음 minor GC가 한 번 훑습니다. 그래서 `Array.create`처럼 새 큰 배열을 채우는 쓰기에는 barrier가 없어도 됩니다.
+- **Codegen:**
+  - `:=`, 단어 배열 쓰기, `let rec … and …`의 클로저 칸 채우기 뒤에 barrier를 둡니다. 쓰는 값이 포인터(`(v & 5) = 0`)일 때만 `calc_write_barrier`를 부릅니다.
+  - 이 함수는 `memory_effects`로 GC의 기록만 바꾼다고 알립니다. 그래서 반복 안의 다른 읽기를 LLVM이 반복 밖으로 뺄 수 있습니다. minor GC가 객체를 옮겨도, 레지스터의 값이 가리키는 객체는 pin 되어 그대로이므로 결과가 같습니다.
+  - cons는 `calc_alloc_cons`로 할당합니다.
+- **Toolchain:** `CALC_GC=gen`이면 런타임을 `-DCALC_GC_GEN`으로 컴파일하고 `-lgc`를 링크하지 않습니다. 런타임 오브젝트 캐시의 키에 모드를 넣었습니다.
+
+### 12.2 런타임에 넣으면서 찾은 것
+
+| 문제 | 증상 | 고친 것 |
+|---|---|---|
+| 인자가 여럿인 클로저의 헤더는 위쪽 32비트에 인자 수가 있음 (0.58.0) | 크기를 3천3백만 단어로 읽어 객체 뒤의 메모리까지 mark. 죽은 리스트가 모두 살아 있는 것으로 보여 major GC가 아무것도 거두지 못함(pipe 5.8초, 1.7GB) | data 블록처럼 클로저도 크기를 24비트로 가림. 1단계 C 모델에는 클로저가 없어서 드러나지 않았음 |
+| 같은 ref에 거듭 씀 (`r := x :: !r`) | remembered set에 같은 칸이 계속 들어가 64K번마다 minor GC (0.10초 → 0.13초) | 마지막에 기록한 칸과 같으면 건너뜀 (0.10초) |
+| GC stress에서 블록 하나에 모든 할당이 들어감 | stack이 그 블록을 가리켜 통째로 pin 되므로 복사를 전혀 시험하지 못함 | stress 모드에서는 블록마다 객체 4개만 넣음 |
+
+### 12.3 테스트
+
+- **전체 테스트:** Boehm(기본), `CALC_GC=gen`, `CALC_GC=gen CALC_GC_STRESS=10`(할당 10번마다 minor GC)에서 1241개가 모두 통과합니다.
+- **새 묶음:** `세대 구분 GC (CALC_GC=gen)` 11개는 기본 설정과 상관없이 새 collector로 빌드하고, nursery 256KB와 할당 100번마다 minor GC로 실행합니다. 대상은 ref와 큰 배열에 새 리스트를 쓰기, 런타임이 앞에서부터 만드는 리스트, 30만 단계 재귀, 인자 수를 헤더에 적은 클로저, `let rec … and …`, 큰 문자열, raise 한 예외 값, `sort`, 영속 트리, 큰 bool 배열입니다.
+- **MLIR 테스트:** barrier가 쓰는 곳 넷(`:=`, 배열, 클로저 칸 둘)에 있는지, cons가 `calc_alloc_cons`인지 확인합니다.
+- **알려진 한계:** `CALC_GC_STRESS=3`이면 긴 리스트를 만드는 테스트 2개가 `Error: out of memory`로 끝납니다. GC마다 stack이 가리키는 블록이 old space로 넘어가는데, 그 블록에 긴 리스트의 칸 몇 개가 살아 있으면 블록 전체(32KB)를 돌려주지 못하기 때문입니다. 기본 설정(nursery 16MB)에서는 minor GC마다 2~5블록이라 1% 안쪽입니다. 넘겨받은 블록의 빈 곳을 다시 쓰는 일은 4단계에서 봅니다.
+
+### 12.4 결과
+
+실행 파일, 3번 잰 중앙값입니다. 결과는 두 모드에서 같습니다.
+
+| 프로그램 | Boehm | `CALC_GC=gen` |
+|---|---|---|
+| bst: 영속 트리 백만 개 | 0.94초, 108MB | 0.70초, 114MB |
+| msort: 2백만 개 | 0.53초, 316MB | 0.37초, 275MB |
+| live: 2백만 개를 붙잡은 채 2천만 번 할당 | 0.35초, 404MB | 0.15초, 204MB |
+| pipe: 백만 개에 `filter`, `map`, `fold` 100번 | 0.68초, 90MB | 0.68초, 106MB |
+| `mymap` (tail call 아님) 백만 개 20번 | 0.26초, 206MB | 0.17초, 167MB |
+| `sprintf` 3백만 번 | 0.10초, 4MB | 0.06초, 17MB |
+| ref에 새 리스트 2천만 번 | 0.11초, 3MB | 0.10초, 20MB |
+| 체 1억 (bool 배열) | 0.42초, 98MB | 0.42초, 96MB |
+| int 배열 1천만 개 20번 | 0.83초, 79MB | 0.83초, 77MB |
+| `benchmarks/` msort, bst | 0.044초, 0.060초 | 0.028초, 0.047초 |
+
+- **pipe:** 리스트가 minor GC 몇 번 동안 살아 있어서(백만 개의 중간 리스트) 대부분 복사됩니다. Boehm과 같습니다.
+- **작은 프로그램의 메모리:** nursery가 16MB라 할당이 적은 프로그램도 최대 메모리가 16MB쯤 됩니다.
+- **다른 예제:** `benchmarks/`의 fib, queens, sieve와 배열 반복은 같습니다. barrier의 태그 검사는 int를 쓰는 반복에서 시간 차이가 없었습니다.

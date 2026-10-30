@@ -42,6 +42,41 @@ and compileAndRunWith (configure: Toolchain.Tools -> Toolchain.Tools) (input: st
     finally
         File.Delete exe
 
+/// 세대 구분 GC (CALC_GC=gen 의 런타임) 로 빌드하고, 환경 변수 env 로 실행 (CALC_GC_NURSERY_KB, CALC_GC_STRESS)
+let private compileAndRunGen (env: (string * string) list) (input: string) =
+    let t = { requireTools () with Gc = "gen" }
+    let ast = Program.load input
+    Infer.typecheck ast |> ignore
+    let exe = Path.Combine(Path.GetTempPath(), "calc-test-gc-" + Guid.NewGuid().ToString("N"))
+    try
+        Toolchain.build t (Codegen.emitProgram ast) exe false |> ignore
+        let psi = ProcessStartInfo(exe)
+        for k, v in env do
+            psi.Environment[k] <- v
+        psi.RedirectStandardOutput <- true
+        psi.RedirectStandardError <- true
+        use p = Process.Start psi
+        let stderrTask = p.StandardError.ReadToEndAsync()
+        let stdout = p.StandardOutput.ReadToEnd()
+        p.WaitForExit()
+        stdout, stderrTask.Result, p.ExitCode
+    finally
+        File.Delete exe
+
+/// 세대 구분 GC 로 실행하는 프로그램: 수거가 여러 번 일어나고, old 객체에 young 객체를 쓰는 곳(write barrier)을 지남
+let private gcCases =
+    [ "let r = ref [] in for i = 1 to 300000 do r := i :: (if i % 1000 = 0 then [] else !r) done; println (length !r, head !r)", ("(1, 300000)\n", "", 0), "ref 에 새 리스트를 거듭 씀 (:=)"
+      "let a = Array.create 1000 [] in for i = 0 to 299999 do a.[i % 1000] <- i :: (if i % 7 = 0 then [] else a.[i % 1000]) done; println (fold (fun s l -> s + length l) 0 (Array.toList a))", ("3997\n", "", 0), "큰 배열(old space 에 바로)의 원소에 새 리스트 (a.[i] <- v)"
+      "let xs = range 1 300000 in println (length (append xs [0]), length (filter (fun x -> x % 3 = 0) (map (fun x -> x * 2) xs)), nth (split (join \",\" [\"a\"; \"b\"]) \",\") 1)", ("(300001, 100000, \"b\")\n", "", 0), "런타임이 앞에서부터 만드는 리스트 (append 의 tail 고치기)"
+      "let rec mymap f xs = match xs with [] -> [] | x :: rest -> f x :: mymap f rest in println (length (mymap (fun x -> [x]) (range 1 300000)))", ("300000\n", "", 0), "tail call 이 아닌 재귀 30만 단계의 stack"
+      "let fs = map (fun i -> fun a b -> a + b + i) (range 1 200000) in let junk = map (fun x -> (x, x)) (range 1 200000) in println (fold (fun s f -> (s + f 1 2) % 1000003) 0 fs, length junk)", ("(640000, 200000)\n", "", 0), "인자 수를 헤더에 적은 클로저가 수거 뒤에도 그대로"
+      "let rec even n acc = if n = 0 then acc else odd (n - 1) (n :: acc) and odd n acc = if n = 0 then acc else even (n - 1) acc in let g = even in println (length (g 300000 []))", ("150000\n", "", 0), "let rec … and … 의 클로저"
+      "let s = ref \"\" in for i = 1 to 3000 do s := !s + toString (i % 10) done; println (length !s, length (sprintf \"%s-%d\" !s 7))", ("(3000, 3002)\n", "", 0), "커지는 문자열 (2KB 가 넘으면 큰 객체)"
+      "exception E of int list in println (try (let xs = range 1 200000 in raise (E (map (fun x -> x + 1) xs))) with E l -> length l)", ("200000\n", "", 0), "raise 한 예외 값 (런타임 전역 root)"
+      "let xs = map (fun i -> (i * 7919) % 100003) (range 1 200000) in let ys = sort xs in println (head ys, nth ys 199999, length (sort (map toString (range 1 20000))))", ("(0, 100002, 20000)\n", "", 0), "sort 의 임시 버퍼"
+      "type t = Leaf | Node of t * int * t in let rec ins t x = match t with Leaf -> Node (Leaf, x, Leaf) | Node (l, v, r) -> if x < v then Node (ins l x, v, r) else if x > v then Node (l, v, ins r x) else t in let rec build i t = if i = 0 then t else build (i - 1) (ins t ((i * 7919) % 100003)) in let rec size t = match t with Leaf -> 0 | Node (l, _, r) -> size l + 1 + size r in println (size (build 100000 Leaf))", ("100000\n", "", 0), "영속 트리 (생성자 블록)"
+      "let b = Array.create 3000000 true in let a = Array.init 300000 (fun i -> Some i) in b.[5] <- false; println (b.[5], b.[6], a.[299999], Array.length a)", ("(false, true, Some 299999, 300000)\n", "", 0), "큰 bool 배열과 option 배열" ]
+
 /// 컴파일러가 지원하고 타입 검사를 통과하는 식인지
 let private compilable (input: string) =
     try
@@ -791,6 +826,17 @@ let tests =
                 notStruct "let rec even n = if n = 0 then (true, 0) else odd (n - 1) and odd n = if n = 0 then (false, 0) else even (n - 1) in even 3"
                 notStruct "let p = (1, 2) in let f x = if x then p else (3, 4) in f true"
             }
+            // 세대 구분 GC: 이미 있는 객체에 쓰는 세 곳(:=, 배열 원소, let rec … and … 의 클로저 칸)에 write barrier, cons 는 따로 할당
+            test "write barrier 와 cons 할당" {
+                let count (text: string) (pattern: string) = text.Split(pattern).Length - 1
+                let mlir = Codegen.emitProgram (Program.parse "let r = ref [] in let a = Array.create 2 [] in r := [1]; a.[0] <- [2]; let rec f x = g x and g x = f x in (!r, a.[0])")
+                Expect.equal (count mlir "llvm.call @calc_write_barrier(") 4 ":=, 배열 쓰기, 클로저 칸 둘"
+                Expect.stringContains mlir "arith.andi %v" "포인터(태그 0, 2)일 때만"
+                Expect.stringContains mlir "llvm.call @calc_alloc_cons() : () -> !llvm.ptr" "cons 는 cons 만 담는 블록"
+                Expect.stringContains mlir "@calc_write_barrier(!llvm.ptr, i64) attributes {memory_effects" "GC 의 기록만 바꿈"
+                let ints = Codegen.emitProgram (Program.parse "let r = ref 0 in r := 1; !r")
+                Expect.equal (count ints "llvm.call @calc_write_barrier(") 1 "int 를 쓰는 곳도 barrier 를 내지만 실행 중 태그 검사로 건너뜀 (3단계에서 뺌)"
+            }
             test "클로저 칸, ref, 배열 접근에는 서로 다른 TBAA 태그, 오류 함수는 noreturn" {
                 let mlir = Codegen.emitProgram (Program.parse "let a = Array.create 3 0 in let r = ref 0 in let f i = a.[i] <- !r; r := i in f 1")
                 for tag in [ "#calc_tbaa_captured"; "#calc_tbaa_ref"; "#calc_tbaa_array" ] do
@@ -1068,6 +1114,16 @@ let tests =
             let whitespace = [ for c in 0 .. 0xFFFF do if Char.IsWhiteSpace(char c) then sprintf "0x%04X," c ]
             Expect.stringContains header (String.Join(" ", whitespace)) "Char.IsWhiteSpace"
         }
+
+        // 세대 구분 GC: nursery 를 작게(256KB) 해서 수거를 자주, 그리고 할당 100번마다 minor GC (stress). 기대값은 인터프리터(calc)의 출력
+        testList "세대 구분 GC (CALC_GC=gen)" [
+            for input, expected, name in gcCases ->
+                test name {
+                    requireTools () |> ignore
+                    Expect.equal (compileAndRunGen [ "CALC_GC_NURSERY_KB", "256" ] input) expected "nursery 256KB"
+                    Expect.equal (compileAndRunGen [ "CALC_GC_STRESS", "100" ] input) expected "할당 100번마다 minor GC"
+                }
+        ]
 
         testList "실행" [
             for name, cases in runCases ->

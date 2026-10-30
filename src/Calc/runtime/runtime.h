@@ -70,7 +70,17 @@ typedef struct {
 #define CALC_FALSE ((value)3)
 
 void calc_init(void);
+/* 할당 (GC 는 할당할 때만 일어남). CALC_GC_GEN 이면 gc.c 의 세대 구분 GC, 아니면 Boehm GC (runtime.c).
+   calc_alloc: 헤더가 있는 블록. 부른 쪽이 다음 할당 전에 헤더를 씀 (세대 구분 GC 는 블록을 헤더로 차례로 읽음)
+   calc_alloc_atomic: 안에 포인터가 없는 블록 (문자열, bool 배열)
+   calc_alloc_cons: 헤더 없는 cons 칸 16바이트 */
 void *calc_alloc(int64_t bytes);
+void *calc_alloc_atomic(int64_t bytes);
+void *calc_alloc_cons(void);
+/* write barrier: 이미 있는 객체의 칸(ref, 배열 원소, 리스트의 tail, 클로저 칸)에 포인터 값을 쓴 뒤 부름. Boehm 이면 아무것도 안 함 */
+void calc_write_barrier(value *slot, value v);
+/* 런타임 전역의 값 칸을 root 로 등록 (Boehm 은 data 영역을 훑으므로 아무것도 안 함) */
+void calc_gc_add_root(value *slot);
 /* "Error: <message>" 를 표준 에러로 출력하고 종료 코드 1 로 끝냄 (인터프리터와 같은 형식) */
 void calc_error(const char *message);
 /* printf 형식의 calc_error */
