@@ -3,6 +3,8 @@
     dotnet build src/Calc -c Release
     python3 benchmarks/run.py            # 5번씩
     python3 benchmarks/run.py 10         # 10번씩
+    python3 benchmarks/run.py --large 3  # 큰 입력판(benchmarks/large/), 3번씩
+    python3 benchmarks/run.py --large --compiled-only 3   # 실행 파일만 (Python, 인터프리터는 건너뜀)
 
 CALC 환경 변수로 calc 실행 파일을 바꿀 수 있다. 시간은 프로세스 시작을 포함한 wall time 이고,
 한 번 데운 뒤 잰 값의 중앙값이다. 컴파일한 실행 파일은 임시 디렉터리에 만든다.
@@ -14,12 +16,16 @@ ROOT = os.path.dirname(HERE)
 # CALC 는 실행한 곳 기준의 경로 (프로그램은 benchmarks/ 안에서 실행하므로 절대 경로로 바꿔 둠)
 CALC = os.path.abspath(os.environ.get("CALC", os.path.join(ROOT, "src/Calc/bin/Release/net10.0/calc")))
 PROGRAMS = ["fib", "queens", "sieve", "msort", "bst"]
-N = int(sys.argv[1]) if len(sys.argv) > 1 else 5
+ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
+LARGE = "--large" in sys.argv
+COMPILED_ONLY = "--compiled-only" in sys.argv
+N = int(ARGS[0]) if ARGS else 5
+DIR = os.path.join(HERE, "large") if LARGE else HERE
 
 
 def run(cmd):
     start = time.perf_counter()
-    p = subprocess.run(cmd, capture_output=True, text=True, cwd=HERE)
+    p = subprocess.run(cmd, capture_output=True, text=True, cwd=DIR)
     elapsed = time.perf_counter() - start
     if p.returncode != 0:
         sys.exit(f"failed: {' '.join(cmd)}\n{p.stderr}")
@@ -43,16 +49,22 @@ def main():
     print("|---|---|---|---|---|---|")
     with tempfile.TemporaryDirectory() as tmp:
         for name in PROGRAMS:
-            py_time, py_out = bench(["python3", f"{name}.py"])
-            it_time, it_out = bench([CALC, f"{name}.calc"])
             exe = os.path.join(tmp, name)
             compile_time, _ = run([CALC, f"--compile={exe}", f"{name}.calc"])
             ex_time, ex_out = bench([exe])
+            if COMPILED_ONLY:
+                py_time = it_time = float("nan")
+                py_out = it_out = ex_out
+            else:
+                py_time, py_out = bench(["python3", f"{name}.py"])
+                it_time, it_out = bench([CALC, f"{name}.calc"])
             if not py_out == it_out == ex_out:
                 sys.exit(f"{name}: outputs differ\n  python: {py_out}\n  interpreter: {it_out}\n  compiled: {ex_out}")
             out = py_out.replace("\n", ", ")
             print(f"| {name} | `{out}` | {py_time:.3f} | {it_time:.3f} | {ex_time:.3f} | {compile_time:.2f} |", flush=True)
 
+        if LARGE or COMPILED_ONLY:
+            return
         # 아무것도 하지 않는 프로그램: 시작 비용
         empty = os.path.join(tmp, "empty.calc")
         with open(empty, "w") as f:

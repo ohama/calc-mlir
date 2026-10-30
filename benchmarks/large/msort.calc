@@ -1,0 +1,26 @@
+// 큰 입력판 (2백만 개): benchmarks/msort.calc 와 같고 크기만 키움
+// merge sort: 리스트 20만 개를 LCG 로 만들어 정렬 (리스트 할당, 패턴 매칭, tail recursion)
+let rec gen n x acc = if n = 0 then acc else gen (n - 1) ((x * 75 + 74) % 65537) (x :: acc)
+
+let rec split xs left right =
+    match xs with
+    | [] -> (left, right)
+    | x :: rest -> split rest right (x :: left)
+
+let rec merge xs ys acc =
+    match (xs, ys) with
+    | ([], _) -> append (reverse acc) ys
+    | (_, []) -> append (reverse acc) xs
+    | (x :: xr, y :: yr) -> if x <= y then merge xr ys (x :: acc) else merge xs yr (y :: acc)
+
+let rec msort xs =
+    match xs with
+    | [] -> []
+    | [x] -> [x]
+    | _ ->
+        let (a, b) = split xs [] []
+        merge (msort a) (msort b) []
+
+let sorted = msort (gen 2000000 1 [])
+println (fold (fun acc x -> (acc * 31 + x) % 1000003) 0 sorted)
+println (head sorted, nth sorted 1000000)

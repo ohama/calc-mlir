@@ -1,0 +1,19 @@
+// 큰 입력판 (1억): benchmarks/sieve.calc 와 같고 크기만 키움
+// 에라토스테네스의 체: 배열, while, mutable reference
+let n = 100000000
+let isPrime = Array.create (n + 1) true
+isPrime.[0] <- false
+isPrime.[1] <- false
+let i = ref 2
+while !i * !i <= n do
+    if isPrime.[!i] then
+        let j = ref (!i * !i)
+        while !j <= n do
+            isPrime.[!j] <- false
+            j := !j + !i
+    else ()
+    incr i
+let count = ref 0
+for k = 0 to n do
+    if isPrime.[k] then incr count else ()
+println !count

@@ -12,6 +12,7 @@
   - 기본 설정에서는 시간이 같고, 영속 트리 백만 개의 최대 메모리가 95MB에서 89MB가 되었습니다.
   - 환경 변수 `CALC_GC_DEFRAG`(옮길 블록의 산 객체 비율 상한, %, 0이면 하지 않음), `CALC_GC_DEFRAG_MIN`(최소 블록 수).
 - 테스트: `세대 구분 GC` 묶음의 stress 설정이 major GC마다 옮길 수 있는 블록을 모두 옮깁니다.
+- 벤치마크: 크기만 키운 판 `benchmarks/large/`(fib 41, 13×13 queens, 체 1억, 2백만 개)와 `run.py --large`, `--compiled-only`. `docs/benchmarks.md`에 0.41.0과의 비교를 더했습니다(실행 파일 2.8~10.4배, 인터프리터 8.5~18.3배 빨라짐).
 
 ### 수정
 - 테스트: `세대 구분 GC` 묶음이 바깥의 `CALC_GC_*` 환경 변수를 지우고 자기 설정만 씁니다. 0.66.2부터 이 묶음이 heap verifier를 켜서, `CALC_GC_STRESS=10 dotnet test`가 stress와 verifier를 함께 켜고 끝나지 않을 만큼 느렸습니다.
