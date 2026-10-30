@@ -4,8 +4,9 @@ module Lower
 open Ast
 open Core
 
-/// 이름으로 알려진 함수: 인자 Arity 개를 모두 받는 최상위 함수 Direct. 그 이름의 값(바깥 클로저)을 클로저로 받음
-type private Known = { Direct: string; Arity: int }
+/// 이름으로 알려진 함수: 인자 Arity 개를 모두 받는 최상위 함수 Direct. 그 이름의 값(바깥 클로저)을 클로저로 받음.
+/// Widths 는 인자마다, direct 함수가 튜플 대신 원소를 따로 받으면 그 원소 수 (튜플 인자 펴기)
+type private Known = { Direct: string; Arity: int; Widths: int option list }
 
 /// 지금 범위: 보이는 변수와, 그 가운데 알려진 함수. 이름을 다시 묶으면 알려진 함수에서 빠짐.
 /// Fields 는 필드 이름 → 그 레코드 타입의 필드들 (선언한 순서). 같은 필드 이름의 타입을 다시 선언하면 뒤의 것
@@ -52,6 +53,12 @@ type private State(ints: System.Collections.Generic.HashSet<obj>, stringAdds: Sy
         next <- next + 1
         name
 
+    /// 호출하는 곳이 인자를 잠시 묶는 이름 (렉서가 만들 수 없는 $ 이름)
+    member _.FreshTemp() =
+        let name = sprintf "$arg%d" next
+        next <- next + 1
+        name
+
     member _.AddFunctionNamed(name: string, param: string, self: string option, body: CExpr, ?direct: string * int) =
         // 자유 변수 중 인자와 자기 자신을 뺀 나머지를 캡처. 정렬된 순서가 클로저의 칸 순서
         let bound = Set.ofList (param :: Option.toList self)
@@ -64,22 +71,26 @@ type private State(ints: System.Collections.Generic.HashSet<obj>, stringAdds: Sy
 
     /// 이름에 묶을 함수의 바깥 클로저 이름과 Known. 본문의 (재귀) 호출이 쓰므로 본문을 낮추기 전에 정함.
     /// 인자가 하나면 바깥 클로저의 함수가 곧 direct 함수
-    member this.Reserve(arity: int) =
+    member this.Reserve(arity: int, widths: int option list) =
         let outer = this.FreshName()
-        outer, { Direct = (if arity = 1 then outer else outer + "_direct"); Arity = arity }
+        let flat = widths |> List.exists Option.isSome
+        outer, { Direct = (if arity = 1 && not flat then outer else outer + "_direct"); Arity = arity; Widths = widths }
 
     /// 인자 parameters 를 하나씩 받는 클로저들(값으로 쓸 때)과, 인자를 모두 받는 direct 함수.
     /// 둘은 한 번 낮춘 본문을 함께 씀. direct 함수는 바깥 클로저를 받아 같은 칸에서 캡처한 값을 꺼냄
     /// (바깥 클로저의 캡처 = 본문의 자유 변수 - 인자 - 자기 자신 = direct 함수의 캡처)
-    member this.AddCurried(outer: string, parameters: string list, self: string option, body: CExpr) =
+    /// flat 이 있으면 direct 함수는 튜플 인자를 편 인자와 그 본문을 씀 (Lower.defineFunction). 이때 클로저는 인자 수와
+    /// direct 함수를 알리지 않음: 모르는 함수로 부르는 쪽(emitApplyMany)은 튜플을 펴지 않으므로
+    member this.AddCurried(outer: string, parameters: string list, self: string option, body: CExpr, ?flat: string list * CExpr) =
         match parameters with
         | first :: rest ->
             let inner = List.foldBack (fun p acc -> this.AddFunction(p, None, acc)) rest body
-            let direct = if rest.IsEmpty then None else Some (outer + "_direct", parameters.Length)
+            let direct = if rest.IsEmpty || flat.IsSome then None else Some (outer + "_direct", parameters.Length)
             let closure = this.AddFunctionNamed(outer, first, self, inner, ?direct = direct)
+            let directParams, directBody = defaultArg flat (parameters, body)
             match closure with
-            | CMakeClosure (_, captured) when not rest.IsEmpty ->
-                functions.Add { Name = outer + "_direct"; Params = parameters; Self = self; Captured = captured; Direct = None; Body = body }
+            | CMakeClosure (_, captured) when not rest.IsEmpty || flat.IsSome ->
+                functions.Add { Name = outer + "_direct"; Params = directParams; Self = self; Captured = captured; Direct = None; Body = directBody }
             | _ -> ()
             closure
         | [] -> failwith "Lower: function without parameters"
@@ -112,6 +123,21 @@ let rec private lambdaChain (expr: Expr) =
     | Annot (e, _) -> lambdaChain e
     | _ -> [], expr
 
+/// 튜플 인자 펴기: 본문이 인자를 바로 match 하는 모양 match p with (a, b) -> body (원소 패턴이 모두 이름이나 _) 이면
+/// direct 함수가 p 대신 a, b 를 받음. 이어서 다른 인자를 같은 모양으로 match 하면 그것도 폄.
+/// 원소 이름이 다른 인자와 겹치면 펴지 않음 (direct 함수의 인자 이름이 겹치므로). 결과는 인자마다 원소 패턴과 남은 본문
+let private tupleParameters (parameters: string list) (inner: Expr) =
+    let flatPattern items = items |> List.forall (function PVar _ | PWildcard -> true | _ -> false)
+    let rec peel (flats: Map<string, Pattern list>) (body: Expr) =
+        match body with
+        | Match (Var p, [ PTuple items, None, rest ])
+            when List.contains p parameters && not (flats.ContainsKey p) && flatPattern items
+                 && Set.isEmpty (Set.intersect (patternVars (PTuple items)) (Set.ofList (List.filter ((<>) p) parameters)))
+                 && flats |> Map.forall (fun _ other -> Set.isEmpty (Set.intersect (patternVars (PTuple other)) (patternVars (PTuple items)))) ->
+            peel (Map.add p items flats) rest
+        | _ -> flats, body
+    peel Map.empty inner
+
 /// 레코드 패턴을 선언한 순서의 모든 필드로 (쓰지 않은 필드는 _). Codegen 이 i 번째 필드를 칸 2 + i 에서 읽음
 let rec private fillRecordFields (scope: Scope) (pattern: Pattern) : Pattern =
     let fill = fillRecordFields scope
@@ -130,6 +156,34 @@ let rec private fillRecordFields (scope: Scope) (pattern: Pattern) : Pattern =
 let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Scope) (expr: Expr) : CExpr =
     let isBuiltin name = not (Set.contains name scope.Vars) && Eval.builtinArity.ContainsKey name
     let prim p args = CPrim (p, List.map (lower state ctors scope) args)
+    // 이름에 묶을 함수의 바깥 클로저 이름과 Known (본문의 재귀 호출이 쓰므로 본문을 낮추기 전에 정함)
+    let reserve (parameters: string list) (inner: Expr) =
+        let flats, _ = tupleParameters parameters inner
+        state.Reserve(parameters.Length, parameters |> List.map (fun p -> flats |> Map.tryFind p |> Option.map List.length))
+    // 함수를 정의함. bodyScope 는 재귀 호출을 위해 Known 을 넣은 범위. 튜플 인자를 펴면 클로저로 부르는 쪽은 전처럼
+    // match 하고, direct 함수는 원소를 인자로 받아 같은 본문(한 번 낮춘 것)을 씀
+    let define (outer: string) (parameters: string list) (self: string option) (bodyScope: Scope) (inner: Expr) =
+        let flats, body = tupleParameters parameters inner
+        if flats.IsEmpty then state.AddCurried(outer, parameters, self, lower state ctors (bindAll parameters bodyScope) inner)
+        else
+            let elementNames p (items: Pattern list) =
+                items |> List.mapi (fun i item -> match item with PVar n -> n | _ -> sprintf "$%s_%d" p i)
+            let bound = flats |> Map.toList |> List.collect (fun (_, items) -> Set.toList (patternVars (PTuple items)))
+            let lowered = lower state ctors (bindAll (parameters @ bound) bodyScope) body
+            // 클로저 쪽: 원래 모양대로 인자를 차례로 match (안쪽부터 감쌈)
+            let matched =
+                flats |> Map.toList
+                |> List.sortBy (fun (p, _) -> List.findIndex ((=) p) parameters)
+                |> List.rev
+                |> List.fold (fun acc (p, items) -> CMatch (CVar p, [ PTuple items, None, acc ])) lowered
+            // direct 쪽: 본문이 튜플 인자 자체를 쓰면 원소로 다시 만듦 (튜플은 바꿀 수 없으므로 같은 값)
+            let directParams = parameters |> List.collect (fun p -> match Map.tryFind p flats with Some items -> elementNames p items | None -> [ p ])
+            let directBody =
+                flats |> Map.fold (fun acc p items ->
+                    if Set.contains p (freeVars acc) && not (Set.contains p (patternVars (PTuple items))) then
+                        CLet (p, CTuple (elementNames p items |> List.map CVar), acc)
+                    else acc) lowered
+            state.AddCurried(outer, parameters, self, matched, (directParams, directBody))
     match expr with
     | Number n -> CInt n
     | Bool b -> CBool b
@@ -143,8 +197,8 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Scope) (
     // 이름에 묶은 함수: 이 이름에 인자를 모두 주는 호출은 direct 함수로
     | Let (name, value, body) when not (fst (lambdaChain value)).IsEmpty ->
         let parameters, inner = lambdaChain value
-        let outer, known = state.Reserve parameters.Length
-        let closure = state.AddCurried(outer, parameters, None, lower state ctors (bindAll parameters scope) inner)
+        let outer, known = reserve parameters inner
+        let closure = define outer parameters None scope inner
         CLet (name, closure, lower state ctors (know name known scope) body)
     | Let (name, value, body) -> CLet (name, lower state ctors scope value, lower state ctors (bind name scope) body)
     | If (c, t, e) -> CIf (lower state ctors scope c, lower state ctors scope t, lower state ctors scope e)
@@ -174,7 +228,7 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Scope) (
     // fun a b -> body: 이름에 묶은 함수처럼 direct 함수도 만듦 (fold f acc xs 의 f acc x 가 중간 클로저 없이 부름)
     | Lambda _ when (fst (lambdaChain expr)).Length >= 2 ->
         let parameters, inner = lambdaChain expr
-        let outer, _ = state.Reserve parameters.Length
+        let outer, _ = state.Reserve(parameters.Length, List.replicate parameters.Length None)
         state.AddCurried(outer, parameters, None, lower state ctors (bindAll parameters scope) inner)
     | Lambda (param, body) -> state.AddFunction(param, None, lower state ctors (bind param scope) body)
     // let rec f x = body in e: 본문의 f 는 클로저 자신이라 캡처하지 않음. 본문의 재귀 호출도 direct 함수로
@@ -193,20 +247,20 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Scope) (
     | LetRec (name, param, body, inExpr) ->
         let rest, inner = lambdaChain body
         let parameters = param :: rest
-        let outer, known = state.Reserve parameters.Length
+        let outer, known = reserve parameters inner
         let scope = know name known scope
-        CLet (name, state.AddCurried(outer, parameters, Some name, lower state ctors (bindAll parameters scope) inner), lower state ctors scope inExpr)
+        CLet (name, define outer parameters (Some name) scope inner, lower state ctors scope inExpr)
     // 함수마다 클로저. 자기 자신은 %closure, 다른 함수는 캡처한 칸 (Codegen 이 나중에 채움)
     | LetRecs (bindings, inExpr) ->
         let reserved =
             [ for name, param, body in bindings ->
                   let rest, inner = lambdaChain body
-                  let outer, known = state.Reserve(1 + rest.Length)
+                  let outer, known = reserve (param :: rest) inner
                   name, outer, known, param :: rest, inner ]
         let groupScope = reserved |> List.fold (fun acc (name, _, known, _, _) -> know name known acc) scope
         let closures =
             [ for name, outer, _, parameters, inner in reserved ->
-                  name, state.AddCurried(outer, parameters, Some name, lower state ctors (bindAll parameters groupScope) inner) ]
+                  name, define outer parameters (Some name) groupScope inner ]
         CLetRecGroup (closures, lower state ctors groupScope inExpr)
     // 생성자를 바로 적용하면 그 자리에서 블록을 만듦 (인터프리터의 VConstructor 호출과 같은 결과)
     | App (Ctor name, a) when Map.tryFind name ctors = Some true -> CData (name, Some (lower state ctors scope a))
@@ -243,7 +297,31 @@ let rec private lower (state: State) (ctors: Map<string, bool>) (scope: Scope) (
                          | Var name, args -> name, args
                          | _ -> failwith "unreachable"
         let known = scope.Known[name]
-        let call = CCallDirect (known.Direct, CVar name, args |> List.take known.Arity |> List.map (lower state ctors scope))
+        let given = List.take known.Arity args
+        let call =
+            if List.forall Option.isNone known.Widths then CCallDirect (known.Direct, CVar name, List.map (lower state ctors scope) given)
+            // 펴는 인자가 모두 같은 크기의 튜플 리터럴이면 튜플을 만들지 않고 원소를 그 자리에서 계산 (계산 순서가 같음)
+            elif List.forall2 (fun a w -> match a, w with
+                                          | _, None -> true
+                                          | Tuple items, Some n -> items.Length = n
+                                          | _ -> false) given known.Widths then
+                let flattened = List.map2 (fun a w -> match a, w with
+                                                      | Tuple items, Some _ -> items
+                                                      | _ -> [ a ]) given known.Widths
+                CCallDirect (known.Direct, CVar name, flattened |> List.concat |> List.map (lower state ctors scope))
+            // 그 밖에는 인자를 왼쪽부터 계산해 묶은 뒤, 펴는 인자의 튜플에서 원소를 꺼내 부름
+            else
+                let temps = given |> List.map (fun _ -> state.FreshTemp())
+                let elements = List.map2 (fun t w -> match w with
+                                                     | Some n -> [ for i in 0 .. n - 1 -> sprintf "%s_%d" t i ]
+                                                     | None -> [ t ]) temps known.Widths
+                let call = CCallDirect (known.Direct, CVar name, elements |> List.concat |> List.map CVar)
+                let unpacked =
+                    List.foldBack2 (fun t (w, names) acc ->
+                        match w with
+                        | Some _ -> CMatch (CVar t, [ PTuple (names |> List.map PVar), None, acc ])
+                        | None -> acc) temps (List.zip known.Widths elements) call
+                List.foldBack2 (fun t a acc -> CLet (t, lower state ctors scope a, acc)) temps given unpacked
         args |> List.skip known.Arity |> List.fold (fun f a -> CApply (f, lower state ctors scope a)) call
     | App (f, a) -> CApply (lower state ctors scope f, lower state ctors scope a)
     | Ctor name ->

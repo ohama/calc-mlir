@@ -414,6 +414,23 @@ let private runCases =
           "let a = Array.create 4 (Some true) in a.[0] <- None; println (a, Array.create 2 [true], Array.create 2 (true, 1))", ("([|None; Some true; Some true; Some true|], [|[true]; [true]|], [|(true, 1); (true, 1)|])\n", "", 0), "bool 이 아닌 원소는 보통 배열"
           "let a = Array.create 300000 true in let junk = map (fun x -> (x, x)) (range 1 300000) in a.[299999] <- false; println (a.[0], a.[299999], length junk)", ("(true, false, 300000)\n", "", 0), "GC 가 훑지 않는 bool 배열이 수거 뒤에도 그대로"
         ]
+      "튜플 인자 펴기 (direct 함수가 원소를 따로 받음)",
+        [
+          "let rec go i p = match p with (a, b) -> if i = 0 then a else go (i - 1) (b, (a + b) % 1000003) in println (go 1000000 (0, 1))", ("3\n", "", 0), "재귀 호출에 튜플 리터럴: 튜플을 만들지 않음"
+          "let dist p q = match p with (x1, y1) -> (match q with (x2, y2) -> (x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2)) in let t = (3, 4) in println (dist (0, 0) t, dist t t, map (dist (1, 1)) [(1, 2); (4, 5)])", ("(25, 0, [1; 25])\n", "", 0), "인자 둘을 차례로 match, 변수로 넘긴 튜플, partial application"
+          "let f p = match p with (a, _, c) -> a + c in let g = f in println (f (1, 2, 3), g (4, 5, 6), map f [(1, 1, 1)], fold (fun acc t -> acc + f t) 0 [(1, 0, 1); (2, 0, 2)])", ("(4, 10, [2], 6)\n", "", 0), "원소 셋과 _, 값으로 쓴 함수 (map, fold)"
+          "let f p = match p with (a, b) -> (print a; b) in println (f ((print \"x\"; 1), (print \"y\"; 2)), f (let t = (print \"z\"; (3, 4)) in t))", ("xy1z3(2, 4)\n", "", 0), "원소의 계산 순서, 튜플이 아닌 식을 넘김"
+          "let f x p = match p with (a, b) -> (p, a + b + x) in println (f 1 (2, 3), f 10 (if true then (1, 1) else (0, 0)))", ("(((2, 3), 6), ((1, 1), 12))\n", "", 0), "본문이 튜플 인자 자체를 씀 (다시 만듦)"
+          "let k = 100 in let f p = match p with (a, b) -> a + b + k in println (f (1, 2), (fun g -> g (3, 4)) f)", ("(103, 107)\n", "", 0), "캡처한 값, 고차 함수에 넘김"
+          "let rec even p = match p with (n, acc) -> if n = 0 then acc else odd (n - 1, acc + 1) and odd p = match p with (n, acc) -> if n = 0 then acc else even (n - 1, acc + 2) in println (even (10, 0), odd (1000001, 0))", ("(15, 1500002)\n", "", 0), "let rec ... and ... (상호 재귀)"
+          "let f p = match p with (a, b) -> a + b in let h a b = (print a; print b; f (a, b)) in println (h 1 2)", ("123\n", "", 0), "인자 둘을 튜플로 묶어 부름"
+          "let f x p = match p with (x, y) -> x + y in println (f 100 (1, 2))", ("3\n", "", 0), "원소 이름이 다른 인자와 겹치면 펴지 않음"
+          "let f p = match p with (a, b) when a > 0 -> a | _ -> 0 in println (f (1, 2), f (-1, 2))", ("(1, 0)\n", "", 0), "가드나 분기가 둘이면 펴지 않음"
+          "let f p = match p with ((a, b), c) -> a + b + c in println (f ((1, 2), 3))", ("6\n", "", 0), "겹친 튜플 패턴은 펴지 않음"
+          "let f (p: int * string) = match p with (n, s) -> s + toString n in println (f (1, \"a\"), (f) (2, \"b\"))", ("(\"a1\", \"b2\")\n", "", 0), "타입 표기한 튜플 인자"
+          "let swap p = match p with (a, b) -> (b, a) in let r = ref (1, 2) in for i = 1 to 5 do r := swap !r done; println (!r, swap (swap (3, 4)))", ("((2, 1), (3, 4))\n", "", 0), "튜플을 돌려주는 함수"
+          "let rec sumPairs xs acc = match acc with (s, n) -> (match xs with [] -> (s, n) | x :: rest -> sumPairs rest (s + x, n + 1)) in println (sumPairs (range 1 100000) (0, 0))", ("(705082704, 100000)\n", "", 0), "튜플 누산기 10만 번"
+        ]
       "문자열 연결 (string 으로 정해진 + 연쇄와 포맷을 한 번에 할당)",
         [
           "let s = \"a\" + \"b\" + \"c\" in println (s, \"x\" + (\"y\" + \"z\"), \"\" + \"\" + \"\", toString 1 + \"-\" + toString 2)", ("(\"abc\", \"xyz\", \"\", \"1-2\")\n", "", 0), "string 연쇄: 왼쪽 결합, 오른쪽 괄호, 빈 문자열, toString 조각"
@@ -714,6 +731,18 @@ let tests =
                 Expect.equal (count long "llvm.call @calc_concat8(") 1 "8 개가 넘으면 앞 8 개를 먼저"
                 Expect.equal (count long "llvm.call @calc_concat3(") 1 "그 결과와 남은 두 개"
                 Expect.isTrue ((Codegen.emitProgram (Program.parse "let f x y = x + y in f \"a\" \"b\"")).Contains "llvm.call @calc_add(") "타입 검사를 하지 않은 식은 태그를 봄"
+            }
+            // 본문이 인자를 바로 match (a, b) 하는 함수: direct 함수는 원소를 따로 받고, 튜플 리터럴을 넘기는 호출은 블록을 만들지 않음
+            test "튜플 인자를 편 direct 함수" {
+                let mlir = Codegen.emitProgram (Program.parse "let rec go i p = match p with (a, b) -> if i = 0 then a else go (i - 1) (b, a + b) in go 10 (0, 1)")
+                let header = "llvm.func internal tailcc @lambda_0_direct(%closure: !llvm.ptr, %arg0: i64, %arg1: i64, %arg2: i64) -> i64 {"
+                Expect.isTrue (mlir.Contains header) "i, a, b 를 따로 받음"
+                let start = mlir.IndexOf header
+                let body = mlir.Substring(start, mlir.IndexOf("\n}", start) - start)
+                Expect.isFalse (body.Contains "@calc_alloc(") "재귀 호출이 튜플을 만들지 않음"
+                Expect.isTrue (body.Contains "call tailcc tail @lambda_0_direct(") "재귀 호출은 그대로 tail call"
+                let used = Codegen.emitProgram (Program.parse "let f p = match p with (a, b) -> a + b in let g = f in g (1, 2)")
+                Expect.isTrue (used.Contains "@lambda_0_direct(%closure: !llvm.ptr, %arg0: i64, %arg1: i64)") "인자 하나짜리 함수도 direct 함수를 따로 만듦"
             }
             test "클로저 칸, ref, 배열 접근에는 서로 다른 TBAA 태그, 오류 함수는 noreturn" {
                 let mlir = Codegen.emitProgram (Program.parse "let a = Array.create 3 0 in let r = ref 0 in let f i = a.[i] <- !r; r := i in f 1")
